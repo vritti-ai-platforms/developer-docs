@@ -1,0 +1,352 @@
+---
+title: "Passkeys (WebAuthn)"
+description: "Passwordless authentication using WebAuthn/FIDO2 passkeys"
+---
+
+## Overview
+
+<Info>
+**Implemented by:** Sunvish
+**Last Updated:** January 2026
+**Status:** Production
+</Info>
+
+Passkeys provide passwordless authentication using the WebAuthn/FIDO2 standard. Users can authenticate using biometrics (Face ID, Touch ID) or device PIN instead of passwords.
+
+## What It Does
+
+- Enables passwordless login using biometrics or device PIN
+- Supports platform authenticators (built-in) and cross-platform (security keys)
+- Provides phishing-resistant authentication
+- Works as both primary login method and MFA factor
+- Includes replay attack protection via counter validation
+
+## Where It's Used
+
+| Location | Purpose |
+|----------|---------|
+| `vritti-api-nexus/src/modules/cloud-api/auth/controllers/passkey-auth.controller.ts` | Passkey login endpoints |
+| `vritti-api-nexus/src/modules/cloud-api/auth/services/passkey-auth.service.ts` | Login authentication logic |
+| `vritti-api-nexus/src/modules/cloud-api/onboarding/controllers/two-factor.controller.ts` | Passkey registration endpoints |
+| `vritti-api-nexus/src/modules/cloud-api/onboarding/services/webauthn.service.ts` | Core WebAuthn operations |
+| `vritti-api-nexus/src/modules/cloud-api/onboarding/services/two-factor-auth.service.ts` | Registration flow logic |
+| `vritti-api-nexus/src/modules/cloud-api/auth/mfa-verification/` | Passkey as MFA factor |
+| `vritti-auth/src/hooks/usePasskey.ts` | Frontend WebAuthn hooks |
+| `vritti-auth/src/components/onboarding/mfa/PasskeySetup.tsx` | Registration UI |
+| `vritti-auth/src/components/auth/mfa-verification/PasskeyVerification.tsx` | MFA verification UI |
+
+## Architecture
+
+### Registration Flow
+
+<Steps>
+  <Step title="Initiate Registration">
+    Frontend calls `POST /onboarding/2fa/passkey/setup` to get registration options.
+
+    ```typescript
+    // vritti-api-nexus - two-factor-auth.service.ts
+    async initiatePasskeySetup(userId: string): Promise<PasskeyRegistrationOptionsDto> {
+      const options = await this.webAuthnService.generateRegistrationOptions(
+        userId,
+        user.email,
+        userName,
+        excludeCredentials,  // Prevents re-registration
+      );
+
+      // Store challenge temporarily (5-minute TTL)
+      pendingPasskeyRegistrations.set(userId, {
+        challenge: options.challenge,
+        expiresAt,
+      });
+
+      return new PasskeyRegistrationOptionsDto(options);
+    }
+    ```
+  </Step>
+
+  <Step title="Create Credential">
+    Frontend triggers browser WebAuthn API which prompts for biometric/PIN.
+
+    ```typescript
+    // vritti-auth - usePasskey.ts
+    const credential = await startRegistration({
+      optionsJSON: regOptions,
+    });
+    ```
+  </Step>
+
+  <Step title="Verify & Store">
+    Backend verifies the credential and stores it in the database.
+
+    ```typescript
+    // vritti-api-nexus - two-factor-auth.service.ts
+    async verifyPasskeySetup(userId: string, credential: RegistrationResponseJSON) {
+      const verification = await this.webAuthnService.verifyRegistration(
+        credential,
+        pending.challenge,
+      );
+
+      // Store passkey
+      await this.twoFactorAuthRepo.createPasskey(
+        userId,
+        credentialIdBase64,
+        publicKeyBase64,
+        counter,
+        transports,
+        hashedBackupCodes,
+      );
+
+      return { backupCodes };  // One-time display
+    }
+    ```
+  </Step>
+</Steps>
+
+### Authentication Flow
+
+<Steps>
+  <Step title="Start Authentication">
+    Frontend calls `POST /auth/passkey/start` with optional email.
+
+    ```typescript
+    // vritti-api-nexus - passkey-auth.service.ts
+    async startAuthentication(email?: string): Promise<PasskeyAuthOptionsDto> {
+      let allowCredentials;
+
+      if (email) {
+        const user = await this.userService.findByEmail(email);
+        const passkeys = await this.twoFactorAuthRepo.findAllPasskeysByUserId(user.id);
+        allowCredentials = passkeys.map((pk) => ({
+          id: pk.passkeyCredentialId,
+        }));
+      }
+
+      const options = await this.webAuthnService.generateAuthenticationOptions(allowCredentials);
+      const sessionId = crypto.randomUUID();
+
+      pendingAuthentications.set(sessionId, {
+        challenge: options.challenge,
+        userId,
+        expiresAt,
+      });
+
+      return new PasskeyAuthOptionsDto(options, sessionId);
+    }
+    ```
+  </Step>
+
+  <Step title="Get Credential">
+    Frontend triggers browser WebAuthn API for biometric verification.
+
+    ```typescript
+    // vritti-auth - usePasskey.ts
+    const credential = await startAuthentication({
+      optionsJSON: authOptions,
+    });
+    ```
+  </Step>
+
+  <Step title="Verify & Login">
+    Backend verifies credential and creates session.
+
+    ```typescript
+    // vritti-api-nexus - passkey-auth.service.ts
+    async verifyAuthentication(sessionId, credential, ipAddress, userAgent) {
+      const passkey = await this.twoFactorAuthRepo.findByCredentialId(credential.id);
+
+      const verification = await this.webAuthnService.verifyAuthentication(
+        credential,
+        pending.challenge,
+        publicKey,
+        passkey.passkeyCounter,
+        passkey.passkeyCredentialId,
+        transports,
+      );
+
+      // Update counter (replay protection)
+      await this.twoFactorAuthRepo.updatePasskeyCounter(passkey.id, newCounter);
+
+      // Create session
+      const session = await this.sessionService.createUnifiedSession(user.id, 'CLOUD', ipAddress, userAgent);
+
+      return { user, session };
+    }
+    ```
+  </Step>
+</Steps>
+
+## Database Schema
+
+```typescript
+// vritti-api-nexus/src/db/schema/verification.ts
+export const twoFactorAuth = cloudSchema.table('two_factor_auth', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  method: twoFactorMethodEnum('method').notNull(),  // 'TOTP' | 'PASSKEY'
+  isActive: boolean('is_active').notNull().default(true),
+
+  // Passkey-specific fields
+  passkeyCredentialId: varchar('passkey_credential_id', { length: 255 }).unique(),
+  passkeyPublicKey: text('passkey_public_key'),      // Base64url encoded
+  passkeyCounter: integer('passkey_counter'),        // Replay protection
+  passkeyTransports: varchar('passkey_transports', { length: 255 }),  // JSON: ["internal","hybrid"]
+
+  // Shared
+  totpBackupCodes: text('totp_backup_codes'),        // JSON array of hashed codes
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  lastUsedAt: timestamp('last_used_at'),
+});
+```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# WebAuthn Configuration
+WEBAUTHN_RP_NAME=Vritti           # Relying Party name shown to users
+WEBAUTHN_RP_ID=localhost          # Must match domain (e.g., vrittiai.com)
+WEBAUTHN_ORIGIN=http://localhost:3012  # Full origin URL
+```
+
+### WebAuthn Service Configuration
+
+```typescript
+// vritti-api-nexus - webauthn.service.ts
+const options = await generateRegistrationOptions({
+  rpName: this.rpName,
+  rpID: this.rpID,
+  attestationType: 'none',           // No attestation (better UX)
+  authenticatorSelection: {
+    residentKey: 'preferred',        // Discoverable credentials
+    userVerification: 'required',    // Biometric/PIN required
+    authenticatorAttachment: 'platform',  // Prefer built-in
+  },
+  supportedAlgorithmIDs: [-7, -257], // ES256, RS256
+  timeout: 300000,                   // 5 minutes
+});
+```
+
+## API Endpoints
+
+### Registration (Onboarding)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/onboarding/2fa/passkey/setup` | Get registration options |
+| POST | `/onboarding/2fa/passkey/verify` | Verify and store passkey |
+
+### Authentication (Login)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/auth/passkey/start` | Start passkey login |
+| POST | `/auth/passkey/verify` | Verify and create session |
+
+### MFA Verification
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/auth/mfa/passkey/start` | Start passkey MFA |
+| POST | `/auth/mfa/passkey/verify` | Verify passkey MFA |
+
+## Frontend Integration
+
+### Registration Hook
+
+```typescript
+// vritti-auth/src/hooks/usePasskey.ts
+export const usePasskeyRegistration = () => {
+  return useMutation<BackupCodesResponse, Error, void>({
+    mutationFn: async () => {
+      // 1. Get options from server
+      const { options } = await initiatePasskeySetup();
+
+      // 2. Trigger biometric prompt
+      const credential = await startRegistration({ optionsJSON: options });
+
+      // 3. Verify with server
+      return await verifyPasskeySetup(credential);
+    },
+  });
+};
+```
+
+### Login Hook
+
+```typescript
+// vritti-auth/src/hooks/usePasskey.ts
+export const usePasskeyLogin = () => {
+  return useMutation<LoginResponse, Error, string | undefined>({
+    mutationFn: async (email?: string) => {
+      const { options, sessionId } = await startPasskeyLogin(email);
+      const credential = await startAuthentication({ optionsJSON: options });
+      return await verifyPasskeyLogin(sessionId, credential);
+    },
+  });
+};
+```
+
+## Error Handling
+
+```typescript
+// vritti-auth - PasskeySetup.tsx
+const getErrorMessage = (error: Error | null): string | null => {
+  if (error?.name === 'NotAllowedError') {
+    return 'Passkey registration was cancelled. Please try again.';
+  }
+  if (error?.name === 'NotSupportedError') {
+    return 'Passkeys are not supported on this device or browser.';
+  }
+  if (error?.name === 'SecurityError') {
+    return 'Security error. Please ensure you are on a secure connection.';
+  }
+  if (error?.name === 'InvalidStateError') {
+    return 'A passkey already exists for this account on this device.';
+  }
+  return error?.message || 'An unexpected error occurred.';
+};
+```
+
+## Security Features
+
+1. **User Verification**: Biometric/PIN required for registration and authentication
+2. **Counter Validation**: Prevents credential cloning/replay attacks
+3. **Challenge-Response**: Fresh challenges with 5-minute TTL
+4. **Origin Validation**: Verifies requests come from expected origin
+5. **RP ID Binding**: Credentials bound to specific domain
+6. **Backup Codes**: 10 one-time recovery codes generated on setup
+
+## Limitations
+
+<Warning>
+**Known Limitations:**
+</Warning>
+
+1. **Platform Support**: Requires WebAuthn-compatible browser and device
+2. **Cross-Device**: Platform authenticators don't roam between devices (use hybrid transport)
+3. **RP ID**: Must exactly match the domain; subdomains need separate registration
+4. **Session Storage**: Uses in-memory Map; consider Redis for distributed deployments
+
+## Troubleshooting
+
+<Accordion title="NotAllowedError: User cancelled">
+  **Cause:** User dismissed the biometric prompt or cancelled the operation
+
+  **Solution:** Show a friendly message and allow retry
+</Accordion>
+
+<Accordion title="InvalidStateError: Credential already exists">
+  **Cause:** User trying to register same passkey twice
+
+  **Solution:** The `excludeCredentials` list should prevent this. Check if existing passkeys are being fetched correctly.
+</Accordion>
+
+<Accordion title="Passkey works on one device but not another">
+  **Cause:** Platform authenticators are device-bound
+
+  **Solution:** Use `authenticatorAttachment: undefined` to allow cross-platform authenticators, or guide users to set up passkeys on each device.
+</Accordion>
+
+## Related Concepts
+
+- **MFA** - Passkeys can be used as second factor
+- **CSRF Protection** - Uses same HMAC key for OAuth state signing
+- **Session Management** - Passkey login creates standard session tokens

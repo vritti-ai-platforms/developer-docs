@@ -19,7 +19,11 @@
           },
           {
             "group": "Authentication",
-            "pages": ["features/csrf"]
+            "pages": [
+              "features/csrf",
+              "features/passkeys",
+              "features/mfa"
+            ]
           }
         ]
       }
