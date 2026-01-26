@@ -1,0 +1,28 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Developer Knowledge Base",
+  "description": "Internal documentation for understanding feature implementations",
+  "colors": {
+    "primary": "#3B82F6",
+    "light": "#F8FAFC",
+    "dark": "#0F172A"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Features",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["index"]
+          },
+          {
+            "group": "Authentication",
+            "pages": ["features/csrf"]
+          }
+        ]
+      }
+    ]
+  }
+}
