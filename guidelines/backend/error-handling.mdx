@@ -1,0 +1,505 @@
+---
+title: Error Handling (Backend)
+description: Exception handling patterns and RFC 7807 error responses in NestJS
+---
+
+# Error Handling (Backend)
+
+Vritti API uses a custom exception hierarchy with RFC 7807 Problem Details format. This guide covers exception classes, filters, and best practices.
+
+## Error Response Format
+
+### RFC 7807 Problem Details
+
+```typescript
+// types/error-response.types.ts
+interface ApiErrorResponse {
+  title: string;       // HTTP status text
+  status: number;      // HTTP status code
+  detail?: string;     // Human-readable explanation
+  errors: FieldError[]; // Field-specific errors
+}
+
+interface FieldError {
+  field?: string;      // Form field name (optional)
+  message: string;     // Error message
+}
+```
+
+### Example Responses
+
+```json
+// 400 Bad Request - Validation Error
+{
+  "title": "Bad Request",
+  "status": 400,
+  "detail": "Please check your input and try again",
+  "errors": [
+    { "field": "email", "message": "Invalid email format" },
+    { "field": "password", "message": "Password too short" }
+  ]
+}
+
+// 404 Not Found
+{
+  "title": "Not Found",
+  "status": 404,
+  "detail": "The requested resource was not found",
+  "errors": [
+    { "field": "id", "message": "User not found" }
+  ]
+}
+
+// 409 Conflict
+{
+  "title": "Conflict",
+  "status": 409,
+  "detail": "This email is already registered",
+  "errors": [
+    { "field": "email", "message": "Email already exists" }
+  ]
+}
+
+// 500 Internal Server Error
+{
+  "title": "Internal Server Error",
+  "status": 500,
+  "detail": "Something went wrong. Please try again later.",
+  "errors": [
+    { "message": "An unexpected error occurred" }
+  ]
+}
+```
+
+## Exception Classes
+
+### Base Exception
+
+```typescript
+// exceptions/base-field.exception.ts
+import { HttpException, HttpStatus } from '@nestjs/common';
+
+export abstract class BaseFieldException extends HttpException {
+  constructor(
+    statusOrMessageOrErrors: HttpStatus | string | FieldError[],
+    messageOrStatus?: string | HttpStatus,
+    statusOrDetail?: HttpStatus | string,
+    detail?: string,
+  ) {
+    // Supports multiple signatures:
+    // 1. (errors: FieldError[], httpStatus: HttpStatus, detail?: string)
+    // 2. (field: string, message: string, httpStatus: HttpStatus, detail?: string)
+    // 3. (message: string, httpStatus: HttpStatus, detail?: string)
+    // 4. (httpStatus: HttpStatus)
+
+    // ... constructor logic
+    super(response, status);
+  }
+}
+```
+
+### HTTP Exception Classes
+
+```typescript
+// exceptions/bad-request.exception.ts
+export class BadRequestException extends BaseFieldException {
+  constructor(
+    messageOrField: string | FieldError[],
+    fieldMessageOrDetail?: string,
+    detail?: string,
+  ) {
+    if (Array.isArray(messageOrField)) {
+      // Multiple field errors
+      super(messageOrField, HttpStatus.BAD_REQUEST, fieldMessageOrDetail);
+    } else if (detail !== undefined) {
+      // Field, message, detail
+      super(messageOrField, fieldMessageOrDetail!, HttpStatus.BAD_REQUEST, detail);
+    } else if (fieldMessageOrDetail !== undefined) {
+      // Field, message
+      super(messageOrField, fieldMessageOrDetail, HttpStatus.BAD_REQUEST);
+    } else {
+      // General message
+      super(messageOrField, HttpStatus.BAD_REQUEST);
+    }
+  }
+}
+```
+
+### Available Exception Classes
+
+| Exception | HTTP Status | Use Case |
+|-----------|-------------|----------|
+| `BadRequestException` | 400 | Invalid input, validation errors |
+| `UnauthorizedException` | 401 | Authentication required |
+| `ForbiddenException` | 403 | Permission denied |
+| `NotFoundException` | 404 | Resource not found |
+| `ConflictException` | 409 | Duplicate resource, constraint violation |
+| `ValidationException` | 422 | Semantic validation errors |
+| `TooManyRequestsException` | 429 | Rate limiting |
+| `InternalServerErrorException` | 500 | Unexpected errors |
+
+## Using Exceptions
+
+### Single Field Error
+
+```typescript
+// Field and message
+throw new BadRequestException('email', 'Invalid email format');
+
+// Field, message, and detail
+throw new BadRequestException(
+  'email',
+  'Invalid email format',
+  'Please enter a valid email address like user@example.com',
+);
+```
+
+### Multiple Field Errors
+
+```typescript
+throw new BadRequestException([
+  { field: 'email', message: 'Invalid email format' },
+  { field: 'password', message: 'Password must be at least 8 characters' },
+  { field: 'confirmPassword', message: 'Passwords do not match' },
+]);
+```
+
+### General Error (No Field)
+
+```typescript
+throw new BadRequestException('Invalid request');
+
+throw new UnauthorizedException(
+  'Session expired',
+  'Please log in again to continue',
+);
+```
+
+### Common Patterns
+
+```typescript
+// Not found
+throw new NotFoundException(
+  'id',
+  'User not found',
+  `No user exists with ID '${id}'`,
+);
+
+// Conflict (duplicate)
+throw new ConflictException(
+  'email',
+  'Email already in use',
+  'This email address is registered to another account',
+);
+
+// Permission denied
+throw new ForbiddenException(
+  'tenant',
+  'Access denied',
+  'You do not have permission to access this tenant',
+);
+```
+
+## Global Exception Filter
+
+### Filter Implementation
+
+```typescript
+// filters/http-exception.filter.ts
+import {
+  Catch,
+  ExceptionFilter,
+  ArgumentsHost,
+  HttpException,
+  HttpStatus,
+  Logger,
+} from '@nestjs/common';
+import { FastifyReply } from 'fastify';
+
+@Catch()
+export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpExceptionFilter.name);
+
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<FastifyReply>();
+
+    let status: number;
+    let title: string;
+    let detail: string | undefined;
+    let errors: FieldError[] = [];
+
+    if (exception instanceof BaseFieldException) {
+      // Custom field exception
+      status = exception.getStatus();
+      const responseBody = exception.getResponse() as any;
+      title = responseBody.title || getHttpStatusTitle(status);
+      detail = responseBody.detail;
+      errors = responseBody.errors || [];
+
+    } else if (exception instanceof HttpException) {
+      // NestJS exception
+      status = exception.getStatus();
+      const responseBody = exception.getResponse();
+      title = getHttpStatusTitle(status);
+
+      if (typeof responseBody === 'object' && responseBody !== null) {
+        // Class-validator errors
+        if ('message' in responseBody && Array.isArray(responseBody.message)) {
+          errors = responseBody.message.map((msg: string) => ({ message: msg }));
+        } else if ('message' in responseBody) {
+          errors = [{ message: responseBody.message as string }];
+        }
+      } else {
+        errors = [{ message: String(responseBody) }];
+      }
+
+    } else {
+      // Unknown error
+      status = HttpStatus.INTERNAL_SERVER_ERROR;
+      title = 'Internal Server Error';
+      detail = 'An unexpected error occurred';
+      errors = [{ message: 'Something went wrong. Please try again later.' }];
+
+      // Log unknown errors
+      this.logger.error(
+        `Unhandled exception: ${exception}`,
+        exception instanceof Error ? exception.stack : undefined,
+      );
+    }
+
+    const problemDetails: ApiErrorResponse = {
+      title,
+      status,
+      ...(detail && { detail }),
+      errors,
+    };
+
+    response.status(status).send(problemDetails);
+  }
+}
+```
+
+### Registration
+
+```typescript
+// main.ts
+import { HttpExceptionFilter } from '@vritti/api-sdk';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalFilters(new HttpExceptionFilter());
+  await app.listen(3000);
+}
+```
+
+## Service Error Handling
+
+### Pattern
+
+```typescript
+@Injectable()
+export class UserService {
+  private readonly logger = new Logger(UserService.name);
+
+  async findById(id: string): Promise<User> {
+    const user = await this.userRepository.findById(id);
+
+    if (!user) {
+      throw new NotFoundException(
+        'id',
+        'User not found',
+        `No user exists with ID '${id}'`,
+      );
+    }
+
+    return user;
+  }
+
+  async create(dto: CreateUserDto): Promise<User> {
+    // Check for conflicts
+    const existing = await this.userRepository.findByEmail(dto.email);
+    if (existing) {
+      throw new ConflictException(
+        'email',
+        'Email already registered',
+        'An account with this email already exists. Please log in or use a different email.',
+      );
+    }
+
+    try {
+      return await this.userRepository.create(dto);
+    } catch (error) {
+      this.handleDatabaseError(error);
+      throw error;
+    }
+  }
+
+  private handleDatabaseError(error: unknown): void {
+    // PostgreSQL unique constraint violation
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      (error as any).code === '23505'
+    ) {
+      throw new ConflictException(
+        'Duplicate entry',
+        'A record with this value already exists',
+      );
+    }
+
+    // Log and rethrow unexpected errors
+    this.logger.error(`Database error: ${error}`, (error as Error)?.stack);
+  }
+}
+```
+
+### Transaction Error Handling
+
+```typescript
+async transferFunds(from: string, to: string, amount: number): Promise<void> {
+  try {
+    await this.database.transaction(async (tx) => {
+      const fromAccount = await this.accountRepository.findById(from, { tx });
+
+      if (!fromAccount) {
+        throw new NotFoundException('from', 'Source account not found');
+      }
+
+      if (fromAccount.balance < amount) {
+        throw new BadRequestException(
+          'amount',
+          'Insufficient funds',
+          `Available balance: ${fromAccount.balance}`,
+        );
+      }
+
+      // Perform transfer...
+    });
+  } catch (error) {
+    if (error instanceof HttpException) {
+      throw error; // Re-throw known exceptions
+    }
+
+    this.logger.error(`Transfer failed: ${error}`);
+    throw new InternalServerErrorException(
+      'Transfer failed',
+      'Unable to complete the transfer. Please try again.',
+    );
+  }
+}
+```
+
+## Controller Error Handling
+
+### Validation Pipe Errors
+
+```typescript
+// main.ts
+app.useGlobalPipes(
+  new ValidationPipe({
+    whitelist: true,
+    forbidNonWhitelisted: true,
+    transform: true,
+    exceptionFactory: (errors) => {
+      const fieldErrors = errors.map((error) => ({
+        field: error.property,
+        message: Object.values(error.constraints || {}).join(', '),
+      }));
+      return new BadRequestException(fieldErrors);
+    },
+  }),
+);
+```
+
+### Guard Errors
+
+```typescript
+@Injectable()
+export class JwtAuthGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const request = context.switchToHttp().getRequest();
+    const token = this.extractToken(request);
+
+    if (!token) {
+      throw new UnauthorizedException(
+        'Authentication required',
+        'Please provide a valid access token',
+      );
+    }
+
+    try {
+      const payload = this.jwtService.verify(token);
+      request.user = payload;
+      return true;
+    } catch {
+      throw new UnauthorizedException(
+        'Invalid token',
+        'Your session has expired. Please log in again.',
+      );
+    }
+  }
+}
+```
+
+## Best Practices
+
+<Accordion title="Use Specific Exception Types">
+```typescript
+// ✅ Good - specific exception
+throw new NotFoundException('user', 'User not found');
+throw new ConflictException('email', 'Email already exists');
+throw new ForbiddenException('role', 'Insufficient permissions');
+
+// ❌ Avoid - generic exception
+throw new HttpException('Error', 400);
+throw new Error('Something went wrong');
+```
+</Accordion>
+
+<Accordion title="Include Helpful Details">
+```typescript
+// ✅ Good - helpful messages
+throw new BadRequestException(
+  'password',
+  'Password too weak',
+  'Password must contain at least 8 characters with uppercase, lowercase, number, and special character',
+);
+
+// ❌ Avoid - vague messages
+throw new BadRequestException('password', 'Invalid');
+```
+</Accordion>
+
+<Accordion title="Log Unexpected Errors">
+```typescript
+try {
+  await externalService.call();
+} catch (error) {
+  this.logger.error(
+    `External service failed: ${error.message}`,
+    error.stack,
+  );
+
+  throw new InternalServerErrorException(
+    'Service unavailable',
+    'Unable to process your request. Please try again later.',
+  );
+}
+```
+</Accordion>
+
+<Accordion title="Don't Expose Internal Details">
+```typescript
+// ✅ Good - user-friendly message
+throw new InternalServerErrorException(
+  'Database error',
+  'Unable to save your data. Please try again.',
+);
+
+// ❌ Avoid - exposing internals
+throw new InternalServerErrorException(
+  'PostgreSQL connection failed: ECONNREFUSED 127.0.0.1:5432',
+);
+```
+</Accordion>

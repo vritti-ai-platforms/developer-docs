@@ -1,0 +1,1333 @@
+---
+title: "Health Checks"
+description: "Implementing robust health check endpoints for Kubernetes, load balancers, and monitoring systems in NestJS with Fastify"
+---
+
+## Overview
+
+Health checks are critical endpoints that allow orchestration platforms, load balancers, and monitoring systems to determine the operational status of your application. This guide covers implementing comprehensive health check strategies for production deployments.
+
+<Info>
+Health checks should be fast, reliable, and provide meaningful status information without exposing sensitive details.
+</Info>
+
+## Health Check Endpoint Design
+
+### Design Principles
+
+<CardGroup cols={2}>
+  <Card title="Fast Response" icon="bolt">
+    Health checks should respond within milliseconds to avoid timeout issues
+  </Card>
+  <Card title="Minimal Dependencies" icon="diagram-project">
+    Liveness probes should have minimal dependencies to avoid false negatives
+  </Card>
+  <Card title="Meaningful Status" icon="chart-simple">
+    Provide actionable information about service health
+  </Card>
+  <Card title="Security" icon="shield">
+    Don't expose sensitive internal details in health responses
+  </Card>
+</CardGroup>
+
+### Endpoint Structure
+
+```
+GET /health          # Combined health status
+GET /health/live     # Liveness probe (is the app running?)
+GET /health/ready    # Readiness probe (can the app serve traffic?)
+```
+
+## Implementing the /health Endpoint
+
+### Installing Dependencies
+
+```bash
+npm install @nestjs/terminus
+```
+
+### Basic Health Module Setup
+
+```typescript
+// src/health/health.module.ts
+import { Module } from '@nestjs/common';
+import { TerminusModule } from '@nestjs/terminus';
+import { HttpModule } from '@nestjs/axios';
+import { HealthController } from './health.controller';
+import { DatabaseHealthIndicator } from './indicators/database.health';
+import { RedisHealthIndicator } from './indicators/redis.health';
+import { ExternalServiceHealthIndicator } from './indicators/external-service.health';
+
+@Module({
+  imports: [
+    TerminusModule.forRoot({
+      errorLogStyle: 'pretty',
+      gracefulShutdownTimeoutMs: 10000,
+    }),
+    HttpModule,
+  ],
+  controllers: [HealthController],
+  providers: [
+    DatabaseHealthIndicator,
+    RedisHealthIndicator,
+    ExternalServiceHealthIndicator,
+  ],
+})
+export class HealthModule {}
+```
+
+### Health Controller Implementation
+
+```typescript
+// src/health/health.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import {
+  HealthCheck,
+  HealthCheckService,
+  HealthCheckResult,
+  MemoryHealthIndicator,
+  DiskHealthIndicator,
+} from '@nestjs/terminus';
+import { DatabaseHealthIndicator } from './indicators/database.health';
+import { RedisHealthIndicator } from './indicators/redis.health';
+import { ExternalServiceHealthIndicator } from './indicators/external-service.health';
+
+@Controller('health')
+export class HealthController {
+  constructor(
+    private health: HealthCheckService,
+    private db: DatabaseHealthIndicator,
+    private redis: RedisHealthIndicator,
+    private memory: MemoryHealthIndicator,
+    private disk: DiskHealthIndicator,
+    private externalServices: ExternalServiceHealthIndicator,
+  ) {}
+
+  /**
+   * Combined health check - returns detailed status of all dependencies
+   */
+  @Get()
+  @HealthCheck()
+  async check(): Promise<HealthCheckResult> {
+    return this.health.check([
+      // Database connectivity
+      () => this.db.isHealthy('database'),
+
+      // Redis connectivity
+      () => this.redis.isHealthy('redis'),
+
+      // Memory usage (fail if heap exceeds 500MB)
+      () => this.memory.checkHeap('memory_heap', 500 * 1024 * 1024),
+
+      // RSS memory (fail if exceeds 1GB)
+      () => this.memory.checkRSS('memory_rss', 1024 * 1024 * 1024),
+
+      // Disk storage (fail if less than 10% free)
+      () => this.disk.checkStorage('disk', {
+        path: '/',
+        thresholdPercent: 0.9,
+      }),
+
+      // External services
+      () => this.externalServices.isHealthy('external_apis'),
+    ]);
+  }
+
+  /**
+   * Liveness probe - checks if the application is running
+   * Should have minimal dependencies
+   */
+  @Get('live')
+  @HealthCheck()
+  async liveness(): Promise<HealthCheckResult> {
+    return this.health.check([
+      // Only check that the app is responsive
+      () => Promise.resolve({
+        app: {
+          status: 'up',
+          timestamp: new Date().toISOString(),
+        },
+      }),
+    ]);
+  }
+
+  /**
+   * Readiness probe - checks if the application can serve traffic
+   * Includes critical dependencies
+   */
+  @Get('ready')
+  @HealthCheck()
+  async readiness(): Promise<HealthCheckResult> {
+    return this.health.check([
+      // Database must be available
+      () => this.db.isHealthy('database'),
+
+      // Redis must be available for caching/sessions
+      () => this.redis.isHealthy('redis'),
+
+      // Memory should be within acceptable limits
+      () => this.memory.checkHeap('memory_heap', 500 * 1024 * 1024),
+    ]);
+  }
+}
+```
+
+## Liveness vs Readiness Probes
+
+Understanding the difference between liveness and readiness probes is crucial for proper Kubernetes configuration.
+
+<Tabs>
+  <Tab title="Liveness Probe">
+    ### Purpose
+    Determines if the application needs to be restarted.
+
+    ### When it Fails
+    - Application is deadlocked
+    - Application is unresponsive
+    - Critical internal error
+
+    ### Kubernetes Behavior
+    Container is killed and restarted.
+
+    ### Best Practices
+    - Keep checks minimal
+    - Avoid external dependencies
+    - Fast response time
+    - Don't include database checks
+
+    ```typescript
+    // Minimal liveness check
+    @Get('live')
+    async liveness() {
+      return {
+        status: 'ok',
+        timestamp: Date.now(),
+      };
+    }
+    ```
+  </Tab>
+  <Tab title="Readiness Probe">
+    ### Purpose
+    Determines if the application can receive traffic.
+
+    ### When it Fails
+    - Database is unavailable
+    - Cache is not ready
+    - Dependencies are down
+    - Application is still initializing
+
+    ### Kubernetes Behavior
+    Pod is removed from service endpoints (no traffic routed).
+
+    ### Best Practices
+    - Include critical dependencies
+    - Check database connectivity
+    - Verify cache availability
+    - Can be more thorough than liveness
+
+    ```typescript
+    // Comprehensive readiness check
+    @Get('ready')
+    @HealthCheck()
+    async readiness() {
+      return this.health.check([
+        () => this.db.isHealthy('database'),
+        () => this.redis.isHealthy('redis'),
+        () => this.queue.isHealthy('queue'),
+      ]);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+Never include database or external service checks in liveness probes. A temporary database outage should not cause all pods to restart simultaneously.
+</Warning>
+
+## Database Health Check
+
+### PostgreSQL Health Indicator
+
+```typescript
+// src/health/indicators/database.health.ts
+import { Injectable, Logger } from '@nestjs/common';
+import {
+  HealthIndicator,
+  HealthIndicatorResult,
+  HealthCheckError,
+} from '@nestjs/terminus';
+import { DataSource } from 'typeorm';
+
+@Injectable()
+export class DatabaseHealthIndicator extends HealthIndicator {
+  private readonly logger = new Logger(DatabaseHealthIndicator.name);
+
+  constructor(private readonly dataSource: DataSource) {
+    super();
+  }
+
+  async isHealthy(key: string): Promise<HealthIndicatorResult> {
+    const timeout = 5000; // 5 second timeout
+    const startTime = Date.now();
+
+    try {
+      // Create a promise that rejects after timeout
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Database health check timeout')), timeout);
+      });
+
+      // Race between the actual query and timeout
+      await Promise.race([
+        this.dataSource.query('SELECT 1'),
+        timeoutPromise,
+      ]);
+
+      const responseTime = Date.now() - startTime;
+
+      return this.getStatus(key, true, {
+        responseTime: `${responseTime}ms`,
+        database: this.dataSource.options.database,
+        type: this.dataSource.options.type,
+      });
+    } catch (error) {
+      this.logger.error(`Database health check failed: ${error.message}`);
+
+      const result = this.getStatus(key, false, {
+        message: error.message,
+        responseTime: `${Date.now() - startTime}ms`,
+      });
+
+      throw new HealthCheckError('Database check failed', result);
+    }
+  }
+
+  /**
+   * Detailed database health check with connection pool info
+   */
+  async isHealthyDetailed(key: string): Promise<HealthIndicatorResult> {
+    try {
+      const startTime = Date.now();
+
+      // Basic connectivity check
+      await this.dataSource.query('SELECT 1');
+
+      // Get connection pool statistics (PostgreSQL specific)
+      const poolStats = await this.dataSource.query(`
+        SELECT
+          count(*) FILTER (WHERE state = 'active') as active_connections,
+          count(*) FILTER (WHERE state = 'idle') as idle_connections,
+          count(*) as total_connections
+        FROM pg_stat_activity
+        WHERE datname = current_database()
+      `);
+
+      const responseTime = Date.now() - startTime;
+
+      return this.getStatus(key, true, {
+        responseTime: `${responseTime}ms`,
+        connections: {
+          active: parseInt(poolStats[0]?.active_connections || '0'),
+          idle: parseInt(poolStats[0]?.idle_connections || '0'),
+          total: parseInt(poolStats[0]?.total_connections || '0'),
+        },
+      });
+    } catch (error) {
+      this.logger.error(`Detailed database health check failed: ${error.message}`);
+      throw new HealthCheckError(
+        'Database check failed',
+        this.getStatus(key, false, { message: error.message }),
+      );
+    }
+  }
+}
+```
+
+### Prisma Health Indicator
+
+```typescript
+// src/health/indicators/prisma.health.ts
+import { Injectable } from '@nestjs/common';
+import {
+  HealthIndicator,
+  HealthIndicatorResult,
+  HealthCheckError,
+} from '@nestjs/terminus';
+import { PrismaService } from '../../prisma/prisma.service';
+
+@Injectable()
+export class PrismaHealthIndicator extends HealthIndicator {
+  constructor(private readonly prisma: PrismaService) {
+    super();
+  }
+
+  async isHealthy(key: string): Promise<HealthIndicatorResult> {
+    const startTime = Date.now();
+
+    try {
+      await this.prisma.$queryRaw`SELECT 1`;
+
+      return this.getStatus(key, true, {
+        responseTime: `${Date.now() - startTime}ms`,
+      });
+    } catch (error) {
+      throw new HealthCheckError(
+        'Prisma check failed',
+        this.getStatus(key, false, { message: error.message }),
+      );
+    }
+  }
+}
+```
+
+## External Service Health Checks
+
+### HTTP Service Health Indicator
+
+```typescript
+// src/health/indicators/external-service.health.ts
+import { Injectable, Logger } from '@nestjs/common';
+import {
+  HealthIndicator,
+  HealthIndicatorResult,
+  HealthCheckError,
+} from '@nestjs/terminus';
+import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
+import { firstValueFrom, timeout, catchError } from 'rxjs';
+
+interface ExternalServiceConfig {
+  name: string;
+  url: string;
+  timeout: number;
+  critical: boolean;
+}
+
+@Injectable()
+export class ExternalServiceHealthIndicator extends HealthIndicator {
+  private readonly logger = new Logger(ExternalServiceHealthIndicator.name);
+  private readonly services: ExternalServiceConfig[];
+
+  constructor(
+    private readonly httpService: HttpService,
+    private readonly configService: ConfigService,
+  ) {
+    super();
+
+    this.services = [
+      {
+        name: 'payment_gateway',
+        url: this.configService.get('PAYMENT_GATEWAY_HEALTH_URL'),
+        timeout: 5000,
+        critical: true,
+      },
+      {
+        name: 'email_service',
+        url: this.configService.get('EMAIL_SERVICE_HEALTH_URL'),
+        timeout: 3000,
+        critical: false,
+      },
+      {
+        name: 'analytics_service',
+        url: this.configService.get('ANALYTICS_HEALTH_URL'),
+        timeout: 3000,
+        critical: false,
+      },
+    ];
+  }
+
+  async isHealthy(key: string): Promise<HealthIndicatorResult> {
+    const results = await Promise.allSettled(
+      this.services.map(service => this.checkService(service)),
+    );
+
+    const serviceStatuses: Record<string, any> = {};
+    let hasFailure = false;
+    let hasCriticalFailure = false;
+
+    results.forEach((result, index) => {
+      const service = this.services[index];
+
+      if (result.status === 'fulfilled') {
+        serviceStatuses[service.name] = result.value;
+      } else {
+        hasFailure = true;
+        if (service.critical) {
+          hasCriticalFailure = true;
+        }
+        serviceStatuses[service.name] = {
+          status: 'down',
+          error: result.reason?.message || 'Unknown error',
+          critical: service.critical,
+        };
+      }
+    });
+
+    // Only fail the health check if a critical service is down
+    if (hasCriticalFailure) {
+      throw new HealthCheckError(
+        'Critical external service is unavailable',
+        this.getStatus(key, false, serviceStatuses),
+      );
+    }
+
+    return this.getStatus(key, true, {
+      services: serviceStatuses,
+      warning: hasFailure ? 'Some non-critical services are unavailable' : undefined,
+    });
+  }
+
+  private async checkService(service: ExternalServiceConfig): Promise<any> {
+    const startTime = Date.now();
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(service.url).pipe(
+          timeout(service.timeout),
+          catchError(error => {
+            throw new Error(`Request failed: ${error.message}`);
+          }),
+        ),
+      );
+
+      return {
+        status: 'up',
+        responseTime: `${Date.now() - startTime}ms`,
+        statusCode: response.status,
+      };
+    } catch (error) {
+      this.logger.warn(`External service ${service.name} health check failed: ${error.message}`);
+      throw error;
+    }
+  }
+}
+```
+
+### Redis Health Indicator
+
+```typescript
+// src/health/indicators/redis.health.ts
+import { Injectable, Logger } from '@nestjs/common';
+import {
+  HealthIndicator,
+  HealthIndicatorResult,
+  HealthCheckError,
+} from '@nestjs/terminus';
+import { InjectRedis } from '@nestjs-modules/ioredis';
+import Redis from 'ioredis';
+
+@Injectable()
+export class RedisHealthIndicator extends HealthIndicator {
+  private readonly logger = new Logger(RedisHealthIndicator.name);
+
+  constructor(@InjectRedis() private readonly redis: Redis) {
+    super();
+  }
+
+  async isHealthy(key: string): Promise<HealthIndicatorResult> {
+    const startTime = Date.now();
+
+    try {
+      // PING command is the standard way to check Redis connectivity
+      const result = await this.redis.ping();
+
+      if (result !== 'PONG') {
+        throw new Error(`Unexpected PING response: ${result}`);
+      }
+
+      // Get additional Redis info
+      const info = await this.redis.info('server');
+      const version = info.match(/redis_version:([^\r\n]+)/)?.[1] || 'unknown';
+
+      return this.getStatus(key, true, {
+        responseTime: `${Date.now() - startTime}ms`,
+        version,
+      });
+    } catch (error) {
+      this.logger.error(`Redis health check failed: ${error.message}`);
+
+      throw new HealthCheckError(
+        'Redis check failed',
+        this.getStatus(key, false, {
+          message: error.message,
+          responseTime: `${Date.now() - startTime}ms`,
+        }),
+      );
+    }
+  }
+
+  /**
+   * Detailed Redis health check with memory and connection info
+   */
+  async isHealthyDetailed(key: string): Promise<HealthIndicatorResult> {
+    const startTime = Date.now();
+
+    try {
+      await this.redis.ping();
+
+      const [memoryInfo, clientInfo] = await Promise.all([
+        this.redis.info('memory'),
+        this.redis.info('clients'),
+      ]);
+
+      const usedMemory = memoryInfo.match(/used_memory_human:([^\r\n]+)/)?.[1] || 'unknown';
+      const connectedClients = clientInfo.match(/connected_clients:(\d+)/)?.[1] || '0';
+
+      return this.getStatus(key, true, {
+        responseTime: `${Date.now() - startTime}ms`,
+        memory: {
+          used: usedMemory,
+        },
+        connections: {
+          active: parseInt(connectedClients),
+        },
+      });
+    } catch (error) {
+      throw new HealthCheckError(
+        'Redis check failed',
+        this.getStatus(key, false, { message: error.message }),
+      );
+    }
+  }
+}
+```
+
+## Response Format Standards
+
+### Standard Health Response Format
+
+<CodeGroup>
+
+```json Healthy Response
+{
+  "status": "ok",
+  "info": {
+    "database": {
+      "status": "up",
+      "responseTime": "5ms"
+    },
+    "redis": {
+      "status": "up",
+      "responseTime": "2ms",
+      "version": "7.0.5"
+    },
+    "memory_heap": {
+      "status": "up"
+    },
+    "external_apis": {
+      "status": "up",
+      "services": {
+        "payment_gateway": {
+          "status": "up",
+          "responseTime": "120ms"
+        },
+        "email_service": {
+          "status": "up",
+          "responseTime": "85ms"
+        }
+      }
+    }
+  },
+  "error": {},
+  "details": {
+    "database": {
+      "status": "up",
+      "responseTime": "5ms"
+    },
+    "redis": {
+      "status": "up",
+      "responseTime": "2ms",
+      "version": "7.0.5"
+    },
+    "memory_heap": {
+      "status": "up"
+    },
+    "external_apis": {
+      "status": "up",
+      "services": {
+        "payment_gateway": {
+          "status": "up",
+          "responseTime": "120ms"
+        },
+        "email_service": {
+          "status": "up",
+          "responseTime": "85ms"
+        }
+      }
+    }
+  }
+}
+```
+
+```json Unhealthy Response
+{
+  "status": "error",
+  "info": {
+    "redis": {
+      "status": "up",
+      "responseTime": "2ms"
+    }
+  },
+  "error": {
+    "database": {
+      "status": "down",
+      "message": "Connection refused",
+      "responseTime": "5002ms"
+    }
+  },
+  "details": {
+    "database": {
+      "status": "down",
+      "message": "Connection refused",
+      "responseTime": "5002ms"
+    },
+    "redis": {
+      "status": "up",
+      "responseTime": "2ms"
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+### Custom Response Transformer
+
+```typescript
+// src/health/health-response.transformer.ts
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+export interface StandardHealthResponse {
+  status: 'healthy' | 'unhealthy' | 'degraded';
+  version: string;
+  timestamp: string;
+  uptime: number;
+  checks: Record<string, CheckResult>;
+}
+
+interface CheckResult {
+  status: 'pass' | 'fail' | 'warn';
+  componentType: string;
+  observedValue?: any;
+  observedUnit?: string;
+  time?: string;
+  output?: string;
+}
+
+@Injectable()
+export class HealthResponseTransformer implements NestInterceptor {
+  private readonly startTime = Date.now();
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<StandardHealthResponse> {
+    return next.handle().pipe(
+      map(healthResult => this.transformResponse(healthResult)),
+    );
+  }
+
+  private transformResponse(healthResult: any): StandardHealthResponse {
+    const checks: Record<string, CheckResult> = {};
+
+    // Transform each check result
+    for (const [key, value] of Object.entries(healthResult.details || {})) {
+      checks[key] = {
+        status: (value as any).status === 'up' ? 'pass' : 'fail',
+        componentType: this.inferComponentType(key),
+        observedValue: (value as any).responseTime,
+        time: new Date().toISOString(),
+        output: (value as any).message,
+      };
+    }
+
+    return {
+      status: healthResult.status === 'ok' ? 'healthy' : 'unhealthy',
+      version: process.env.APP_VERSION || '1.0.0',
+      timestamp: new Date().toISOString(),
+      uptime: Math.floor((Date.now() - this.startTime) / 1000),
+      checks,
+    };
+  }
+
+  private inferComponentType(key: string): string {
+    if (key.includes('database') || key.includes('db')) return 'datastore';
+    if (key.includes('redis') || key.includes('cache')) return 'cache';
+    if (key.includes('memory') || key.includes('disk')) return 'system';
+    if (key.includes('http') || key.includes('api')) return 'http';
+    return 'component';
+  }
+}
+```
+
+## Kubernetes Probe Configuration
+
+### Deployment Configuration
+
+```yaml
+# kubernetes/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-server
+  labels:
+    app: api-server
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api-server
+  template:
+    metadata:
+      labels:
+        app: api-server
+    spec:
+      containers:
+        - name: api-server
+          image: your-registry/api-server:latest
+          ports:
+            - containerPort: 3000
+
+          # Liveness Probe - Is the container alive?
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 3000
+            # Wait 30 seconds before first probe
+            initialDelaySeconds: 30
+            # Probe every 10 seconds
+            periodSeconds: 10
+            # Wait 5 seconds for response
+            timeoutSeconds: 5
+            # Restart after 3 consecutive failures
+            failureThreshold: 3
+            # Consider healthy after 1 success
+            successThreshold: 1
+
+          # Readiness Probe - Can the container serve traffic?
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 3000
+            # Start probing after 10 seconds
+            initialDelaySeconds: 10
+            # Probe every 5 seconds
+            periodSeconds: 5
+            # Wait 3 seconds for response
+            timeoutSeconds: 3
+            # Remove from service after 3 failures
+            failureThreshold: 3
+            # Add to service after 1 success
+            successThreshold: 1
+
+          # Startup Probe - Is the application starting up?
+          # Useful for slow-starting containers
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: 3000
+            # Allow up to 5 minutes for startup (30 * 10s)
+            failureThreshold: 30
+            periodSeconds: 10
+
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3000"
+```
+
+### Probe Timing Guidelines
+
+| Probe Type | Initial Delay | Period | Timeout | Failure Threshold |
+|------------|---------------|--------|---------|-------------------|
+| Liveness   | 30-60s        | 10-15s | 5-10s   | 3                 |
+| Readiness  | 5-15s         | 5-10s  | 3-5s    | 3                 |
+| Startup    | 0s            | 10s    | 5s      | 30 (5 min total)  |
+
+<Warning>
+Setting probe timeouts too low can cause false negatives during high load. Always account for worst-case response times.
+</Warning>
+
+## Load Balancer Health Checks
+
+### AWS Application Load Balancer
+
+```yaml
+# terraform/alb.tf (as YAML for readability)
+resource:
+  aws_lb_target_group:
+    api:
+      name: api-target-group
+      port: 3000
+      protocol: HTTP
+      vpc_id: ${aws_vpc.main.id}
+      target_type: ip
+
+      health_check:
+        enabled: true
+        path: /health
+        port: traffic-port
+        protocol: HTTP
+        healthy_threshold: 2
+        unhealthy_threshold: 3
+        timeout: 5
+        interval: 30
+        matcher: "200"
+
+      deregistration_delay: 30
+      slow_start: 60
+```
+
+### NGINX Load Balancer
+
+```nginx
+# nginx/nginx.conf
+upstream api_servers {
+    zone api_servers 64k;
+
+    server api1.internal:3000 max_fails=3 fail_timeout=30s;
+    server api2.internal:3000 max_fails=3 fail_timeout=30s;
+    server api3.internal:3000 max_fails=3 fail_timeout=30s;
+
+    # Health check configuration (NGINX Plus)
+    # health_check interval=5s passes=2 fails=3 uri=/health;
+}
+
+server {
+    listen 80;
+
+    location /health {
+        # Simple health check endpoint for NGINX itself
+        access_log off;
+        return 200 "OK\n";
+        add_header Content-Type text/plain;
+    }
+
+    location / {
+        proxy_pass http://api_servers;
+        proxy_next_upstream error timeout http_500 http_502 http_503;
+        proxy_next_upstream_tries 3;
+
+        # Health check headers
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host $host;
+    }
+}
+```
+
+### HAProxy Configuration
+
+```haproxy
+# haproxy/haproxy.cfg
+global
+    log stdout format raw local0
+
+defaults
+    mode http
+    log global
+    option httplog
+    option dontlognull
+    timeout connect 5000ms
+    timeout client 50000ms
+    timeout server 50000ms
+
+frontend http_front
+    bind *:80
+    default_backend api_servers
+
+backend api_servers
+    balance roundrobin
+    option httpchk GET /health
+    http-check expect status 200
+
+    # Health check interval and thresholds
+    default-server inter 5s fall 3 rise 2
+
+    server api1 api1.internal:3000 check
+    server api2 api2.internal:3000 check
+    server api3 api3.internal:3000 check
+```
+
+## Graceful Shutdown Handling
+
+### Implementing Graceful Shutdown
+
+```typescript
+// src/main.ts
+import { NestFactory } from '@nestjs/core';
+import {
+  FastifyAdapter,
+  NestFastifyApplication,
+} from '@nestjs/platform-fastify';
+import { Logger } from '@nestjs/common';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const logger = new Logger('Bootstrap');
+
+  const app = await NestFactory.create<NestFastifyApplication>(
+    AppModule,
+    new FastifyAdapter(),
+  );
+
+  // Enable graceful shutdown hooks
+  app.enableShutdownHooks();
+
+  const port = process.env.PORT || 3000;
+  await app.listen(port, '0.0.0.0');
+
+  logger.log(`Application listening on port ${port}`);
+}
+
+bootstrap();
+```
+
+### Shutdown Service
+
+```typescript
+// src/common/services/shutdown.service.ts
+import {
+  Injectable,
+  OnModuleDestroy,
+  OnApplicationShutdown,
+  Logger,
+} from '@nestjs/common';
+import { DataSource } from 'typeorm';
+import Redis from 'ioredis';
+import { InjectRedis } from '@nestjs-modules/ioredis';
+
+@Injectable()
+export class ShutdownService implements OnModuleDestroy, OnApplicationShutdown {
+  private readonly logger = new Logger(ShutdownService.name);
+  private isShuttingDown = false;
+
+  constructor(
+    private readonly dataSource: DataSource,
+    @InjectRedis() private readonly redis: Redis,
+  ) {}
+
+  isApplicationShuttingDown(): boolean {
+    return this.isShuttingDown;
+  }
+
+  async onModuleDestroy() {
+    this.logger.log('Module destroy initiated...');
+    this.isShuttingDown = true;
+  }
+
+  async onApplicationShutdown(signal?: string) {
+    this.logger.log(`Application shutdown initiated (signal: ${signal})`);
+
+    const shutdownTimeout = 30000; // 30 seconds max
+    const shutdownPromise = this.performGracefulShutdown();
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Shutdown timeout')), shutdownTimeout);
+    });
+
+    try {
+      await Promise.race([shutdownPromise, timeoutPromise]);
+      this.logger.log('Graceful shutdown completed');
+    } catch (error) {
+      this.logger.error(`Shutdown error: ${error.message}`);
+      process.exit(1);
+    }
+  }
+
+  private async performGracefulShutdown(): Promise<void> {
+    // Step 1: Stop accepting new requests (handled by framework)
+    this.logger.log('Stopped accepting new requests');
+
+    // Step 2: Wait for in-flight requests to complete
+    await this.waitForInFlightRequests();
+
+    // Step 3: Close database connections
+    await this.closeDatabaseConnections();
+
+    // Step 4: Close Redis connections
+    await this.closeRedisConnections();
+
+    // Step 5: Flush logs and metrics
+    await this.flushLogsAndMetrics();
+  }
+
+  private async waitForInFlightRequests(): Promise<void> {
+    // Allow time for in-flight requests to complete
+    const drainTimeout = parseInt(process.env.DRAIN_TIMEOUT || '10000');
+    this.logger.log(`Waiting ${drainTimeout}ms for in-flight requests...`);
+    await new Promise(resolve => setTimeout(resolve, drainTimeout));
+  }
+
+  private async closeDatabaseConnections(): Promise<void> {
+    try {
+      if (this.dataSource.isInitialized) {
+        await this.dataSource.destroy();
+        this.logger.log('Database connections closed');
+      }
+    } catch (error) {
+      this.logger.error(`Error closing database: ${error.message}`);
+    }
+  }
+
+  private async closeRedisConnections(): Promise<void> {
+    try {
+      await this.redis.quit();
+      this.logger.log('Redis connections closed');
+    } catch (error) {
+      this.logger.error(`Error closing Redis: ${error.message}`);
+    }
+  }
+
+  private async flushLogsAndMetrics(): Promise<void> {
+    // Implement any log/metric flushing here
+    this.logger.log('Logs and metrics flushed');
+  }
+}
+```
+
+### Health Check During Shutdown
+
+```typescript
+// src/health/health.controller.ts
+import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import { ShutdownService } from '../common/services/shutdown.service';
+
+@Controller('health')
+export class HealthController {
+  constructor(
+    private readonly health: HealthCheckService,
+    private readonly shutdownService: ShutdownService,
+    // ... other dependencies
+  ) {}
+
+  @Get('ready')
+  @HealthCheck()
+  async readiness(): Promise<HealthCheckResult> {
+    // Return 503 during shutdown to remove from load balancer
+    if (this.shutdownService.isApplicationShuttingDown()) {
+      throw new ServiceUnavailableException({
+        status: 'error',
+        message: 'Application is shutting down',
+      });
+    }
+
+    return this.health.check([
+      () => this.db.isHealthy('database'),
+      () => this.redis.isHealthy('redis'),
+    ]);
+  }
+}
+```
+
+### Kubernetes Graceful Shutdown
+
+```yaml
+# kubernetes/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-server
+spec:
+  template:
+    spec:
+      # Allow 60 seconds for graceful shutdown
+      terminationGracePeriodSeconds: 60
+
+      containers:
+        - name: api-server
+          lifecycle:
+            preStop:
+              exec:
+                # Wait for load balancer to remove pod from rotation
+                command: ["/bin/sh", "-c", "sleep 15"]
+```
+
+## Complete Implementation Example
+
+### Project Structure
+
+```
+src/
+├── health/
+│   ├── health.module.ts
+│   ├── health.controller.ts
+│   └── indicators/
+│       ├── database.health.ts
+│       ├── redis.health.ts
+│       ├── memory.health.ts
+│       └── external-service.health.ts
+├── common/
+│   └── services/
+│       └── shutdown.service.ts
+└── main.ts
+```
+
+### Integration with App Module
+
+```typescript
+// src/app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { HealthModule } from './health/health.module';
+import { ShutdownService } from './common/services/shutdown.service';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
+    TypeOrmModule.forRoot({
+      // ... database configuration
+    }),
+    HealthModule,
+  ],
+  providers: [ShutdownService],
+})
+export class AppModule {}
+```
+
+## Monitoring and Alerting
+
+### Prometheus Metrics for Health Checks
+
+```typescript
+// src/health/health-metrics.service.ts
+import { Injectable } from '@nestjs/common';
+import { Counter, Histogram, Gauge, register } from 'prom-client';
+
+@Injectable()
+export class HealthMetricsService {
+  private readonly healthCheckDuration: Histogram;
+  private readonly healthCheckStatus: Gauge;
+  private readonly healthCheckFailures: Counter;
+
+  constructor() {
+    this.healthCheckDuration = new Histogram({
+      name: 'health_check_duration_seconds',
+      help: 'Duration of health check in seconds',
+      labelNames: ['check_name'],
+      buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
+    });
+
+    this.healthCheckStatus = new Gauge({
+      name: 'health_check_status',
+      help: 'Current health check status (1 = healthy, 0 = unhealthy)',
+      labelNames: ['check_name'],
+    });
+
+    this.healthCheckFailures = new Counter({
+      name: 'health_check_failures_total',
+      help: 'Total number of health check failures',
+      labelNames: ['check_name'],
+    });
+  }
+
+  recordCheckDuration(checkName: string, durationMs: number): void {
+    this.healthCheckDuration.observe({ check_name: checkName }, durationMs / 1000);
+  }
+
+  setCheckStatus(checkName: string, isHealthy: boolean): void {
+    this.healthCheckStatus.set({ check_name: checkName }, isHealthy ? 1 : 0);
+  }
+
+  incrementFailures(checkName: string): void {
+    this.healthCheckFailures.inc({ check_name: checkName });
+  }
+}
+```
+
+### AlertManager Rules
+
+```yaml
+# alertmanager/rules/health-checks.yaml
+groups:
+  - name: health-checks
+    rules:
+      - alert: ServiceUnhealthy
+        expr: health_check_status == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service health check failing"
+          description: "Health check {{ $labels.check_name }} has been failing for more than 2 minutes"
+
+      - alert: HealthCheckSlow
+        expr: histogram_quantile(0.95, rate(health_check_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Health check response time degraded"
+          description: "95th percentile health check duration is above 1 second"
+
+      - alert: HighHealthCheckFailureRate
+        expr: rate(health_check_failures_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High health check failure rate"
+          description: "Health check {{ $labels.check_name }} is failing frequently"
+```
+
+## Best Practices Summary
+
+<AccordionGroup>
+  <Accordion title="Design Best Practices">
+    - Keep liveness probes simple and fast
+    - Include critical dependencies in readiness probes only
+    - Use appropriate timeouts for each check type
+    - Don't expose sensitive information in health responses
+    - Return meaningful status codes (200 for healthy, 503 for unhealthy)
+  </Accordion>
+
+  <Accordion title="Kubernetes Best Practices">
+    - Always configure both liveness and readiness probes
+    - Use startup probes for slow-starting applications
+    - Set appropriate initial delays to avoid premature failures
+    - Configure termination grace period for graceful shutdown
+    - Use preStop hooks for load balancer drain time
+  </Accordion>
+
+  <Accordion title="Monitoring Best Practices">
+    - Track health check duration metrics
+    - Alert on sustained failures, not individual ones
+    - Monitor health check success rate over time
+    - Log health check failures with context
+    - Dashboard visibility for all health check statuses
+  </Accordion>
+
+  <Accordion title="Shutdown Best Practices">
+    - Implement graceful shutdown handlers
+    - Close database and cache connections properly
+    - Allow in-flight requests to complete
+    - Return 503 during shutdown for readiness checks
+    - Set appropriate Kubernetes termination grace period
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Logging & Observability" icon="chart-line" href="/operations/monitoring/logging">
+    Configure structured logging for health events
+  </Card>
+  <Card title="Kubernetes Deployment" icon="dharmachakra" href="/operations/deployment/kubernetes">
+    Complete Kubernetes deployment configuration
+  </Card>
+  <Card title="Database Configuration" icon="database" href="/backend/database/configuration">
+    Database connection and pool settings
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/backend/error-handling">
+    Error handling patterns for health checks
+  </Card>
+</CardGroup>

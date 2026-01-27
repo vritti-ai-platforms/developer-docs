@@ -1,0 +1,1376 @@
+---
+title: 'Common Issues FAQ'
+description: 'Troubleshooting guide for frequently encountered issues in the Vritti monorepo'
+icon: 'circle-question'
+---
+
+# Common Issues FAQ
+
+This guide covers frequently encountered issues when working with the Vritti monorepo and their solutions.
+
+## Development Setup Issues
+
+<AccordionGroup>
+  <Accordion title="pnpm install fails with peer dependency errors">
+    **Problem:** Running `pnpm install` fails with peer dependency resolution errors.
+
+    **Solution:**
+    ```bash
+    # Clear pnpm cache and reinstall
+    pnpm store prune
+    rm -rf node_modules
+    rm pnpm-lock.yaml
+    pnpm install
+    ```
+
+    If issues persist, check your Node.js version matches the required version in `package.json`:
+    ```bash
+    node -v  # Should match engines.node in package.json
+    ```
+
+    You can also try installing with legacy peer deps handling:
+    ```bash
+    pnpm install --legacy-peer-deps
+    ```
+  </Accordion>
+
+  <Accordion title="Node.js version mismatch errors">
+    **Problem:** Build or runtime errors due to incorrect Node.js version.
+
+    **Solution:**
+    Use nvm or fnm to switch to the correct version:
+    ```bash
+    # Using nvm
+    nvm use
+
+    # Or using fnm
+    fnm use
+
+    # If .nvmrc doesn't exist, check package.json for required version
+    cat package.json | grep -A2 '"engines"'
+    ```
+
+    Install the correct version if needed:
+    ```bash
+    nvm install 20
+    nvm use 20
+    ```
+  </Accordion>
+
+  <Accordion title="Permission denied errors during installation">
+    **Problem:** `EACCES` permission denied errors when installing packages.
+
+    **Solution:**
+    Never use `sudo` with pnpm. Instead, fix npm permissions:
+    ```bash
+    # Create a directory for global packages
+    mkdir -p ~/.pnpm-global
+
+    # Configure pnpm to use it
+    pnpm config set global-dir ~/.pnpm-global
+    pnpm config set global-bin-dir ~/.pnpm-global/bin
+
+    # Add to your PATH in ~/.bashrc or ~/.zshrc
+    export PATH="$HOME/.pnpm-global/bin:$PATH"
+    ```
+  </Accordion>
+
+  <Accordion title="Workspace package not found">
+    **Problem:** Error: `Cannot find module '@vritti/shared'` or similar workspace package errors.
+
+    **Solution:**
+    1. Ensure the package is built:
+    ```bash
+    pnpm --filter @vritti/shared build
+    ```
+
+    2. Check workspace configuration in `pnpm-workspace.yaml`:
+    ```yaml
+    packages:
+      - 'apps/*'
+      - 'packages/*'
+      - 'libs/*'
+    ```
+
+    3. Verify the package.json has correct workspace reference:
+    ```json
+    {
+      "dependencies": {
+        "@vritti/shared": "workspace:*"
+      }
+    }
+    ```
+
+    4. Rebuild all packages:
+    ```bash
+    pnpm -r build
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Database Connection Problems
+
+<AccordionGroup>
+  <Accordion title="PostgreSQL connection refused">
+    **Problem:** `ECONNREFUSED` error when connecting to PostgreSQL.
+
+    **Solution:**
+    1. Check if PostgreSQL is running:
+    ```bash
+    # macOS
+    brew services list | grep postgresql
+
+    # Linux
+    sudo systemctl status postgresql
+
+    # Docker
+    docker ps | grep postgres
+    ```
+
+    2. Start PostgreSQL if not running:
+    ```bash
+    # macOS
+    brew services start postgresql
+
+    # Linux
+    sudo systemctl start postgresql
+
+    # Docker
+    docker-compose up -d postgres
+    ```
+
+    3. Verify connection settings in `.env`:
+    ```env
+    DATABASE_URL=postgresql://user:password@localhost:5432/vritti
+    ```
+
+    4. Test connection manually:
+    ```bash
+    psql -h localhost -U postgres -d vritti
+    ```
+  </Accordion>
+
+  <Accordion title="Drizzle migration errors">
+    **Problem:** Drizzle migrations fail or schema is out of sync.
+
+    **Solution:**
+    1. Check migration status:
+    ```bash
+    pnpm drizzle-kit status
+    ```
+
+    2. Generate new migrations if schema changed:
+    ```bash
+    pnpm drizzle-kit generate
+    ```
+
+    3. Push migrations to database:
+    ```bash
+    pnpm drizzle-kit push
+    ```
+
+    4. If migrations are corrupted, reset (development only):
+    ```bash
+    pnpm drizzle-kit drop
+    pnpm drizzle-kit push
+    ```
+
+    <Warning>
+      Never use `drizzle-kit drop` in production. Always create proper migration scripts.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Database authentication failed">
+    **Problem:** `password authentication failed for user` error.
+
+    **Solution:**
+    1. Verify credentials in `.env` match your PostgreSQL setup:
+    ```env
+    DATABASE_URL=postgresql://username:password@localhost:5432/database
+    ```
+
+    2. Check PostgreSQL authentication configuration:
+    ```bash
+    # Find pg_hba.conf location
+    psql -U postgres -c "SHOW hba_file;"
+
+    # Edit to allow local connections (development only)
+    # Change 'peer' or 'ident' to 'md5' or 'trust' for local
+    ```
+
+    3. Reset user password if needed:
+    ```sql
+    ALTER USER postgres WITH PASSWORD 'newpassword';
+    ```
+
+    4. Restart PostgreSQL after configuration changes:
+    ```bash
+    sudo systemctl restart postgresql
+    ```
+  </Accordion>
+
+  <Accordion title="Database does not exist">
+    **Problem:** `database "vritti" does not exist` error.
+
+    **Solution:**
+    Create the database:
+    ```bash
+    # Using psql
+    createdb -U postgres vritti
+
+    # Or via SQL
+    psql -U postgres -c "CREATE DATABASE vritti;"
+
+    # For Docker setup
+    docker exec -it vritti-postgres createdb -U postgres vritti
+    ```
+
+    Then run migrations:
+    ```bash
+    pnpm drizzle-kit push
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Module Federation Loading Failures
+
+<AccordionGroup>
+  <Accordion title="Remote module failed to load">
+    **Problem:** `ChunkLoadError` or `Loading script failed` for federated modules.
+
+    **Solution:**
+    1. Ensure the remote application is running:
+    ```bash
+    # Check if remote is accessible
+    curl http://localhost:3001/remoteEntry.js
+    ```
+
+    2. Start the remote application:
+    ```bash
+    pnpm --filter @vritti/remote-app dev
+    ```
+
+    3. Verify the remote URL in federation config:
+    ```javascript
+    // webpack.config.js or vite.config.ts
+    remotes: {
+      remoteApp: 'remoteApp@http://localhost:3001/remoteEntry.js',
+    }
+    ```
+
+    4. Check for CORS issues in browser console and configure CORS headers on the remote.
+  </Accordion>
+
+  <Accordion title="Shared dependency version mismatch">
+    **Problem:** `Unsatisfied version X of shared singleton module Y` warning or errors.
+
+    **Solution:**
+    1. Align versions across all federated apps in their `package.json`:
+    ```json
+    {
+      "dependencies": {
+        "react": "19.0.0",
+        "react-dom": "19.0.0"
+      }
+    }
+    ```
+
+    2. Configure shared dependencies explicitly:
+    ```javascript
+    // In Module Federation config
+    shared: {
+      react: {
+        singleton: true,
+        requiredVersion: '^19.0.0',
+        strictVersion: true,
+      },
+      'react-dom': {
+        singleton: true,
+        requiredVersion: '^19.0.0',
+        strictVersion: true,
+      },
+    }
+    ```
+
+    3. Run `pnpm install` to update lock file.
+  </Accordion>
+
+  <Accordion title="Module Federation types not available">
+    **Problem:** TypeScript errors for federated module imports.
+
+    **Solution:**
+    1. Generate type declarations for remotes:
+    ```bash
+    pnpm --filter @vritti/remote-app build:types
+    ```
+
+    2. Create declaration file if auto-generation unavailable:
+    ```typescript
+    // src/remotes.d.ts
+    declare module 'remoteApp/Component' {
+      const Component: React.ComponentType<any>;
+      export default Component;
+    }
+    ```
+
+    3. Use `@module-federation/typescript` plugin:
+    ```javascript
+    // vite.config.ts
+    import { ModuleFederationTypePlugin } from '@module-federation/typescript';
+
+    plugins: [
+      federation({
+        // ... config
+      }),
+      ModuleFederationTypePlugin(),
+    ]
+    ```
+  </Accordion>
+
+  <Accordion title="Module Federation not loading in production">
+    **Problem:** Federated modules work in development but fail in production.
+
+    **Solution:**
+    1. Check that `publicPath` is set correctly:
+    ```javascript
+    output: {
+      publicPath: 'auto', // or explicit URL
+    }
+    ```
+
+    2. Verify remote URLs use production URLs:
+    ```javascript
+    // Use environment variables
+    remotes: {
+      remoteApp: `remoteApp@${process.env.REMOTE_APP_URL}/remoteEntry.js`,
+    }
+    ```
+
+    3. Ensure `remoteEntry.js` is included in build output and accessible.
+
+    4. Check network tab for 404s and verify CDN/server configuration.
+  </Accordion>
+</AccordionGroup>
+
+## Environment Variable Issues
+
+<AccordionGroup>
+  <Accordion title="Environment variables undefined">
+    **Problem:** `process.env.VARIABLE` is undefined at runtime.
+
+    **Solution:**
+    1. Check `.env` file exists and is in the correct location:
+    ```bash
+    ls -la .env*
+    ```
+
+    2. For NestJS, ensure `ConfigModule` is imported:
+    ```typescript
+    // app.module.ts
+    import { ConfigModule } from '@nestjs/config';
+
+    @Module({
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true,
+          envFilePath: ['.env.local', '.env'],
+        }),
+      ],
+    })
+    export class AppModule {}
+    ```
+
+    3. For React/Vite, prefix variables with `VITE_`:
+    ```env
+    VITE_API_URL=http://localhost:3000
+    ```
+
+    Access in code:
+    ```typescript
+    const apiUrl = import.meta.env.VITE_API_URL;
+    ```
+
+    4. Restart the development server after changing `.env` files.
+  </Accordion>
+
+  <Accordion title="Environment variables not updating">
+    **Problem:** Changes to `.env` file not reflected in application.
+
+    **Solution:**
+    1. Restart the development server completely:
+    ```bash
+    # Stop with Ctrl+C, then restart
+    pnpm dev
+    ```
+
+    2. Clear build cache:
+    ```bash
+    rm -rf .next  # Next.js
+    rm -rf dist   # Vite/NestJS
+    rm -rf .turbo # Turborepo cache
+    ```
+
+    3. For Docker, rebuild containers:
+    ```bash
+    docker-compose down
+    docker-compose up --build
+    ```
+  </Accordion>
+
+  <Accordion title="Missing required environment variables on startup">
+    **Problem:** Application crashes due to missing required environment variables.
+
+    **Solution:**
+    1. Copy example env file:
+    ```bash
+    cp .env.example .env
+    ```
+
+    2. Add validation at startup:
+    ```typescript
+    // For NestJS
+    import { plainToClass } from 'class-transformer';
+    import { validateSync } from 'class-validator';
+
+    export function validateEnv(config: Record<string, unknown>) {
+      const validatedConfig = plainToClass(EnvironmentVariables, config, {
+        enableImplicitConversion: true,
+      });
+      const errors = validateSync(validatedConfig);
+      if (errors.length > 0) {
+        throw new Error(errors.toString());
+      }
+      return validatedConfig;
+    }
+    ```
+
+    3. Check `env.validation.ts` or similar for required variables list.
+  </Accordion>
+</AccordionGroup>
+
+## Build Failures
+
+<AccordionGroup>
+  <Accordion title="Out of memory during build">
+    **Problem:** `JavaScript heap out of memory` error during build.
+
+    **Solution:**
+    1. Increase Node.js memory limit:
+    ```bash
+    export NODE_OPTIONS="--max-old-space-size=8192"
+    pnpm build
+    ```
+
+    2. Add to `package.json` scripts:
+    ```json
+    {
+      "scripts": {
+        "build": "NODE_OPTIONS='--max-old-space-size=8192' turbo run build"
+      }
+    }
+    ```
+
+    3. For persistent fix, add to shell profile:
+    ```bash
+    # ~/.bashrc or ~/.zshrc
+    export NODE_OPTIONS="--max-old-space-size=8192"
+    ```
+  </Accordion>
+
+  <Accordion title="TypeScript compilation errors in CI">
+    **Problem:** Build passes locally but fails in CI with TypeScript errors.
+
+    **Solution:**
+    1. Ensure `skipLibCheck` is consistent:
+    ```json
+    // tsconfig.json
+    {
+      "compilerOptions": {
+        "skipLibCheck": true
+      }
+    }
+    ```
+
+    2. Check for case-sensitivity issues (common on Linux CI):
+    ```bash
+    # Find case mismatches
+    git config core.ignorecase false
+    ```
+
+    3. Run type check locally in strict mode:
+    ```bash
+    pnpm tsc --noEmit
+    ```
+
+    4. Clear TypeScript cache:
+    ```bash
+    rm -rf node_modules/.cache/typescript
+    ```
+  </Accordion>
+
+  <Accordion title="Build fails with 'Cannot find module'">
+    **Problem:** Module resolution fails during build.
+
+    **Solution:**
+    1. Check `tsconfig.json` paths configuration:
+    ```json
+    {
+      "compilerOptions": {
+        "baseUrl": ".",
+        "paths": {
+          "@/*": ["./src/*"],
+          "@vritti/shared": ["../../packages/shared/src"]
+        }
+      }
+    }
+    ```
+
+    2. Verify build order with dependencies:
+    ```bash
+    # Build dependencies first
+    pnpm --filter @vritti/shared build
+    pnpm --filter @vritti/app build
+    ```
+
+    3. Check Turborepo pipeline configuration:
+    ```json
+    // turbo.json
+    {
+      "pipeline": {
+        "build": {
+          "dependsOn": ["^build"],
+          "outputs": ["dist/**"]
+        }
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="ESLint/Prettier errors blocking build">
+    **Problem:** Linting errors prevent build from completing.
+
+    **Solution:**
+    1. Run lint with auto-fix:
+    ```bash
+    pnpm lint --fix
+    pnpm format
+    ```
+
+    2. For specific file issues:
+    ```bash
+    pnpm eslint path/to/file.ts --fix
+    pnpm prettier --write path/to/file.ts
+    ```
+
+    3. To bypass temporarily (not recommended):
+    ```bash
+    pnpm build --no-lint
+    ```
+
+    4. Add ESLint disable comment for specific lines:
+    ```typescript
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const value: any = getData();
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Type Errors After Updates
+
+<AccordionGroup>
+  <Accordion title="Type errors after package update">
+    **Problem:** TypeScript errors appear after updating dependencies.
+
+    **Solution:**
+    1. Clear TypeScript cache and rebuild:
+    ```bash
+    rm -rf node_modules/.cache
+    rm -rf dist
+    pnpm tsc --build --clean
+    pnpm build
+    ```
+
+    2. Update type definitions:
+    ```bash
+    pnpm add -D @types/node@latest @types/react@latest
+    ```
+
+    3. Check breaking changes in changelog of updated packages.
+
+    4. Regenerate declaration files:
+    ```bash
+    pnpm tsc --declaration --emitDeclarationOnly
+    ```
+  </Accordion>
+
+  <Accordion title="Type definitions not found after pnpm update">
+    **Problem:** `Cannot find type definition file` errors.
+
+    **Solution:**
+    1. Check `types` in `tsconfig.json`:
+    ```json
+    {
+      "compilerOptions": {
+        "types": ["node", "jest", "vite/client"]
+      }
+    }
+    ```
+
+    2. Install missing type packages:
+    ```bash
+    pnpm add -D @types/package-name
+    ```
+
+    3. For packages without types, create declaration:
+    ```typescript
+    // src/types/package-name.d.ts
+    declare module 'package-name' {
+      export function someFunction(): void;
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="React 19 type compatibility issues">
+    **Problem:** Type errors with React 19 and older component libraries.
+
+    **Solution:**
+    1. Update React types:
+    ```bash
+    pnpm add -D @types/react@latest @types/react-dom@latest
+    ```
+
+    2. For legacy ref forwarding issues:
+    ```typescript
+    // Use the new ref prop instead of forwardRef when possible
+    function Component({ ref, ...props }: { ref?: React.Ref<HTMLDivElement> }) {
+      return <div ref={ref} {...props} />;
+    }
+    ```
+
+    3. Add overrides for incompatible libraries:
+    ```json
+    // package.json
+    {
+      "pnpm": {
+        "overrides": {
+          "@types/react": "^19.0.0",
+          "@types/react-dom": "^19.0.0"
+        }
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## CORS Issues
+
+<AccordionGroup>
+  <Accordion title="CORS errors in browser console">
+    **Problem:** `Access-Control-Allow-Origin` errors when calling API.
+
+    **Solution:**
+    1. Configure CORS in NestJS:
+    ```typescript
+    // main.ts
+    async function bootstrap() {
+      const app = await NestFactory.create(AppModule);
+
+      app.enableCors({
+        origin: [
+          'http://localhost:3000',
+          'http://localhost:5173',
+          process.env.FRONTEND_URL,
+        ],
+        credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization'],
+      });
+
+      await app.listen(3000);
+    }
+    ```
+
+    2. For preflight requests, ensure OPTIONS is allowed.
+
+    3. Check that credentials mode matches:
+    ```typescript
+    // Frontend fetch
+    fetch(url, {
+      credentials: 'include', // Must match server's credentials: true
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="CORS works in dev but not production">
+    **Problem:** CORS configured but fails in production environment.
+
+    **Solution:**
+    1. Check environment-specific origins:
+    ```typescript
+    const allowedOrigins = process.env.NODE_ENV === 'production'
+      ? ['https://app.vritti.com']
+      : ['http://localhost:3000', 'http://localhost:5173'];
+
+    app.enableCors({
+      origin: allowedOrigins,
+      credentials: true,
+    });
+    ```
+
+    2. Verify reverse proxy (nginx) isn't stripping headers:
+    ```nginx
+    location /api {
+      proxy_pass http://backend:3000;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      # Don't add duplicate CORS headers if backend handles it
+    }
+    ```
+
+    3. Check for mixed content (HTTP vs HTTPS) issues.
+  </Accordion>
+
+  <Accordion title="CORS with WebSocket connections">
+    **Problem:** WebSocket connections blocked by CORS.
+
+    **Solution:**
+    Configure CORS for WebSocket gateway:
+    ```typescript
+    // NestJS WebSocket Gateway
+    @WebSocketGateway({
+      cors: {
+        origin: ['http://localhost:3000'],
+        credentials: true,
+      },
+    })
+    export class EventsGateway {
+      // ...
+    }
+    ```
+
+    For Socket.IO:
+    ```typescript
+    const io = new Server(server, {
+      cors: {
+        origin: "http://localhost:3000",
+        methods: ["GET", "POST"],
+        credentials: true,
+      },
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Authentication/JWT Problems
+
+<AccordionGroup>
+  <Accordion title="JWT token expired errors">
+    **Problem:** `TokenExpiredError` or 401 responses after some time.
+
+    **Solution:**
+    1. Implement token refresh logic:
+    ```typescript
+    // Frontend interceptor
+    api.interceptors.response.use(
+      (response) => response,
+      async (error) => {
+        if (error.response?.status === 401) {
+          try {
+            await refreshToken();
+            return api.request(error.config);
+          } catch {
+            // Redirect to login
+            window.location.href = '/login';
+          }
+        }
+        return Promise.reject(error);
+      }
+    );
+    ```
+
+    2. Adjust token expiry in backend:
+    ```typescript
+    // auth.service.ts
+    this.jwtService.sign(payload, {
+      expiresIn: '15m', // Access token
+    });
+
+    this.jwtService.sign(payload, {
+      expiresIn: '7d', // Refresh token
+    });
+    ```
+
+    3. Check server time synchronization if tokens expire unexpectedly.
+  </Accordion>
+
+  <Accordion title="JWT signature verification failed">
+    **Problem:** `JsonWebTokenError: invalid signature` errors.
+
+    **Solution:**
+    1. Verify JWT secret matches between services:
+    ```env
+    # All services must use same secret
+    JWT_SECRET=your-secret-key
+    ```
+
+    2. Check for encoding issues:
+    ```typescript
+    // Ensure consistent encoding
+    const secret = process.env.JWT_SECRET;
+    // Not: Buffer.from(process.env.JWT_SECRET, 'base64')
+    ```
+
+    3. Verify algorithm matches:
+    ```typescript
+    // Backend
+    JwtModule.register({
+      secret: process.env.JWT_SECRET,
+      signOptions: { algorithm: 'HS256' },
+    });
+
+    // Verification
+    this.jwtService.verify(token, { algorithms: ['HS256'] });
+    ```
+  </Accordion>
+
+  <Accordion title="Authentication state not persisting">
+    **Problem:** User gets logged out on page refresh.
+
+    **Solution:**
+    1. Check cookie configuration:
+    ```typescript
+    // Backend - set cookie correctly
+    response.cookie('access_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+    ```
+
+    2. For localStorage approach, check initialization:
+    ```typescript
+    // Check token on app initialization
+    useEffect(() => {
+      const token = localStorage.getItem('access_token');
+      if (token && !isTokenExpired(token)) {
+        setIsAuthenticated(true);
+      }
+    }, []);
+    ```
+
+    3. Verify credentials are included in requests:
+    ```typescript
+    // Axios default config
+    axios.defaults.withCredentials = true;
+    ```
+  </Accordion>
+
+  <Accordion title="CSRF token mismatch">
+    **Problem:** `CSRF token mismatch` or `Forbidden` errors on POST requests.
+
+    **Solution:**
+    1. Include CSRF token in requests:
+    ```typescript
+    // Get token from cookie or meta tag
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+
+    fetch('/api/data', {
+      method: 'POST',
+      headers: {
+        'X-CSRF-Token': csrfToken,
+      },
+    });
+    ```
+
+    2. Configure NestJS CSRF protection:
+    ```typescript
+    import * as csurf from 'csurf';
+
+    app.use(csurf({ cookie: true }));
+    ```
+
+    3. Exclude certain routes if needed:
+    ```typescript
+    app.use(csurf({
+      cookie: true,
+      ignoreMethods: ['GET', 'HEAD', 'OPTIONS'],
+    }));
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Hot Reload Not Working
+
+<AccordionGroup>
+  <Accordion title="Vite HMR not updating">
+    **Problem:** Changes to files don't trigger hot reload in browser.
+
+    **Solution:**
+    1. Check Vite server is running and WebSocket connected:
+    ```bash
+    # Browser console should show:
+    # [vite] connected.
+    ```
+
+    2. Verify `vite.config.ts` HMR settings:
+    ```typescript
+    export default defineConfig({
+      server: {
+        hmr: {
+          overlay: true,
+        },
+        watch: {
+          usePolling: true, // Required for Docker/WSL
+        },
+      },
+    });
+    ```
+
+    3. Check file is in watched directory and not ignored.
+
+    4. Clear Vite cache:
+    ```bash
+    rm -rf node_modules/.vite
+    pnpm dev
+    ```
+  </Accordion>
+
+  <Accordion title="NestJS watch mode not detecting changes">
+    **Problem:** NestJS `--watch` flag not restarting on file changes.
+
+    **Solution:**
+    1. Use correct watch command:
+    ```bash
+    pnpm nest start --watch
+    ```
+
+    2. Check `nest-cli.json` configuration:
+    ```json
+    {
+      "watchOptions": {
+        "watchAssets": true
+      },
+      "compilerOptions": {
+        "assets": ["**/*.graphql"],
+        "watchAssets": true
+      }
+    }
+    ```
+
+    3. For Docker, enable polling:
+    ```typescript
+    // nest-cli.json
+    {
+      "watchOptions": {
+        "usePolling": true,
+        "interval": 1000
+      }
+    }
+    ```
+
+    4. Check for syntax errors that might crash watch process.
+  </Accordion>
+
+  <Accordion title="Hot reload breaks after error">
+    **Problem:** Hot reload stops working after a compilation error.
+
+    **Solution:**
+    1. Fix the error and save the file again.
+
+    2. If still broken, restart dev server:
+    ```bash
+    # Stop with Ctrl+C
+    pnpm dev
+    ```
+
+    3. Clear build caches:
+    ```bash
+    rm -rf dist node_modules/.cache node_modules/.vite
+    pnpm dev
+    ```
+
+    4. Check terminal for uncaught exceptions that may have killed the process.
+  </Accordion>
+
+  <Accordion title="Changes to shared packages not reflecting">
+    **Problem:** Changes in `packages/*` don't update in consuming apps.
+
+    **Solution:**
+    1. Build the shared package in watch mode:
+    ```bash
+    pnpm --filter @vritti/shared dev
+    ```
+
+    2. Or use Turborepo watch:
+    ```bash
+    pnpm turbo watch dev
+    ```
+
+    3. Check workspace symlinks are correct:
+    ```bash
+    ls -la node_modules/@vritti/
+    # Should show symlinks to packages directory
+    ```
+
+    4. Configure transpilation of workspace packages:
+    ```typescript
+    // vite.config.ts
+    export default defineConfig({
+      optimizeDeps: {
+        include: ['@vritti/shared'],
+      },
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Docker Container Issues
+
+<AccordionGroup>
+  <Accordion title="Container fails to start">
+    **Problem:** Docker container exits immediately after starting.
+
+    **Solution:**
+    1. Check container logs:
+    ```bash
+    docker logs vritti-api
+    docker-compose logs api
+    ```
+
+    2. Common issues:
+    - Missing environment variables
+    - Database not ready
+    - Port already in use
+
+    3. Add health checks and depends_on:
+    ```yaml
+    # docker-compose.yml
+    services:
+      api:
+        depends_on:
+          postgres:
+            condition: service_healthy
+    ```
+
+    4. Run container interactively to debug:
+    ```bash
+    docker run -it --entrypoint /bin/sh vritti-api
+    ```
+  </Accordion>
+
+  <Accordion title="Database connection fails in Docker">
+    **Problem:** Application can't connect to database in Docker network.
+
+    **Solution:**
+    1. Use service name, not `localhost`:
+    ```env
+    # Wrong
+    DATABASE_URL=postgresql://user:pass@localhost:5432/db
+
+    # Correct
+    DATABASE_URL=postgresql://user:pass@postgres:5432/db
+    ```
+
+    2. Ensure services are on same network:
+    ```yaml
+    services:
+      api:
+        networks:
+          - vritti-network
+      postgres:
+        networks:
+          - vritti-network
+
+    networks:
+      vritti-network:
+    ```
+
+    3. Wait for database to be ready:
+    ```yaml
+    api:
+      depends_on:
+        postgres:
+          condition: service_healthy
+    ```
+  </Accordion>
+
+  <Accordion title="File changes not reflecting in container">
+    **Problem:** Code changes don't appear in running container.
+
+    **Solution:**
+    1. Use volume mounts for development:
+    ```yaml
+    services:
+      api:
+        volumes:
+          - ./apps/api:/app
+          - /app/node_modules  # Preserve container's node_modules
+    ```
+
+    2. Rebuild container after dependency changes:
+    ```bash
+    docker-compose up --build api
+    ```
+
+    3. For hot reload, ensure watch mode is configured:
+    ```yaml
+    api:
+      command: pnpm dev
+      volumes:
+        - ./:/app
+    ```
+  </Accordion>
+
+  <Accordion title="Docker build is slow">
+    **Problem:** Docker builds take too long.
+
+    **Solution:**
+    1. Use multi-stage builds:
+    ```dockerfile
+    # Build stage
+    FROM node:20-alpine AS builder
+    WORKDIR /app
+    COPY package.json pnpm-lock.yaml ./
+    RUN corepack enable && pnpm install --frozen-lockfile
+    COPY . .
+    RUN pnpm build
+
+    # Production stage
+    FROM node:20-alpine
+    WORKDIR /app
+    COPY --from=builder /app/dist ./dist
+    COPY --from=builder /app/node_modules ./node_modules
+    CMD ["node", "dist/main.js"]
+    ```
+
+    2. Use `.dockerignore`:
+    ```
+    node_modules
+    dist
+    .git
+    *.md
+    .env*
+    ```
+
+    3. Enable BuildKit:
+    ```bash
+    DOCKER_BUILDKIT=1 docker build .
+    ```
+
+    4. Use cache mounts:
+    ```dockerfile
+    RUN --mount=type=cache,target=/root/.pnpm-store \
+        pnpm install --frozen-lockfile
+    ```
+  </Accordion>
+
+  <Accordion title="Out of disk space in Docker">
+    **Problem:** Docker builds fail due to disk space.
+
+    **Solution:**
+    1. Clean up Docker resources:
+    ```bash
+    # Remove unused containers, images, volumes
+    docker system prune -a --volumes
+
+    # Remove specific resources
+    docker container prune
+    docker image prune -a
+    docker volume prune
+    ```
+
+    2. Check disk usage:
+    ```bash
+    docker system df
+    ```
+
+    3. Remove old images:
+    ```bash
+    docker images | grep vritti | awk '{print $3}' | xargs docker rmi
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## pnpm Workspace Issues
+
+<AccordionGroup>
+  <Accordion title="Workspace dependencies not resolving">
+    **Problem:** `workspace:*` dependencies not found.
+
+    **Solution:**
+    1. Verify `pnpm-workspace.yaml` configuration:
+    ```yaml
+    packages:
+      - 'apps/*'
+      - 'packages/*'
+      - 'libs/*'
+    ```
+
+    2. Check package names match:
+    ```json
+    // packages/shared/package.json
+    {
+      "name": "@vritti/shared"  // Must match exactly
+    }
+    ```
+
+    3. Run install from root:
+    ```bash
+    cd /path/to/monorepo
+    pnpm install
+    ```
+
+    4. Check for circular dependencies:
+    ```bash
+    pnpm why @vritti/shared
+    ```
+  </Accordion>
+
+  <Accordion title="pnpm filter commands not working">
+    **Problem:** `pnpm --filter` commands don't find packages.
+
+    **Solution:**
+    1. Use correct filter syntax:
+    ```bash
+    # By package name
+    pnpm --filter @vritti/api dev
+
+    # By directory
+    pnpm --filter ./apps/api dev
+
+    # With dependencies
+    pnpm --filter @vritti/api... build
+
+    # Dependents only
+    pnpm --filter ...@vritti/shared build
+    ```
+
+    2. List available packages:
+    ```bash
+    pnpm -r exec pwd
+    ```
+
+    3. Check package.json has `name` field.
+  </Accordion>
+
+  <Accordion title="Different versions of same package across workspace">
+    **Problem:** Multiple versions of a package causing conflicts.
+
+    **Solution:**
+    1. Check installed versions:
+    ```bash
+    pnpm why package-name
+    ```
+
+    2. Add overrides to root `package.json`:
+    ```json
+    {
+      "pnpm": {
+        "overrides": {
+          "lodash": "^4.17.21"
+        }
+      }
+    }
+    ```
+
+    3. Align versions across packages:
+    ```bash
+    pnpm -r update lodash@4.17.21
+    ```
+
+    4. Use `syncpack` for version consistency:
+    ```bash
+    npx syncpack list-mismatches
+    npx syncpack fix-mismatches
+    ```
+  </Accordion>
+
+  <Accordion title="pnpm store corruption">
+    **Problem:** Random installation errors or missing files.
+
+    **Solution:**
+    1. Verify store integrity:
+    ```bash
+    pnpm store status
+    ```
+
+    2. Prune unused packages:
+    ```bash
+    pnpm store prune
+    ```
+
+    3. Complete reset if needed:
+    ```bash
+    rm -rf node_modules
+    rm -rf ~/.local/share/pnpm/store
+    pnpm install
+    ```
+
+    4. Clear project cache:
+    ```bash
+    rm -rf node_modules/.pnpm
+    pnpm install
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Quick Reference
+
+<CardGroup cols={2}>
+  <Card title="Reset Everything" icon="rotate">
+    ```bash
+    rm -rf node_modules
+    rm -rf dist
+    rm -rf .turbo
+    rm pnpm-lock.yaml
+    pnpm install
+    pnpm build
+    ```
+  </Card>
+
+  <Card title="Check System Health" icon="heart-pulse">
+    ```bash
+    node -v
+    pnpm -v
+    docker --version
+    psql --version
+    ```
+  </Card>
+
+  <Card title="View All Logs" icon="scroll">
+    ```bash
+    # NestJS
+    pnpm dev 2>&1 | tee debug.log
+
+    # Docker
+    docker-compose logs -f
+
+    # PostgreSQL
+    docker logs vritti-postgres
+    ```
+  </Card>
+
+  <Card title="Debug Mode" icon="bug">
+    ```bash
+    # NestJS with debugging
+    pnpm nest start --debug --watch
+
+    # Vite with verbose
+    pnpm vite --debug
+
+    # Node with inspector
+    node --inspect dist/main.js
+    ```
+  </Card>
+</CardGroup>
+
+---
+
+<Note>
+  If your issue isn't listed here, check the project's GitHub issues or reach out to the team on Slack. When reporting issues, include:
+  - Error message and stack trace
+  - Steps to reproduce
+  - Environment details (OS, Node version, etc.)
+  - Relevant configuration files
+</Note>

@@ -1,0 +1,391 @@
+---
+title: Styling with Tailwind
+description: Tailwind CSS v4 styling patterns and design system tokens
+---
+
+# Styling with Tailwind
+
+Vritti uses Tailwind CSS v4 with a comprehensive design system. This guide covers styling patterns and best practices.
+
+## Design System Tokens
+
+### Color Tokens
+
+All colors use semantic design tokens. Never hardcode hex, rgb, or hsl values.
+
+```typescript
+// Background colors
+<div className="bg-background" />      // Base background
+<div className="bg-card" />            // Card surfaces
+<div className="bg-muted" />           // Subtle backgrounds
+<div className="bg-primary" />         // Brand primary
+<div className="bg-secondary" />       // Secondary actions
+<div className="bg-accent" />          // Accent highlights
+
+// State colors
+<div className="bg-destructive" />     // Error/danger
+<div className="bg-warning" />         // Warning state
+<div className="bg-success" />         // Success state
+
+// Text colors
+<div className="text-foreground" />         // Primary text
+<div className="text-muted-foreground" />   // Secondary text
+<div className="text-primary" />            // Brand text
+<div className="text-destructive" />        // Error text
+```
+
+### Color with Opacity
+
+Use opacity modifiers for subtle backgrounds:
+
+```typescript
+// Success with 15% opacity
+<div className="bg-success/15 text-success" />
+
+// Destructive with 20% opacity
+<div className="bg-destructive/20 text-destructive" />
+
+// Primary with 10% opacity
+<div className="bg-primary/10 text-primary" />
+```
+
+### Border Colors
+
+```typescript
+<div className="border border-border" />           // Default border
+<div className="border border-input" />            // Input borders
+<div className="border border-destructive" />      // Error borders
+<div className="ring-2 ring-ring" />               // Focus rings
+```
+
+## Spacing System
+
+Use semantic spacing tokens for consistent layouts:
+
+```css
+/* Semantic spacing tokens */
+--quantum-spacing-tight: 0.5rem;      /* 8px */
+--quantum-spacing-comfortable: 1rem;  /* 16px */
+--quantum-spacing-loose: 1.5rem;      /* 24px */
+```
+
+```typescript
+// Using Tailwind classes
+<div className="p-4" />      // comfortable padding
+<div className="space-y-2" /> // tight vertical gap
+<div className="gap-6" />    // loose gap
+```
+
+## Component Styling Patterns
+
+### Card Pattern
+
+```typescript
+<div className="rounded-lg border border-border bg-card p-6 shadow-sm">
+  <h3 className="text-lg font-semibold text-card-foreground">
+    Card Title
+  </h3>
+  <p className="mt-2 text-sm text-muted-foreground">
+    Card description text
+  </p>
+</div>
+```
+
+### Form Field Pattern
+
+```typescript
+<div className="space-y-1.5">
+  <label className="text-sm font-medium text-foreground">
+    Email Address
+  </label>
+  <input
+    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+    placeholder="Enter your email"
+  />
+  <p className="text-sm text-muted-foreground">
+    We'll never share your email
+  </p>
+</div>
+```
+
+### Button Variants
+
+```typescript
+// Primary button
+<button className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-4 py-2 font-medium">
+  Submit
+</button>
+
+// Secondary button
+<button className="bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-md px-4 py-2 font-medium">
+  Cancel
+</button>
+
+// Outline button
+<button className="border border-input bg-background hover:bg-accent hover:text-accent-foreground rounded-md px-4 py-2 font-medium">
+  Options
+</button>
+
+// Destructive button
+<button className="bg-destructive text-destructive-foreground hover:bg-destructive/90 rounded-md px-4 py-2 font-medium">
+  Delete
+</button>
+```
+
+## Responsive Design
+
+### Breakpoint Prefixes
+
+```typescript
+// Mobile-first responsive design
+<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+  <Card />
+  <Card />
+  <Card />
+</div>
+
+// Responsive padding
+<div className="p-4 md:p-6 lg:p-8">
+  Content
+</div>
+
+// Hide/show at breakpoints
+<div className="hidden md:block">Desktop only</div>
+<div className="md:hidden">Mobile only</div>
+```
+
+### Common Breakpoints
+
+| Prefix | Min Width | Usage |
+|--------|-----------|-------|
+| `sm:` | 640px | Small tablets |
+| `md:` | 768px | Tablets |
+| `lg:` | 1024px | Laptops |
+| `xl:` | 1280px | Desktops |
+| `2xl:` | 1536px | Large screens |
+
+## State Styling
+
+### Interactive States
+
+```typescript
+<button
+  className={cn(
+    // Base styles
+    'rounded-md px-4 py-2 font-medium transition-colors',
+    // Hover state
+    'hover:bg-primary/90',
+    // Focus state
+    'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+    // Active state
+    'active:scale-95',
+    // Disabled state
+    'disabled:opacity-50 disabled:pointer-events-none',
+  )}
+>
+  Click me
+</button>
+```
+
+### Form Validation States
+
+```typescript
+<input
+  className={cn(
+    'w-full rounded-md border px-3 py-2',
+    // Default state
+    'border-input bg-background',
+    // Error state
+    error && 'border-destructive focus:ring-destructive',
+    // Success state
+    isValid && 'border-success focus:ring-success',
+  )}
+/>
+```
+
+## Class Name Utilities
+
+### The `cn` Helper
+
+Use the `cn` utility from quantum-ui for conditional classes:
+
+```typescript
+import { cn } from '@vritti/quantum-ui/utils';
+
+const Button = ({ variant, disabled, className, children }) => {
+  return (
+    <button
+      className={cn(
+        // Base styles (always applied)
+        'rounded-md px-4 py-2 font-medium',
+        // Variant styles
+        variant === 'primary' && 'bg-primary text-primary-foreground',
+        variant === 'secondary' && 'bg-secondary text-secondary-foreground',
+        variant === 'outline' && 'border border-input bg-background',
+        // Conditional styles
+        disabled && 'opacity-50 cursor-not-allowed',
+        // Allow override via className prop
+        className,
+      )}
+      disabled={disabled}
+    >
+      {children}
+    </button>
+  );
+};
+```
+
+### Implementation
+
+```typescript
+// cn utility implementation
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+```
+
+## Animation Patterns
+
+### CSS Transitions
+
+```typescript
+// Smooth hover transition
+<div className="transition-colors duration-200 hover:bg-accent" />
+
+// Transform transition
+<button className="transition-transform duration-150 active:scale-95" />
+
+// Multiple properties
+<div className="transition-all duration-300 ease-in-out" />
+```
+
+### Loading Animations
+
+```typescript
+// Spinner animation
+<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+
+// Pulse animation
+<div className="animate-pulse bg-muted rounded h-4 w-full" />
+
+// Custom animation
+<div className="animate-bounce" />
+```
+
+### CSS-Based Animations (Landing Page)
+
+```css
+/* Fade in animation */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
+}
+```
+
+## Dark Mode
+
+Design tokens automatically adapt to dark mode:
+
+```typescript
+// Automatic dark mode adaptation
+<div className="bg-background text-foreground">
+  {/* Automatically switches colors in dark mode */}
+</div>
+
+// Manual dark mode override (rare)
+<div className="bg-white dark:bg-slate-900">
+  Explicit light/dark values
+</div>
+```
+
+## Accessibility
+
+### Focus Indicators
+
+```typescript
+// Visible focus ring
+<button className="focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2">
+  Accessible button
+</button>
+
+// Focus-visible (keyboard only)
+<a className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+  Link
+</a>
+```
+
+### Screen Reader Utilities
+
+```typescript
+// Visually hidden but accessible
+<span className="sr-only">Loading...</span>
+
+// Skip to content link
+<a href="#main" className="sr-only focus:not-sr-only">
+  Skip to main content
+</a>
+```
+
+## Best Practices
+
+<Accordion title="Never Hardcode Colors">
+Always use design tokens, never raw color values:
+
+```typescript
+// ✅ Good
+<div className="bg-primary text-primary-foreground" />
+<div className="bg-success/15 text-success" />
+
+// ❌ Bad
+<div className="bg-[#3b82f6] text-white" />
+<div style={{ backgroundColor: '#22c55e' }} />
+```
+</Accordion>
+
+<Accordion title="Use Semantic Tokens">
+Choose tokens based on purpose, not appearance:
+
+```typescript
+// ✅ Good - semantic meaning
+<span className="text-destructive">Error message</span>
+<span className="text-muted-foreground">Helper text</span>
+
+// ❌ Avoid - appearance-based
+<span className="text-red-500">Error message</span>
+<span className="text-gray-500">Helper text</span>
+```
+</Accordion>
+
+<Accordion title="Mobile-First Approach">
+Start with mobile styles, add larger breakpoints:
+
+```typescript
+// ✅ Good - mobile first
+<div className="p-4 md:p-6 lg:p-8" />
+
+// ❌ Avoid - desktop first
+<div className="p-8 sm:p-6 xs:p-4" />
+```
+</Accordion>
+
+<Accordion title="Avoid Deep Nesting">
+Keep class lists readable:
+
+```typescript
+// ✅ Good - use cn() for conditional classes
+<div className={cn(
+  'base-styles',
+  condition && 'conditional-styles',
+)} />
+
+// ❌ Avoid - inline ternaries
+<div className={`base-styles ${condition ? 'styles-a' : 'styles-b'} ${other ? 'more' : ''}`} />
+```
+</Accordion>

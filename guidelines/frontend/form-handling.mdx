@@ -1,0 +1,464 @@
+---
+title: Form Handling
+description: React Hook Form and Zod validation patterns for Vritti applications
+---
+
+# Form Handling
+
+Vritti uses React Hook Form with Zod validation for all form handling. The quantum-ui library provides smart form components that integrate seamlessly with this stack.
+
+## Core Stack
+
+| Library | Version | Purpose |
+|---------|---------|---------|
+| react-hook-form | 7.71.1 | Form state management |
+| @hookform/resolvers | 5.1.1 | Validation resolver |
+| zod | 4.3.5 | Schema validation |
+
+## Zod Schema Definition
+
+### Basic Schema
+
+```typescript
+// schemas/auth.ts
+import { z } from 'zod';
+
+export const loginSchema = z.object({
+  email: z.string().email('Please enter a valid email address'),
+  password: z.string().min(1, 'Password is required'),
+});
+
+export type LoginFormData = z.infer<typeof loginSchema>;
+```
+
+### Complex Schema with Refinements
+
+```typescript
+export const signupSchema = z
+  .object({
+    firstName: z.string().min(1, 'First name is required'),
+    lastName: z.string().min(1, 'Last name is required'),
+    email: z.string().email('Please enter a valid email address'),
+    password: z
+      .string()
+      .min(8, 'Password must be at least 8 characters')
+      .regex(/[A-Z]/, 'Must contain at least one uppercase letter')
+      .regex(/[a-z]/, 'Must contain at least one lowercase letter')
+      .regex(/[0-9]/, 'Must contain at least one number')
+      .regex(/[^A-Za-z0-9]/, 'Must contain at least one special character'),
+    confirmPassword: z.string().min(1, 'Please confirm your password'),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords don't match",
+    path: ['confirmPassword'],
+  });
+
+export type SignupFormData = z.infer<typeof signupSchema>;
+```
+
+### OTP/Code Schema
+
+```typescript
+export const otpSchema = z.object({
+  code: z
+    .string()
+    .length(6, 'Verification code must be 6 digits')
+    .regex(/^\d{6}$/, 'Code must contain only numbers'),
+});
+
+export type OTPFormData = z.infer<typeof otpSchema>;
+```
+
+## Form Setup
+
+### Basic Form Hook
+
+```typescript
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { loginSchema, type LoginFormData } from '@/schemas/auth';
+
+export const LoginForm = () => {
+  const form = useForm<LoginFormData>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
+      email: '',
+      password: '',
+    },
+  });
+
+  const onSubmit = async (data: LoginFormData) => {
+    // Handle form submission
+    console.log(data);
+  };
+
+  return (
+    <form onSubmit={form.handleSubmit(onSubmit)}>
+      {/* Form fields */}
+    </form>
+  );
+};
+```
+
+## quantum-ui Form Components
+
+### Smart Form Component
+
+The quantum-ui `Form` component automatically handles:
+- Form submission
+- Mutation integration
+- API error mapping
+- Loading states
+
+```typescript
+import { Form, TextField, PasswordField, FieldGroup, Field } from '@vritti/quantum-ui/Form';
+import { Button } from '@vritti/quantum-ui/Button';
+
+export const LoginPage = () => {
+  const form = useForm<LoginFormData>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { email: '', password: '' },
+  });
+
+  const loginMutation = useLogin({
+    onSuccess: (response) => {
+      navigate('/dashboard');
+    },
+  });
+
+  return (
+    <Form form={form} mutation={loginMutation}>
+      <FieldGroup>
+        <TextField
+          name="email"
+          label="Email"
+          placeholder="Enter your email"
+          startAdornment={<Mail className="h-4 w-4 text-muted-foreground" />}
+        />
+
+        <PasswordField
+          name="password"
+          label="Password"
+          placeholder="Enter your password"
+        />
+
+        <Field>
+          <Button type="submit" className="w-full">
+            Login
+          </Button>
+        </Field>
+      </FieldGroup>
+    </Form>
+  );
+};
+```
+
+### Form with Transform
+
+Transform data before submission:
+
+```typescript
+<Form
+  form={form}
+  mutation={signupMutation}
+  transformSubmit={(data: SignupFormData) => ({
+    // Transform form data to API format
+    email: data.email,
+    password: data.password,
+    firstName: data.firstName,
+    lastName: data.lastName,
+    // Exclude confirmPassword
+  })}
+>
+  {/* Form fields */}
+</Form>
+```
+
+### Form Field Components
+
+```typescript
+// Text field with adornments
+<TextField
+  name="email"
+  label="Email"
+  placeholder="you@example.com"
+  startAdornment={<Mail className="h-4 w-4" />}
+  description="We'll never share your email"
+/>
+
+// Password field with strength indicator
+<PasswordField
+  name="password"
+  label="Password"
+  showStrengthIndicator
+/>
+
+// Password field with match indicator
+<PasswordField
+  name="confirmPassword"
+  label="Confirm Password"
+  showMatchIndicator
+  matchPassword={watchedPassword}
+/>
+```
+
+## API Error Mapping
+
+### Automatic Error Mapping
+
+The Form component automatically maps API errors to form fields:
+
+```typescript
+// API response format (RFC 7807)
+{
+  "title": "Bad Request",
+  "status": 400,
+  "detail": "Validation failed",
+  "errors": [
+    { "field": "email", "message": "Email already registered" },
+    { "field": "password", "message": "Password too weak" }
+  ]
+}
+```
+
+```typescript
+// Form automatically maps errors to fields
+<Form
+  form={form}
+  mutation={mutation}
+  showRootError  // Show general errors at form level
+  rootErrorPosition="bottom"  // Position: 'top' | 'bottom'
+>
+```
+
+### Field Mapping
+
+Map API field names to form field names:
+
+```typescript
+<Form
+  form={form}
+  mutation={mutation}
+  fieldMapping={{
+    // API field → form field
+    'user.email': 'email',
+    'user.phone_number': 'phone',
+  }}
+>
+```
+
+### Manual Error Mapping
+
+```typescript
+import { mapApiErrorsToForm } from '@vritti/quantum-ui/utils';
+
+const onSubmit = async (data: FormData) => {
+  try {
+    await api.post('/users', data);
+  } catch (error) {
+    mapApiErrorsToForm(error, form, {
+      fieldMapping: { 'user.email': 'email' },
+      setRootError: true,
+    });
+  }
+};
+```
+
+## Custom Hooks for Mutations
+
+### Pattern
+
+```typescript
+// hooks/useLogin.ts
+import { useMutation, type UseMutationOptions } from '@tanstack/react-query';
+import { login, type LoginDto, type LoginResponse } from '@/services/auth.service';
+
+type UseLoginOptions = Omit<
+  UseMutationOptions<LoginResponse, Error, LoginDto>,
+  'mutationFn'
+>;
+
+export const useLogin = (options?: UseLoginOptions) => {
+  return useMutation<LoginResponse, Error, LoginDto>({
+    mutationFn: (data: LoginDto) => login(data),
+    ...options,
+  });
+};
+```
+
+### Usage
+
+```typescript
+const loginMutation = useLogin({
+  onSuccess: (response) => {
+    if (response.requiresMfa) {
+      navigate('/mfa-verify', { state: { mfaChallenge: response.mfaChallenge } });
+      return;
+    }
+
+    setToken(response.accessToken);
+    navigate('/dashboard');
+  },
+  onError: (error) => {
+    // Handle specific errors
+    if (error.message.includes('account locked')) {
+      setShowSupportLink(true);
+    }
+  },
+});
+```
+
+## Form Patterns
+
+### Multi-Step Form
+
+```typescript
+const [step, setStep] = useState(1);
+
+// Use single form across steps
+const form = useForm<MultiStepFormData>({
+  resolver: zodResolver(multiStepSchema),
+  defaultValues: { ...initialValues },
+});
+
+// Validate only current step fields
+const validateStep = async () => {
+  const fieldsToValidate = stepFields[step];
+  const isValid = await form.trigger(fieldsToValidate);
+  if (isValid) setStep(step + 1);
+};
+
+return (
+  <Form form={form} mutation={mutation}>
+    {step === 1 && <Step1Fields />}
+    {step === 2 && <Step2Fields />}
+    {step === 3 && <Step3Fields />}
+
+    <div className="flex gap-2">
+      {step > 1 && (
+        <Button type="button" onClick={() => setStep(step - 1)}>
+          Back
+        </Button>
+      )}
+      {step < 3 ? (
+        <Button type="button" onClick={validateStep}>
+          Next
+        </Button>
+      ) : (
+        <Button type="submit">Submit</Button>
+      )}
+    </div>
+  </Form>
+);
+```
+
+### Dynamic Fields
+
+```typescript
+const { fields, append, remove } = useFieldArray({
+  control: form.control,
+  name: 'items',
+});
+
+return (
+  <Form form={form}>
+    {fields.map((field, index) => (
+      <div key={field.id} className="flex gap-2">
+        <TextField name={`items.${index}.name`} label="Name" />
+        <Button type="button" onClick={() => remove(index)}>
+          Remove
+        </Button>
+      </div>
+    ))}
+    <Button type="button" onClick={() => append({ name: '' })}>
+      Add Item
+    </Button>
+  </Form>
+);
+```
+
+### Conditional Fields
+
+```typescript
+const accountType = form.watch('accountType');
+
+return (
+  <Form form={form}>
+    <SelectField name="accountType" label="Account Type">
+      <option value="personal">Personal</option>
+      <option value="business">Business</option>
+    </SelectField>
+
+    {accountType === 'business' && (
+      <>
+        <TextField name="companyName" label="Company Name" />
+        <TextField name="taxId" label="Tax ID" />
+      </>
+    )}
+  </Form>
+);
+```
+
+## Best Practices
+
+<Accordion title="Define Schemas Separately">
+Keep Zod schemas in a dedicated `schemas/` directory:
+
+```typescript
+// schemas/auth.ts
+export const loginSchema = z.object({ ... });
+export type LoginFormData = z.infer<typeof loginSchema>;
+
+// pages/LoginPage.tsx
+import { loginSchema, type LoginFormData } from '@/schemas/auth';
+```
+</Accordion>
+
+<Accordion title="Use Form Component for API Integration">
+Let the Form component handle mutation integration:
+
+```typescript
+// ✅ Good - Form handles mutation
+<Form form={form} mutation={mutation}>
+  {/* fields */}
+</Form>
+
+// ❌ Avoid - manual handling
+<form onSubmit={form.handleSubmit(async (data) => {
+  try {
+    await mutation.mutateAsync(data);
+  } catch (error) {
+    // manual error handling
+  }
+})}>
+```
+</Accordion>
+
+<Accordion title="Always Provide Default Values">
+Provide explicit default values for controlled forms:
+
+```typescript
+const form = useForm({
+  resolver: zodResolver(schema),
+  defaultValues: {
+    email: '',
+    password: '',
+    rememberMe: false,
+  },
+});
+```
+</Accordion>
+
+<Accordion title="Separate Validation from API Errors">
+Zod handles input validation, API handles business rules:
+
+```typescript
+// Zod: format validation
+const schema = z.object({
+  email: z.string().email('Invalid email format'),
+});
+
+// API: business validation
+// Returns: { field: 'email', message: 'Email already registered' }
+```
+</Accordion>

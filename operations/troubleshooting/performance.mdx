@@ -1,0 +1,2275 @@
+---
+title: "Performance Tuning"
+description: "Comprehensive guide to optimizing Vritti platform performance across backend, database, and frontend layers"
+icon: "gauge-high"
+---
+
+# Performance Tuning Guide
+
+This guide covers performance optimization strategies for the Vritti multi-tenant SaaS platform, addressing backend, database, and frontend performance concerns.
+
+## Backend Performance Optimization
+
+### NestJS with Fastify Optimizations
+
+Fastify is already faster than Express, but additional optimizations can significantly improve throughput.
+
+#### Enable Fastify Compression
+
+```typescript
+// main.ts
+import compression from '@fastify/compress';
+
+async function bootstrap() {
+  const app = await NestFactory.create<NestFastifyApplication>(
+    AppModule,
+    new FastifyAdapter({
+      logger: process.env.NODE_ENV !== 'production',
+    }),
+  );
+
+  // Enable compression for responses > 1KB
+  await app.register(compression, {
+    encodings: ['gzip', 'deflate'],
+    threshold: 1024,
+  });
+
+  await app.listen(3000, '0.0.0.0');
+}
+```
+
+#### Request Validation Optimization
+
+```typescript
+// Use class-validator with whitelist for automatic stripping
+import { ValidationPipe } from '@nestjs/common';
+
+app.useGlobalPipes(
+  new ValidationPipe({
+    whitelist: true,           // Strip non-whitelisted properties
+    forbidNonWhitelisted: true,
+    transform: true,           // Auto-transform payloads
+    transformOptions: {
+      enableImplicitConversion: true,
+    },
+    // Cache validation schemas
+    validateCustomDecorators: true,
+  }),
+);
+```
+
+#### Async Local Storage for Tenant Context
+
+```typescript
+// tenant-context.service.ts
+import { AsyncLocalStorage } from 'async_hooks';
+import { Injectable } from '@nestjs/common';
+
+interface TenantContext {
+  tenantId: string;
+  userId: string;
+  permissions: string[];
+}
+
+@Injectable()
+export class TenantContextService {
+  private static storage = new AsyncLocalStorage<TenantContext>();
+
+  run<T>(context: TenantContext, fn: () => T): T {
+    return TenantContextService.storage.run(context, fn);
+  }
+
+  get(): TenantContext | undefined {
+    return TenantContextService.storage.getStore();
+  }
+
+  getTenantId(): string {
+    const context = this.get();
+    if (!context) throw new Error('Tenant context not initialized');
+    return context.tenantId;
+  }
+}
+```
+
+### Worker Threads for CPU-Intensive Tasks
+
+```typescript
+// heavy-computation.worker.ts
+import { parentPort, workerData } from 'worker_threads';
+
+interface WorkerData {
+  data: unknown[];
+  operation: 'aggregate' | 'transform' | 'analyze';
+}
+
+const { data, operation } = workerData as WorkerData;
+
+function performOperation() {
+  switch (operation) {
+    case 'aggregate':
+      return aggregateData(data);
+    case 'transform':
+      return transformData(data);
+    case 'analyze':
+      return analyzeData(data);
+  }
+}
+
+parentPort?.postMessage(performOperation());
+
+// worker.service.ts
+import { Worker } from 'worker_threads';
+import { Injectable } from '@nestjs/common';
+import { cpus } from 'os';
+
+@Injectable()
+export class WorkerPoolService {
+  private readonly poolSize = Math.max(cpus().length - 1, 1);
+  private workers: Worker[] = [];
+  private taskQueue: Array<{
+    resolve: (value: unknown) => void;
+    reject: (reason: unknown) => void;
+    data: unknown;
+  }> = [];
+
+  async executeTask<T>(workerPath: string, data: unknown): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(workerPath, { workerData: data });
+
+      worker.on('message', (result) => {
+        resolve(result);
+        worker.terminate();
+      });
+
+      worker.on('error', (error) => {
+        reject(error);
+        worker.terminate();
+      });
+    });
+  }
+}
+```
+
+---
+
+## Database Query Optimization
+
+### Drizzle ORM Best Practices
+
+#### Efficient Query Patterns
+
+```typescript
+// repositories/user.repository.ts
+import { eq, and, inArray, sql } from 'drizzle-orm';
+import { users, organizations, userRoles } from '../schema';
+
+@Injectable()
+export class UserRepository {
+  constructor(private readonly db: DrizzleService) {}
+
+  // BAD: Multiple separate queries
+  async getUsersWithRolesBad(tenantId: string) {
+    const userList = await this.db.query.users.findMany({
+      where: eq(users.tenantId, tenantId),
+    });
+
+    // N+1 problem!
+    for (const user of userList) {
+      user.roles = await this.db.query.userRoles.findMany({
+        where: eq(userRoles.userId, user.id),
+      });
+    }
+    return userList;
+  }
+
+  // GOOD: Single query with relations
+  async getUsersWithRolesGood(tenantId: string) {
+    return this.db.query.users.findMany({
+      where: eq(users.tenantId, tenantId),
+      with: {
+        roles: true,
+        organization: {
+          columns: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+  }
+
+  // BETTER: Select only needed columns
+  async getUsersOptimized(tenantId: string) {
+    return this.db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        roleName: userRoles.name,
+        orgName: organizations.name,
+      })
+      .from(users)
+      .leftJoin(userRoles, eq(users.id, userRoles.userId))
+      .leftJoin(organizations, eq(users.organizationId, organizations.id))
+      .where(eq(users.tenantId, tenantId));
+  }
+}
+```
+
+#### Batch Operations
+
+```typescript
+// Batch insert with conflict handling
+async batchUpsertUsers(usersData: NewUser[]) {
+  const BATCH_SIZE = 1000;
+  const results = [];
+
+  for (let i = 0; i < usersData.length; i += BATCH_SIZE) {
+    const batch = usersData.slice(i, i + BATCH_SIZE);
+
+    const result = await this.db
+      .insert(users)
+      .values(batch)
+      .onConflictDoUpdate({
+        target: [users.email, users.tenantId],
+        set: {
+          name: sql`excluded.name`,
+          updatedAt: new Date(),
+        },
+      })
+      .returning({ id: users.id });
+
+    results.push(...result);
+  }
+
+  return results;
+}
+
+// Bulk update with single query
+async bulkUpdateStatus(userIds: string[], status: string, tenantId: string) {
+  return this.db
+    .update(users)
+    .set({ status, updatedAt: new Date() })
+    .where(
+      and(
+        inArray(users.id, userIds),
+        eq(users.tenantId, tenantId)
+      )
+    );
+}
+```
+
+### Index Optimization
+
+```typescript
+// schema/indexes.ts
+import { index, uniqueIndex } from 'drizzle-orm/pg-core';
+
+export const usersTable = pgTable('users', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: varchar('email', { length: 255 }).notNull(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  status: varchar('status', { length: 50 }).notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  lastLoginAt: timestamp('last_login_at'),
+}, (table) => ({
+  // Composite index for tenant-scoped queries
+  tenantEmailIdx: uniqueIndex('users_tenant_email_idx')
+    .on(table.tenantId, table.email),
+
+  // Partial index for active users only
+  activeUsersIdx: index('users_active_idx')
+    .on(table.tenantId, table.lastLoginAt)
+    .where(sql`status = 'active'`),
+
+  // Index for sorting/pagination
+  createdAtIdx: index('users_created_at_idx')
+    .on(table.tenantId, table.createdAt.desc()),
+}));
+```
+
+### Query Analysis
+
+```typescript
+// utils/query-analyzer.ts
+import { sql } from 'drizzle-orm';
+
+@Injectable()
+export class QueryAnalyzerService {
+  constructor(private readonly db: DrizzleService) {}
+
+  async analyzeQuery(query: string): Promise<QueryPlan> {
+    const result = await this.db.execute(
+      sql`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql.raw(query)}`
+    );
+
+    return this.parseQueryPlan(result[0]);
+  }
+
+  async getSlowQueries(thresholdMs: number = 100): Promise<SlowQuery[]> {
+    return this.db.execute(sql`
+      SELECT
+        query,
+        calls,
+        total_exec_time / calls as avg_time_ms,
+        rows / calls as avg_rows
+      FROM pg_stat_statements
+      WHERE total_exec_time / calls > ${thresholdMs}
+      ORDER BY total_exec_time DESC
+      LIMIT 20
+    `);
+  }
+}
+```
+
+---
+
+## Connection Pooling
+
+### PostgreSQL Connection Pool Configuration
+
+```typescript
+// database/drizzle.config.ts
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  port: parseInt(process.env.DB_PORT || '5432'),
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+
+  // Connection pool settings
+  min: 5,                          // Minimum connections
+  max: 20,                         // Maximum connections
+  idleTimeoutMillis: 30000,        // Close idle connections after 30s
+  connectionTimeoutMillis: 5000,   // Timeout for new connections
+  maxUses: 7500,                   // Close connection after N uses
+
+  // Statement timeout for long-running queries
+  statement_timeout: 30000,
+});
+
+// Monitor pool health
+pool.on('error', (err) => {
+  console.error('Unexpected pool error:', err);
+});
+
+pool.on('connect', () => {
+  console.log('New client connected to pool');
+});
+
+export const db = drizzle(pool, { schema });
+```
+
+### PgBouncer Configuration
+
+For high-load scenarios, use PgBouncer as a connection pooler:
+
+```ini
+; /etc/pgbouncer/pgbouncer.ini
+[databases]
+vritti = host=localhost port=5432 dbname=vritti
+
+[pgbouncer]
+listen_addr = 0.0.0.0
+listen_port = 6432
+
+; Pool mode: session, transaction, or statement
+pool_mode = transaction
+
+; Pool sizing
+default_pool_size = 20
+min_pool_size = 5
+reserve_pool_size = 5
+reserve_pool_timeout = 3
+
+; Connection limits
+max_client_conn = 1000
+max_db_connections = 50
+
+; Timeouts
+server_idle_timeout = 600
+client_idle_timeout = 0
+query_timeout = 30
+
+; Logging
+log_connections = 1
+log_disconnections = 1
+log_pooler_errors = 1
+```
+
+### Health Check Endpoint
+
+```typescript
+// health/database-health.service.ts
+@Injectable()
+export class DatabaseHealthService {
+  constructor(private readonly db: DrizzleService) {}
+
+  async checkHealth(): Promise<DatabaseHealth> {
+    const start = Date.now();
+
+    try {
+      // Simple connectivity check
+      await this.db.execute(sql`SELECT 1`);
+
+      // Pool statistics
+      const poolStats = await this.db.execute(sql`
+        SELECT
+          numbackends as active_connections,
+          xact_commit as transactions_committed,
+          xact_rollback as transactions_rolled_back,
+          blks_hit as cache_hits,
+          blks_read as disk_reads
+        FROM pg_stat_database
+        WHERE datname = current_database()
+      `);
+
+      return {
+        status: 'healthy',
+        latencyMs: Date.now() - start,
+        pool: poolStats[0],
+        cacheHitRatio: this.calculateCacheHitRatio(poolStats[0]),
+      };
+    } catch (error) {
+      return {
+        status: 'unhealthy',
+        latencyMs: Date.now() - start,
+        error: error.message,
+      };
+    }
+  }
+
+  private calculateCacheHitRatio(stats: any): number {
+    const total = stats.cache_hits + stats.disk_reads;
+    return total > 0 ? (stats.cache_hits / total) * 100 : 100;
+  }
+}
+```
+
+---
+
+## Caching Strategies
+
+### Redis Caching Layer
+
+```typescript
+// cache/redis-cache.service.ts
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import Redis from 'ioredis';
+
+interface CacheOptions {
+  ttl?: number;           // Time to live in seconds
+  tenant?: string;        // Tenant isolation
+  tags?: string[];        // Cache tags for invalidation
+}
+
+@Injectable()
+export class RedisCacheService implements OnModuleDestroy {
+  private readonly client: Redis;
+  private readonly defaultTtl = 3600; // 1 hour
+
+  constructor() {
+    this.client = new Redis({
+      host: process.env.REDIS_HOST,
+      port: parseInt(process.env.REDIS_PORT || '6379'),
+      password: process.env.REDIS_PASSWORD,
+      db: 0,
+
+      // Connection settings
+      retryDelayOnFailover: 100,
+      maxRetriesPerRequest: 3,
+      enableReadyCheck: true,
+
+      // Performance settings
+      lazyConnect: true,
+      keepAlive: 10000,
+    });
+  }
+
+  private buildKey(key: string, tenant?: string): string {
+    return tenant ? `tenant:${tenant}:${key}` : key;
+  }
+
+  async get<T>(key: string, options: CacheOptions = {}): Promise<T | null> {
+    const fullKey = this.buildKey(key, options.tenant);
+    const data = await this.client.get(fullKey);
+    return data ? JSON.parse(data) : null;
+  }
+
+  async set<T>(
+    key: string,
+    value: T,
+    options: CacheOptions = {}
+  ): Promise<void> {
+    const fullKey = this.buildKey(key, options.tenant);
+    const ttl = options.ttl || this.defaultTtl;
+
+    await this.client.setex(fullKey, ttl, JSON.stringify(value));
+
+    // Track cache tags for bulk invalidation
+    if (options.tags?.length) {
+      for (const tag of options.tags) {
+        await this.client.sadd(`tag:${tag}`, fullKey);
+      }
+    }
+  }
+
+  async getOrSet<T>(
+    key: string,
+    factory: () => Promise<T>,
+    options: CacheOptions = {}
+  ): Promise<T> {
+    const cached = await this.get<T>(key, options);
+    if (cached !== null) return cached;
+
+    const value = await factory();
+    await this.set(key, value, options);
+    return value;
+  }
+
+  async invalidateByTag(tag: string): Promise<number> {
+    const keys = await this.client.smembers(`tag:${tag}`);
+    if (keys.length === 0) return 0;
+
+    const pipeline = this.client.pipeline();
+    keys.forEach((key) => pipeline.del(key));
+    pipeline.del(`tag:${tag}`);
+
+    await pipeline.exec();
+    return keys.length;
+  }
+
+  async invalidateByPattern(pattern: string): Promise<number> {
+    const keys = await this.client.keys(pattern);
+    if (keys.length === 0) return 0;
+
+    await this.client.del(...keys);
+    return keys.length;
+  }
+
+  onModuleDestroy() {
+    this.client.disconnect();
+  }
+}
+```
+
+### In-Memory Caching with LRU
+
+```typescript
+// cache/memory-cache.service.ts
+import { Injectable } from '@nestjs/common';
+import { LRUCache } from 'lru-cache';
+
+@Injectable()
+export class MemoryCacheService {
+  private readonly cache: LRUCache<string, unknown>;
+
+  constructor() {
+    this.cache = new LRUCache({
+      max: 1000,                    // Maximum items
+      maxSize: 50 * 1024 * 1024,    // 50MB max size
+      sizeCalculation: (value) => {
+        return JSON.stringify(value).length;
+      },
+      ttl: 1000 * 60 * 5,           // 5 minutes default TTL
+      allowStale: false,
+      updateAgeOnGet: true,
+    });
+  }
+
+  get<T>(key: string): T | undefined {
+    return this.cache.get(key) as T | undefined;
+  }
+
+  set<T>(key: string, value: T, ttlMs?: number): void {
+    this.cache.set(key, value, { ttl: ttlMs });
+  }
+
+  has(key: string): boolean {
+    return this.cache.has(key);
+  }
+
+  delete(key: string): boolean {
+    return this.cache.delete(key);
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+
+  getStats() {
+    return {
+      size: this.cache.size,
+      calculatedSize: this.cache.calculatedSize,
+      hitRate: this.calculateHitRate(),
+    };
+  }
+}
+```
+
+### Multi-Tier Caching Strategy
+
+```typescript
+// cache/tiered-cache.service.ts
+@Injectable()
+export class TieredCacheService {
+  constructor(
+    private readonly memoryCache: MemoryCacheService,
+    private readonly redisCache: RedisCacheService,
+  ) {}
+
+  async get<T>(key: string, options: CacheOptions = {}): Promise<T | null> {
+    // L1: Check memory cache first (fastest)
+    const memCached = this.memoryCache.get<T>(key);
+    if (memCached !== undefined) {
+      return memCached;
+    }
+
+    // L2: Check Redis cache
+    const redisCached = await this.redisCache.get<T>(key, options);
+    if (redisCached !== null) {
+      // Promote to L1 cache
+      this.memoryCache.set(key, redisCached, 60000); // 1 min in memory
+      return redisCached;
+    }
+
+    return null;
+  }
+
+  async set<T>(key: string, value: T, options: CacheOptions = {}): Promise<void> {
+    // Write to both caches
+    this.memoryCache.set(key, value, 60000); // Short TTL for L1
+    await this.redisCache.set(key, value, options);
+  }
+
+  async getOrSet<T>(
+    key: string,
+    factory: () => Promise<T>,
+    options: CacheOptions = {}
+  ): Promise<T> {
+    const cached = await this.get<T>(key, options);
+    if (cached !== null) return cached;
+
+    const value = await factory();
+    await this.set(key, value, options);
+    return value;
+  }
+}
+```
+
+### Cache Decorators
+
+```typescript
+// cache/cache.decorator.ts
+import { SetMetadata } from '@nestjs/common';
+
+export const CACHE_KEY = 'cache:key';
+export const CACHE_TTL = 'cache:ttl';
+export const CACHE_TAGS = 'cache:tags';
+
+export interface CacheableOptions {
+  key?: string;
+  ttl?: number;
+  tags?: string[];
+  tenant?: boolean;
+}
+
+export const Cacheable = (options: CacheableOptions = {}) => {
+  return (target: any, propertyKey: string, descriptor: PropertyDescriptor) => {
+    const originalMethod = descriptor.value;
+
+    descriptor.value = async function (...args: any[]) {
+      const cache = this.cacheService as TieredCacheService;
+      const tenantContext = this.tenantContext as TenantContextService;
+
+      const cacheKey = options.key
+        ? `${options.key}:${JSON.stringify(args)}`
+        : `${target.constructor.name}:${propertyKey}:${JSON.stringify(args)}`;
+
+      const cacheOptions: CacheOptions = {
+        ttl: options.ttl,
+        tags: options.tags,
+        tenant: options.tenant ? tenantContext.getTenantId() : undefined,
+      };
+
+      return cache.getOrSet(
+        cacheKey,
+        () => originalMethod.apply(this, args),
+        cacheOptions,
+      );
+    };
+
+    return descriptor;
+  };
+};
+
+// Usage
+@Injectable()
+export class ProductService {
+  constructor(
+    private readonly cacheService: TieredCacheService,
+    private readonly tenantContext: TenantContextService,
+  ) {}
+
+  @Cacheable({ ttl: 300, tags: ['products'], tenant: true })
+  async getProducts(filters: ProductFilters) {
+    // This will be cached per tenant
+    return this.productRepository.findMany(filters);
+  }
+}
+```
+
+---
+
+## Frontend Bundle Optimization
+
+### RSBuild Configuration
+
+```typescript
+// rsbuild.config.ts
+import { defineConfig } from '@rsbuild/core';
+import { pluginReact } from '@rsbuild/plugin-react';
+
+export default defineConfig({
+  plugins: [pluginReact()],
+
+  output: {
+    // Enable content hashing for cache busting
+    filename: {
+      js: '[name].[contenthash:8].js',
+      css: '[name].[contenthash:8].css',
+    },
+
+    // Enable source maps for production debugging
+    sourceMap: {
+      js: 'source-map',
+      css: true,
+    },
+
+    // Minification settings
+    minify: {
+      js: true,
+      jsOptions: {
+        minimizerOptions: {
+          compress: {
+            drop_console: true,
+            drop_debugger: true,
+            pure_funcs: ['console.log', 'console.info'],
+          },
+          mangle: true,
+        },
+      },
+      css: true,
+    },
+  },
+
+  performance: {
+    // Bundle size limits
+    bundleAnalyze: process.env.ANALYZE === 'true',
+    chunkSplit: {
+      strategy: 'split-by-experience',
+      override: {
+        cacheGroups: {
+          // Vendor chunks
+          react: {
+            test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+            name: 'react-vendor',
+            priority: 20,
+          },
+          ui: {
+            test: /[\\/]node_modules[\\/](@radix-ui|@headlessui)[\\/]/,
+            name: 'ui-vendor',
+            priority: 15,
+          },
+          utils: {
+            test: /[\\/]node_modules[\\/](lodash|date-fns|zod)[\\/]/,
+            name: 'utils-vendor',
+            priority: 10,
+          },
+        },
+      },
+    },
+
+    // Preload critical assets
+    preload: {
+      type: 'all-chunks',
+      include: [/react-vendor/, /ui-vendor/],
+    },
+  },
+
+  tools: {
+    // Tree shaking optimization
+    rspack: {
+      optimization: {
+        usedExports: true,
+        sideEffects: true,
+        concatenateModules: true,
+      },
+    },
+  },
+});
+```
+
+### Module Federation Configuration
+
+```typescript
+// rsbuild.config.ts (Host Application)
+import { ModuleFederationPlugin } from '@module-federation/enhanced/rspack';
+
+export default defineConfig({
+  tools: {
+    rspack: {
+      plugins: [
+        new ModuleFederationPlugin({
+          name: 'host',
+          remotes: {
+            dashboard: 'dashboard@http://localhost:3001/remoteEntry.js',
+            analytics: 'analytics@http://localhost:3002/remoteEntry.js',
+          },
+          shared: {
+            react: {
+              singleton: true,
+              requiredVersion: '^19.0.0',
+              eager: true,
+            },
+            'react-dom': {
+              singleton: true,
+              requiredVersion: '^19.0.0',
+              eager: true,
+            },
+            '@tanstack/react-query': {
+              singleton: true,
+              requiredVersion: '^5.0.0',
+            },
+          },
+        }),
+      ],
+    },
+  },
+});
+
+// rsbuild.config.ts (Remote Application)
+export default defineConfig({
+  tools: {
+    rspack: {
+      plugins: [
+        new ModuleFederationPlugin({
+          name: 'dashboard',
+          filename: 'remoteEntry.js',
+          exposes: {
+            './DashboardPage': './src/pages/Dashboard',
+            './WidgetLibrary': './src/components/widgets',
+          },
+          shared: {
+            react: { singleton: true, requiredVersion: '^19.0.0' },
+            'react-dom': { singleton: true, requiredVersion: '^19.0.0' },
+          },
+        }),
+      ],
+    },
+  },
+});
+```
+
+---
+
+## Code Splitting and Lazy Loading
+
+### Route-Based Code Splitting
+
+```typescript
+// routes/index.tsx
+import { lazy, Suspense } from 'react';
+import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+
+// Lazy load route components
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Analytics = lazy(() => import('./pages/Analytics'));
+const Settings = lazy(() => import('./pages/Settings'));
+const UserManagement = lazy(() => import('./pages/UserManagement'));
+
+// Preload on hover for better UX
+const preloadDashboard = () => import('./pages/Dashboard');
+const preloadAnalytics = () => import('./pages/Analytics');
+
+const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <RootLayout />,
+    children: [
+      {
+        path: 'dashboard',
+        element: (
+          <Suspense fallback={<LoadingSpinner />}>
+            <Dashboard />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'analytics',
+        element: (
+          <Suspense fallback={<LoadingSpinner />}>
+            <Analytics />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'settings/*',
+        element: (
+          <Suspense fallback={<LoadingSpinner />}>
+            <Settings />
+          </Suspense>
+        ),
+      },
+    ],
+  },
+]);
+
+// Navigation with preloading
+export function NavigationLink({ to, children, preload }) {
+  return (
+    <Link
+      to={to}
+      onMouseEnter={preload}
+      onFocus={preload}
+    >
+      {children}
+    </Link>
+  );
+}
+```
+
+### Component-Level Code Splitting
+
+```typescript
+// components/LazyComponents.tsx
+import { lazy, Suspense, ComponentType } from 'react';
+
+// Heavy components that should be lazy loaded
+export const RichTextEditor = lazy(() =>
+  import('./RichTextEditor').then(m => ({ default: m.RichTextEditor }))
+);
+
+export const DataGrid = lazy(() =>
+  import('./DataGrid').then(m => ({ default: m.DataGrid }))
+);
+
+export const ChartLibrary = lazy(() =>
+  import('./ChartLibrary').then(m => ({ default: m.ChartLibrary }))
+);
+
+// Wrapper with loading state
+export function LazyComponent<P extends object>({
+  component: Component,
+  fallback = <div className="animate-pulse h-32 bg-gray-100 rounded" />,
+  ...props
+}: {
+  component: ComponentType<P>;
+  fallback?: React.ReactNode;
+} & P) {
+  return (
+    <Suspense fallback={fallback}>
+      <Component {...(props as P)} />
+    </Suspense>
+  );
+}
+
+// Usage
+function ReportPage() {
+  return (
+    <div>
+      <h1>Reports</h1>
+      <LazyComponent
+        component={ChartLibrary}
+        data={chartData}
+        fallback={<ChartSkeleton />}
+      />
+    </div>
+  );
+}
+```
+
+### Dynamic Imports for Features
+
+```typescript
+// features/feature-loader.ts
+type FeatureModule = {
+  default: React.ComponentType;
+  initialize?: () => Promise<void>;
+};
+
+const featureRegistry = new Map<string, () => Promise<FeatureModule>>();
+
+// Register features dynamically
+featureRegistry.set('advanced-analytics', () =>
+  import('@/features/advanced-analytics')
+);
+featureRegistry.set('ai-insights', () =>
+  import('@/features/ai-insights')
+);
+featureRegistry.set('custom-reports', () =>
+  import('@/features/custom-reports')
+);
+
+export async function loadFeature(featureName: string): Promise<FeatureModule> {
+  const loader = featureRegistry.get(featureName);
+  if (!loader) {
+    throw new Error(`Feature "${featureName}" not found`);
+  }
+
+  const module = await loader();
+
+  // Initialize feature if needed
+  if (module.initialize) {
+    await module.initialize();
+  }
+
+  return module;
+}
+
+// Hook for feature loading
+export function useFeature(featureName: string, enabled: boolean) {
+  const [Feature, setFeature] = useState<React.ComponentType | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    setLoading(true);
+    loadFeature(featureName)
+      .then((module) => setFeature(() => module.default))
+      .catch(setError)
+      .finally(() => setLoading(false));
+  }, [featureName, enabled]);
+
+  return { Feature, loading, error };
+}
+```
+
+---
+
+## Image Optimization
+
+### Image Component with Optimization
+
+```typescript
+// components/OptimizedImage.tsx
+import { useState, useEffect, useRef } from 'react';
+
+interface OptimizedImageProps {
+  src: string;
+  alt: string;
+  width?: number;
+  height?: number;
+  priority?: boolean;
+  quality?: number;
+  placeholder?: 'blur' | 'empty';
+  blurDataURL?: string;
+  className?: string;
+  onLoad?: () => void;
+}
+
+export function OptimizedImage({
+  src,
+  alt,
+  width,
+  height,
+  priority = false,
+  quality = 75,
+  placeholder = 'empty',
+  blurDataURL,
+  className,
+  onLoad,
+}: OptimizedImageProps) {
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  // Generate optimized URL (assuming image optimization service)
+  const optimizedSrc = generateOptimizedUrl(src, { width, height, quality });
+
+  // Generate srcset for responsive images
+  const srcSet = generateSrcSet(src, { quality });
+
+  useEffect(() => {
+    if (priority && imgRef.current) {
+      // Preload priority images
+      const link = document.createElement('link');
+      link.rel = 'preload';
+      link.as = 'image';
+      link.href = optimizedSrc;
+      document.head.appendChild(link);
+
+      return () => {
+        document.head.removeChild(link);
+      };
+    }
+  }, [priority, optimizedSrc]);
+
+  const handleLoad = () => {
+    setLoaded(true);
+    onLoad?.();
+  };
+
+  return (
+    <div
+      className={`relative overflow-hidden ${className}`}
+      style={{ width, height }}
+    >
+      {/* Blur placeholder */}
+      {placeholder === 'blur' && !loaded && (
+        <img
+          src={blurDataURL || generateBlurPlaceholder(src)}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover filter blur-lg scale-110"
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Main image */}
+      <img
+        ref={imgRef}
+        src={optimizedSrc}
+        srcSet={srcSet}
+        sizes={`(max-width: 768px) 100vw, ${width}px`}
+        alt={alt}
+        width={width}
+        height={height}
+        loading={priority ? 'eager' : 'lazy'}
+        decoding={priority ? 'sync' : 'async'}
+        onLoad={handleLoad}
+        onError={() => setError(true)}
+        className={`
+          w-full h-full object-cover
+          transition-opacity duration-300
+          ${loaded ? 'opacity-100' : 'opacity-0'}
+        `}
+      />
+
+      {/* Error fallback */}
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
+          <span className="text-gray-400">Failed to load image</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function generateOptimizedUrl(
+  src: string,
+  options: { width?: number; height?: number; quality?: number }
+): string {
+  const params = new URLSearchParams();
+  if (options.width) params.set('w', String(options.width));
+  if (options.height) params.set('h', String(options.height));
+  if (options.quality) params.set('q', String(options.quality));
+  params.set('f', 'webp'); // Prefer WebP format
+
+  return `/api/images/optimize?src=${encodeURIComponent(src)}&${params}`;
+}
+
+function generateSrcSet(src: string, options: { quality?: number }): string {
+  const widths = [640, 750, 828, 1080, 1200, 1920, 2048];
+  return widths
+    .map(w => `${generateOptimizedUrl(src, { width: w, ...options })} ${w}w`)
+    .join(', ');
+}
+```
+
+### Server-Side Image Optimization
+
+```typescript
+// api/images/optimize.controller.ts
+import { Controller, Get, Query, Res, Header } from '@nestjs/common';
+import { FastifyReply } from 'fastify';
+import sharp from 'sharp';
+
+@Controller('api/images')
+export class ImageOptimizationController {
+  @Get('optimize')
+  @Header('Cache-Control', 'public, max-age=31536000, immutable')
+  async optimizeImage(
+    @Query('src') src: string,
+    @Query('w') width: string,
+    @Query('h') height: string,
+    @Query('q') quality: string,
+    @Query('f') format: string,
+    @Res() reply: FastifyReply,
+  ) {
+    const imageBuffer = await this.fetchImage(src);
+
+    let processor = sharp(imageBuffer);
+
+    // Resize
+    if (width || height) {
+      processor = processor.resize({
+        width: width ? parseInt(width) : undefined,
+        height: height ? parseInt(height) : undefined,
+        fit: 'cover',
+        withoutEnlargement: true,
+      });
+    }
+
+    // Format conversion
+    const outputFormat = format || 'webp';
+    const outputQuality = quality ? parseInt(quality) : 80;
+
+    switch (outputFormat) {
+      case 'webp':
+        processor = processor.webp({ quality: outputQuality });
+        break;
+      case 'avif':
+        processor = processor.avif({ quality: outputQuality });
+        break;
+      case 'jpeg':
+        processor = processor.jpeg({ quality: outputQuality, progressive: true });
+        break;
+      case 'png':
+        processor = processor.png({ compressionLevel: 9 });
+        break;
+    }
+
+    const optimizedBuffer = await processor.toBuffer();
+
+    reply
+      .type(`image/${outputFormat}`)
+      .send(optimizedBuffer);
+  }
+
+  private async fetchImage(src: string): Promise<Buffer> {
+    // Implement image fetching with caching
+    // Could fetch from S3, CDN, or local storage
+  }
+}
+```
+
+---
+
+## API Response Optimization
+
+### Response Compression and Serialization
+
+```typescript
+// interceptors/response-optimization.interceptor.ts
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+@Injectable()
+export class ResponseOptimizationInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const request = context.switchToHttp().getRequest();
+    const acceptEncoding = request.headers['accept-encoding'] || '';
+
+    return next.handle().pipe(
+      map((data) => {
+        // Strip null/undefined values
+        const cleaned = this.removeNullValues(data);
+
+        // Apply field selection if requested
+        const fields = request.query.fields;
+        if (fields) {
+          return this.selectFields(cleaned, fields.split(','));
+        }
+
+        return cleaned;
+      }),
+    );
+  }
+
+  private removeNullValues(obj: any): any {
+    if (Array.isArray(obj)) {
+      return obj.map(item => this.removeNullValues(item));
+    }
+
+    if (obj && typeof obj === 'object') {
+      return Object.fromEntries(
+        Object.entries(obj)
+          .filter(([_, value]) => value != null)
+          .map(([key, value]) => [key, this.removeNullValues(value)])
+      );
+    }
+
+    return obj;
+  }
+
+  private selectFields(data: any, fields: string[]): any {
+    if (Array.isArray(data)) {
+      return data.map(item => this.selectFields(item, fields));
+    }
+
+    if (data && typeof data === 'object') {
+      return Object.fromEntries(
+        Object.entries(data).filter(([key]) => fields.includes(key))
+      );
+    }
+
+    return data;
+  }
+}
+```
+
+### Pagination with Cursor-Based Navigation
+
+```typescript
+// dto/pagination.dto.ts
+export class CursorPaginationDto {
+  @IsOptional()
+  @IsString()
+  cursor?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number = 20;
+
+  @IsOptional()
+  @IsEnum(['asc', 'desc'])
+  order?: 'asc' | 'desc' = 'desc';
+}
+
+// utils/pagination.ts
+export interface PaginatedResponse<T> {
+  data: T[];
+  pagination: {
+    hasMore: boolean;
+    nextCursor: string | null;
+    prevCursor: string | null;
+    total?: number;
+  };
+}
+
+export function encodeCursor(data: Record<string, any>): string {
+  return Buffer.from(JSON.stringify(data)).toString('base64url');
+}
+
+export function decodeCursor(cursor: string): Record<string, any> {
+  return JSON.parse(Buffer.from(cursor, 'base64url').toString());
+}
+
+// repository implementation
+async findPaginated(
+  tenantId: string,
+  pagination: CursorPaginationDto,
+): Promise<PaginatedResponse<User>> {
+  const { cursor, limit = 20, order = 'desc' } = pagination;
+
+  let query = this.db
+    .select()
+    .from(users)
+    .where(eq(users.tenantId, tenantId))
+    .limit(limit + 1); // Fetch one extra to check hasMore
+
+  if (cursor) {
+    const { id, createdAt } = decodeCursor(cursor);
+    query = query.where(
+      order === 'desc'
+        ? sql`(created_at, id) < (${createdAt}, ${id})`
+        : sql`(created_at, id) > (${createdAt}, ${id})`
+    );
+  }
+
+  query = query.orderBy(
+    order === 'desc'
+      ? desc(users.createdAt)
+      : asc(users.createdAt)
+  );
+
+  const results = await query;
+  const hasMore = results.length > limit;
+  const data = hasMore ? results.slice(0, -1) : results;
+
+  return {
+    data,
+    pagination: {
+      hasMore,
+      nextCursor: hasMore
+        ? encodeCursor({
+            id: data[data.length - 1].id,
+            createdAt: data[data.length - 1].createdAt
+          })
+        : null,
+      prevCursor: cursor || null,
+    },
+  };
+}
+```
+
+### GraphQL DataLoader Pattern for REST
+
+```typescript
+// dataloaders/user.dataloader.ts
+import DataLoader from 'dataloader';
+import { Injectable, Scope } from '@nestjs/common';
+
+@Injectable({ scope: Scope.REQUEST })
+export class UserDataLoader {
+  private loader: DataLoader<string, User>;
+
+  constructor(private readonly userRepository: UserRepository) {
+    this.loader = new DataLoader(
+      async (ids: readonly string[]) => {
+        const users = await this.userRepository.findByIds([...ids]);
+        const userMap = new Map(users.map(u => [u.id, u]));
+        return ids.map(id => userMap.get(id) || null);
+      },
+      {
+        cache: true,
+        maxBatchSize: 100,
+      }
+    );
+  }
+
+  async load(id: string): Promise<User | null> {
+    return this.loader.load(id);
+  }
+
+  async loadMany(ids: string[]): Promise<(User | null)[]> {
+    return this.loader.loadMany(ids);
+  }
+
+  clear(id: string): void {
+    this.loader.clear(id);
+  }
+
+  clearAll(): void {
+    this.loader.clearAll();
+  }
+}
+
+// Usage in service
+@Injectable()
+export class OrderService {
+  constructor(
+    private readonly orderRepository: OrderRepository,
+    private readonly userDataLoader: UserDataLoader,
+    private readonly productDataLoader: ProductDataLoader,
+  ) {}
+
+  async getOrdersWithDetails(tenantId: string): Promise<OrderWithDetails[]> {
+    const orders = await this.orderRepository.findByTenant(tenantId);
+
+    // Batch load all related entities
+    const ordersWithDetails = await Promise.all(
+      orders.map(async (order) => ({
+        ...order,
+        user: await this.userDataLoader.load(order.userId),
+        products: await this.productDataLoader.loadMany(order.productIds),
+      }))
+    );
+
+    return ordersWithDetails;
+  }
+}
+```
+
+---
+
+## N+1 Query Prevention
+
+### Detection and Monitoring
+
+```typescript
+// interceptors/query-monitor.interceptor.ts
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+interface QueryStats {
+  count: number;
+  queries: string[];
+  duplicates: Map<string, number>;
+}
+
+@Injectable()
+export class QueryMonitorInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const stats: QueryStats = {
+      count: 0,
+      queries: [],
+      duplicates: new Map(),
+    };
+
+    // Hook into query execution
+    const originalExecute = this.db.execute.bind(this.db);
+    this.db.execute = async (query: any) => {
+      const queryString = query.toString();
+      stats.count++;
+      stats.queries.push(queryString);
+
+      // Track duplicates
+      const normalized = this.normalizeQuery(queryString);
+      stats.duplicates.set(
+        normalized,
+        (stats.duplicates.get(normalized) || 0) + 1
+      );
+
+      return originalExecute(query);
+    };
+
+    return next.handle().pipe(
+      tap(() => {
+        // Restore original
+        this.db.execute = originalExecute;
+
+        // Log warnings for potential N+1
+        const n1Candidates = Array.from(stats.duplicates.entries())
+          .filter(([_, count]) => count > 3);
+
+        if (n1Candidates.length > 0) {
+          console.warn('Potential N+1 queries detected:', {
+            endpoint: context.switchToHttp().getRequest().url,
+            totalQueries: stats.count,
+            duplicatePatterns: n1Candidates,
+          });
+        }
+      }),
+    );
+  }
+
+  private normalizeQuery(query: string): string {
+    // Remove specific IDs to detect similar query patterns
+    return query
+      .replace(/'\w{8}-\w{4}-\w{4}-\w{4}-\w{12}'/g, "'?'")
+      .replace(/\d+/g, '?');
+  }
+}
+```
+
+### Eager Loading Patterns
+
+```typescript
+// repositories/order.repository.ts
+@Injectable()
+export class OrderRepository {
+  // BAD: N+1 queries
+  async getOrdersWithItemsBad(tenantId: string) {
+    const orders = await this.db.query.orders.findMany({
+      where: eq(orders.tenantId, tenantId),
+    });
+
+    // N+1: One query per order
+    for (const order of orders) {
+      order.items = await this.db.query.orderItems.findMany({
+        where: eq(orderItems.orderId, order.id),
+      });
+    }
+
+    return orders;
+  }
+
+  // GOOD: Single query with relations
+  async getOrdersWithItemsGood(tenantId: string) {
+    return this.db.query.orders.findMany({
+      where: eq(orders.tenantId, tenantId),
+      with: {
+        items: {
+          with: {
+            product: {
+              columns: {
+                id: true,
+                name: true,
+                price: true,
+              },
+            },
+          },
+        },
+        customer: true,
+      },
+    });
+  }
+
+  // BETTER: Explicit join with selected columns
+  async getOrdersOptimized(tenantId: string) {
+    const result = await this.db
+      .select({
+        orderId: orders.id,
+        orderTotal: orders.total,
+        orderStatus: orders.status,
+        customerName: customers.name,
+        customerEmail: customers.email,
+        itemId: orderItems.id,
+        productName: products.name,
+        quantity: orderItems.quantity,
+        unitPrice: orderItems.unitPrice,
+      })
+      .from(orders)
+      .innerJoin(customers, eq(orders.customerId, customers.id))
+      .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
+      .leftJoin(products, eq(orderItems.productId, products.id))
+      .where(eq(orders.tenantId, tenantId));
+
+    // Group results
+    return this.groupOrderResults(result);
+  }
+
+  private groupOrderResults(rows: any[]): Order[] {
+    const orderMap = new Map<string, Order>();
+
+    for (const row of rows) {
+      if (!orderMap.has(row.orderId)) {
+        orderMap.set(row.orderId, {
+          id: row.orderId,
+          total: row.orderTotal,
+          status: row.orderStatus,
+          customer: {
+            name: row.customerName,
+            email: row.customerEmail,
+          },
+          items: [],
+        });
+      }
+
+      if (row.itemId) {
+        orderMap.get(row.orderId)!.items.push({
+          id: row.itemId,
+          productName: row.productName,
+          quantity: row.quantity,
+          unitPrice: row.unitPrice,
+        });
+      }
+    }
+
+    return Array.from(orderMap.values());
+  }
+}
+```
+
+### Batch Loading Utility
+
+```typescript
+// utils/batch-loader.ts
+export class BatchLoader<K, V> {
+  private batch: K[] = [];
+  private scheduled = false;
+  private cache = new Map<K, Promise<V>>();
+
+  constructor(
+    private readonly batchFn: (keys: K[]) => Promise<Map<K, V>>,
+    private readonly options: {
+      maxBatchSize?: number;
+      batchInterval?: number;
+      cacheKeyFn?: (key: K) => string;
+    } = {}
+  ) {}
+
+  async load(key: K): Promise<V> {
+    const cacheKey = this.options.cacheKeyFn?.(key) ?? String(key);
+
+    if (this.cache.has(key)) {
+      return this.cache.get(key)!;
+    }
+
+    const promise = new Promise<V>((resolve, reject) => {
+      this.batch.push(key);
+      this.scheduleDispatch(resolve, reject, key);
+    });
+
+    this.cache.set(key, promise);
+    return promise;
+  }
+
+  private scheduleDispatch(
+    resolve: (value: V) => void,
+    reject: (reason: any) => void,
+    key: K
+  ) {
+    if (this.scheduled) return;
+
+    this.scheduled = true;
+
+    const dispatch = async () => {
+      const keys = [...this.batch];
+      this.batch = [];
+      this.scheduled = false;
+
+      try {
+        const results = await this.batchFn(keys);
+        keys.forEach((k) => {
+          const promise = this.cache.get(k);
+          if (results.has(k)) {
+            // Resolve the promise
+          }
+        });
+      } catch (error) {
+        keys.forEach((k) => {
+          // Reject and clear cache
+          this.cache.delete(k);
+        });
+      }
+    };
+
+    if (this.batch.length >= (this.options.maxBatchSize || 100)) {
+      dispatch();
+    } else {
+      setTimeout(dispatch, this.options.batchInterval || 10);
+    }
+  }
+
+  clear(key?: K): void {
+    if (key) {
+      this.cache.delete(key);
+    } else {
+      this.cache.clear();
+    }
+  }
+}
+```
+
+---
+
+## Load Testing Tools and Strategies
+
+### K6 Load Testing Scripts
+
+```javascript
+// load-tests/api-load-test.js
+import http from 'k6/http';
+import { check, sleep, group } from 'k6';
+import { Rate, Trend } from 'k6/metrics';
+
+// Custom metrics
+const errorRate = new Rate('errors');
+const apiDuration = new Trend('api_duration');
+
+// Test configuration
+export const options = {
+  scenarios: {
+    // Smoke test
+    smoke: {
+      executor: 'constant-vus',
+      vus: 1,
+      duration: '1m',
+      tags: { test_type: 'smoke' },
+    },
+
+    // Load test
+    load: {
+      executor: 'ramping-vus',
+      startVUs: 0,
+      stages: [
+        { duration: '2m', target: 50 },   // Ramp up
+        { duration: '5m', target: 50 },   // Stay at 50
+        { duration: '2m', target: 100 },  // Ramp to 100
+        { duration: '5m', target: 100 },  // Stay at 100
+        { duration: '2m', target: 0 },    // Ramp down
+      ],
+      tags: { test_type: 'load' },
+    },
+
+    // Stress test
+    stress: {
+      executor: 'ramping-vus',
+      startVUs: 0,
+      stages: [
+        { duration: '2m', target: 100 },
+        { duration: '5m', target: 200 },
+        { duration: '5m', target: 300 },
+        { duration: '5m', target: 400 },
+        { duration: '2m', target: 0 },
+      ],
+      tags: { test_type: 'stress' },
+    },
+
+    // Spike test
+    spike: {
+      executor: 'ramping-vus',
+      startVUs: 0,
+      stages: [
+        { duration: '10s', target: 100 },
+        { duration: '1m', target: 100 },
+        { duration: '10s', target: 500 },  // Spike
+        { duration: '3m', target: 500 },
+        { duration: '10s', target: 100 },
+        { duration: '1m', target: 100 },
+        { duration: '10s', target: 0 },
+      ],
+      tags: { test_type: 'spike' },
+    },
+  },
+
+  thresholds: {
+    http_req_duration: ['p(95)<500', 'p(99)<1000'],
+    errors: ['rate<0.1'],
+    http_req_failed: ['rate<0.05'],
+  },
+};
+
+const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
+const API_KEY = __ENV.API_KEY;
+const TENANT_ID = __ENV.TENANT_ID;
+
+const headers = {
+  'Content-Type': 'application/json',
+  'Authorization': `Bearer ${API_KEY}`,
+  'X-Tenant-ID': TENANT_ID,
+};
+
+export default function () {
+  group('Authentication Flow', () => {
+    const loginRes = http.post(
+      `${BASE_URL}/api/auth/login`,
+      JSON.stringify({
+        email: 'loadtest@example.com',
+        password: 'testpassword',
+      }),
+      { headers }
+    );
+
+    check(loginRes, {
+      'login successful': (r) => r.status === 200,
+      'has access token': (r) => r.json('accessToken') !== undefined,
+    });
+
+    errorRate.add(loginRes.status !== 200);
+    apiDuration.add(loginRes.timings.duration);
+  });
+
+  group('Dashboard API', () => {
+    const dashboardRes = http.get(
+      `${BASE_URL}/api/dashboard/stats`,
+      { headers }
+    );
+
+    check(dashboardRes, {
+      'dashboard loaded': (r) => r.status === 200,
+      'response time OK': (r) => r.timings.duration < 500,
+    });
+
+    errorRate.add(dashboardRes.status !== 200);
+    apiDuration.add(dashboardRes.timings.duration);
+  });
+
+  group('Data Listing', () => {
+    const listRes = http.get(
+      `${BASE_URL}/api/products?limit=50&page=1`,
+      { headers }
+    );
+
+    check(listRes, {
+      'list loaded': (r) => r.status === 200,
+      'has pagination': (r) => r.json('pagination') !== undefined,
+    });
+
+    errorRate.add(listRes.status !== 200);
+    apiDuration.add(listRes.timings.duration);
+  });
+
+  group('Search Operations', () => {
+    const searchRes = http.get(
+      `${BASE_URL}/api/products/search?q=test&limit=20`,
+      { headers }
+    );
+
+    check(searchRes, {
+      'search successful': (r) => r.status === 200,
+      'search fast': (r) => r.timings.duration < 200,
+    });
+
+    errorRate.add(searchRes.status !== 200);
+    apiDuration.add(searchRes.timings.duration);
+  });
+
+  sleep(1);
+}
+
+export function handleSummary(data) {
+  return {
+    'stdout': textSummary(data, { indent: ' ', enableColors: true }),
+    'load-test-results.json': JSON.stringify(data),
+  };
+}
+```
+
+### Artillery Configuration
+
+```yaml
+# load-tests/artillery.yml
+config:
+  target: "http://localhost:3000"
+  phases:
+    - duration: 60
+      arrivalRate: 5
+      name: "Warm up"
+    - duration: 120
+      arrivalRate: 10
+      rampTo: 50
+      name: "Ramp up load"
+    - duration: 300
+      arrivalRate: 50
+      name: "Sustained load"
+    - duration: 60
+      arrivalRate: 50
+      rampTo: 5
+      name: "Ramp down"
+
+  defaults:
+    headers:
+      Content-Type: "application/json"
+      X-Tenant-ID: "{{ $env.TENANT_ID }}"
+
+  plugins:
+    expect: {}
+    metrics-by-endpoint: {}
+
+  ensure:
+    p95: 500
+    maxErrorRate: 5
+
+  variables:
+    testUsers:
+      - email: "user1@test.com"
+        password: "password1"
+      - email: "user2@test.com"
+        password: "password2"
+      - email: "user3@test.com"
+        password: "password3"
+
+scenarios:
+  - name: "User Journey"
+    weight: 70
+    flow:
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "{{ testUsers[0].email }}"
+            password: "{{ testUsers[0].password }}"
+          capture:
+            - json: "$.accessToken"
+              as: "token"
+          expect:
+            - statusCode: 200
+
+      - get:
+          url: "/api/dashboard"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          expect:
+            - statusCode: 200
+            - contentType: json
+
+      - get:
+          url: "/api/products?limit=20"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          expect:
+            - statusCode: 200
+
+      - think: 2
+
+      - get:
+          url: "/api/products/search?q=test"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          expect:
+            - statusCode: 200
+
+  - name: "API Heavy Usage"
+    weight: 30
+    flow:
+      - loop:
+          - get:
+              url: "/api/products/{{ $randomNumber(1, 1000) }}"
+              headers:
+                Authorization: "Bearer {{ token }}"
+          - think: 0.5
+        count: 10
+```
+
+### Benchmarking Script
+
+```typescript
+// scripts/benchmark.ts
+import { performance } from 'perf_hooks';
+
+interface BenchmarkResult {
+  name: string;
+  iterations: number;
+  totalTime: number;
+  avgTime: number;
+  minTime: number;
+  maxTime: number;
+  p50: number;
+  p95: number;
+  p99: number;
+  opsPerSecond: number;
+}
+
+async function benchmark(
+  name: string,
+  fn: () => Promise<void> | void,
+  iterations: number = 1000
+): Promise<BenchmarkResult> {
+  const times: number[] = [];
+
+  // Warmup
+  for (let i = 0; i < Math.min(100, iterations / 10); i++) {
+    await fn();
+  }
+
+  // Actual benchmark
+  for (let i = 0; i < iterations; i++) {
+    const start = performance.now();
+    await fn();
+    const end = performance.now();
+    times.push(end - start);
+  }
+
+  times.sort((a, b) => a - b);
+
+  const totalTime = times.reduce((a, b) => a + b, 0);
+  const avgTime = totalTime / iterations;
+
+  return {
+    name,
+    iterations,
+    totalTime,
+    avgTime,
+    minTime: times[0],
+    maxTime: times[times.length - 1],
+    p50: times[Math.floor(iterations * 0.5)],
+    p95: times[Math.floor(iterations * 0.95)],
+    p99: times[Math.floor(iterations * 0.99)],
+    opsPerSecond: 1000 / avgTime,
+  };
+}
+
+// Usage example
+async function runBenchmarks() {
+  const results: BenchmarkResult[] = [];
+
+  // Database query benchmark
+  results.push(await benchmark(
+    'Simple SELECT query',
+    async () => {
+      await db.execute(sql`SELECT 1`);
+    },
+    10000
+  ));
+
+  // Complex query benchmark
+  results.push(await benchmark(
+    'Complex JOIN query',
+    async () => {
+      await db.query.users.findMany({
+        where: eq(users.tenantId, 'test-tenant'),
+        with: { roles: true, organization: true },
+        limit: 100,
+      });
+    },
+    1000
+  ));
+
+  // Cache benchmark
+  results.push(await benchmark(
+    'Redis GET',
+    async () => {
+      await redis.get('benchmark:key');
+    },
+    10000
+  ));
+
+  // JSON serialization benchmark
+  const largeObject = generateLargeObject();
+  results.push(await benchmark(
+    'JSON stringify large object',
+    () => {
+      JSON.stringify(largeObject);
+    },
+    5000
+  ));
+
+  // Print results
+  console.table(results.map(r => ({
+    Name: r.name,
+    'Avg (ms)': r.avgTime.toFixed(3),
+    'P50 (ms)': r.p50.toFixed(3),
+    'P95 (ms)': r.p95.toFixed(3),
+    'P99 (ms)': r.p99.toFixed(3),
+    'Ops/sec': r.opsPerSecond.toFixed(0),
+  })));
+}
+
+runBenchmarks().catch(console.error);
+```
+
+---
+
+## Performance Monitoring Dashboard
+
+### Prometheus Metrics
+
+```typescript
+// metrics/prometheus.service.ts
+import { Injectable } from '@nestjs/common';
+import {
+  collectDefaultMetrics,
+  Counter,
+  Histogram,
+  Gauge,
+  Registry
+} from 'prom-client';
+
+@Injectable()
+export class PrometheusService {
+  private readonly registry: Registry;
+
+  // HTTP metrics
+  public readonly httpRequestDuration: Histogram;
+  public readonly httpRequestTotal: Counter;
+
+  // Database metrics
+  public readonly dbQueryDuration: Histogram;
+  public readonly dbConnectionPool: Gauge;
+
+  // Cache metrics
+  public readonly cacheHits: Counter;
+  public readonly cacheMisses: Counter;
+
+  // Business metrics
+  public readonly activeUsers: Gauge;
+  public readonly requestsPerTenant: Counter;
+
+  constructor() {
+    this.registry = new Registry();
+
+    // Collect default Node.js metrics
+    collectDefaultMetrics({ register: this.registry });
+
+    this.httpRequestDuration = new Histogram({
+      name: 'http_request_duration_seconds',
+      help: 'HTTP request duration in seconds',
+      labelNames: ['method', 'route', 'status_code', 'tenant'],
+      buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+      registers: [this.registry],
+    });
+
+    this.httpRequestTotal = new Counter({
+      name: 'http_requests_total',
+      help: 'Total number of HTTP requests',
+      labelNames: ['method', 'route', 'status_code', 'tenant'],
+      registers: [this.registry],
+    });
+
+    this.dbQueryDuration = new Histogram({
+      name: 'db_query_duration_seconds',
+      help: 'Database query duration in seconds',
+      labelNames: ['operation', 'table'],
+      buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
+      registers: [this.registry],
+    });
+
+    this.dbConnectionPool = new Gauge({
+      name: 'db_connection_pool_size',
+      help: 'Database connection pool size',
+      labelNames: ['state'],
+      registers: [this.registry],
+    });
+
+    this.cacheHits = new Counter({
+      name: 'cache_hits_total',
+      help: 'Total number of cache hits',
+      labelNames: ['cache_type', 'key_pattern'],
+      registers: [this.registry],
+    });
+
+    this.cacheMisses = new Counter({
+      name: 'cache_misses_total',
+      help: 'Total number of cache misses',
+      labelNames: ['cache_type', 'key_pattern'],
+      registers: [this.registry],
+    });
+
+    this.activeUsers = new Gauge({
+      name: 'active_users',
+      help: 'Number of active users',
+      labelNames: ['tenant'],
+      registers: [this.registry],
+    });
+
+    this.requestsPerTenant = new Counter({
+      name: 'requests_per_tenant_total',
+      help: 'Total requests per tenant',
+      labelNames: ['tenant', 'endpoint'],
+      registers: [this.registry],
+    });
+  }
+
+  async getMetrics(): Promise<string> {
+    return this.registry.metrics();
+  }
+}
+```
+
+---
+
+## Quick Reference
+
+### Performance Checklist
+
+<AccordionGroup>
+  <Accordion title="Backend Optimization Checklist">
+    - [ ] Enable Fastify compression for responses
+    - [ ] Use validation pipes with caching
+    - [ ] Implement worker threads for CPU-intensive tasks
+    - [ ] Use AsyncLocalStorage for tenant context
+    - [ ] Enable request/response logging in non-production only
+    - [ ] Implement circuit breakers for external services
+  </Accordion>
+
+  <Accordion title="Database Optimization Checklist">
+    - [ ] Use proper indexes for frequent queries
+    - [ ] Implement connection pooling
+    - [ ] Use batch operations for bulk updates
+    - [ ] Select only required columns
+    - [ ] Use cursor-based pagination
+    - [ ] Monitor slow queries with pg_stat_statements
+    - [ ] Use read replicas for heavy read workloads
+  </Accordion>
+
+  <Accordion title="Caching Checklist">
+    - [ ] Implement multi-tier caching (memory + Redis)
+    - [ ] Use cache tags for targeted invalidation
+    - [ ] Set appropriate TTLs for different data types
+    - [ ] Implement cache warming for critical data
+    - [ ] Monitor cache hit rates
+  </Accordion>
+
+  <Accordion title="Frontend Optimization Checklist">
+    - [ ] Enable bundle splitting
+    - [ ] Implement route-based code splitting
+    - [ ] Use lazy loading for heavy components
+    - [ ] Optimize images with proper formats and sizes
+    - [ ] Enable tree shaking
+    - [ ] Minimize bundle sizes with proper vendor chunking
+  </Accordion>
+</AccordionGroup>
+
+### Common Performance Issues
+
+| Issue | Symptom | Solution |
+|-------|---------|----------|
+| N+1 Queries | High DB query count | Use relations/joins |
+| Memory Leaks | Increasing memory usage | Check event listeners, closures |
+| Slow API | High response times | Add caching, optimize queries |
+| Large Bundles | Slow initial load | Code splitting, tree shaking |
+| Connection Exhaustion | Connection timeouts | Proper pooling configuration |
+| Cache Stampede | Spike after cache miss | Implement cache locks |
+
+### Performance Targets
+
+| Metric | Target | Critical |
+|--------|--------|----------|
+| API Response (P95) | < 200ms | < 500ms |
+| Database Query (P95) | < 50ms | < 200ms |
+| Cache Hit Rate | > 90% | > 80% |
+| Error Rate | < 0.1% | < 1% |
+| Initial Bundle Size | < 200KB | < 500KB |
+| Time to Interactive | < 3s | < 5s |

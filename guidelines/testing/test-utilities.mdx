@@ -1,0 +1,518 @@
+---
+title: Test Utilities
+description: Testing utilities, factories, and helper functions
+---
+
+# Test Utilities
+
+This guide covers testing utilities, data factories, and helper functions used across Vritti tests.
+
+## Data Factories
+
+### Entity Factory Pattern
+
+```typescript
+// test/factories/user.factory.ts
+import { faker } from '@faker-js/faker';
+
+export interface UserFactoryOptions {
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  status?: 'active' | 'inactive' | 'deleted';
+  emailVerified?: boolean;
+  mfaEnabled?: boolean;
+}
+
+export const createMockUser = (options: UserFactoryOptions = {}): User => ({
+  id: faker.string.uuid(),
+  email: options.email ?? faker.internet.email(),
+  firstName: options.firstName ?? faker.person.firstName(),
+  lastName: options.lastName ?? faker.person.lastName(),
+  status: options.status ?? 'active',
+  emailVerified: options.emailVerified ?? true,
+  mfaEnabled: options.mfaEnabled ?? false,
+  createdAt: faker.date.past(),
+  updatedAt: faker.date.recent(),
+});
+
+export const createMockUsers = (count: number, options?: UserFactoryOptions): User[] => {
+  return Array.from({ length: count }, () => createMockUser(options));
+};
+```
+
+### DTO Factory Pattern
+
+```typescript
+// test/factories/dto.factory.ts
+import { faker } from '@faker-js/faker';
+
+export const createLoginDto = (overrides?: Partial<LoginDto>): LoginDto => ({
+  email: faker.internet.email(),
+  password: 'SecureP@ss123',
+  ...overrides,
+});
+
+export const createSignupDto = (overrides?: Partial<SignupDto>): SignupDto => ({
+  email: faker.internet.email(),
+  password: 'SecureP@ss123',
+  firstName: faker.person.firstName(),
+  lastName: faker.person.lastName(),
+  ...overrides,
+});
+
+export const createTenantDto = (overrides?: Partial<CreateTenantDto>): CreateTenantDto => ({
+  subdomain: faker.helpers.slugify(faker.company.name()).toLowerCase(),
+  name: faker.company.name(),
+  ...overrides,
+});
+```
+
+### Response Factory Pattern
+
+```typescript
+// test/factories/response.factory.ts
+export const createLoginResponse = (overrides?: Partial<LoginResponse>): LoginResponse => ({
+  accessToken: 'mock-access-token',
+  expiresIn: 3600,
+  user: createMockUser(),
+  ...overrides,
+});
+
+export const createMfaChallengeResponse = (): MfaChallengeResponse => ({
+  requiresMfa: true,
+  mfaChallenge: {
+    sessionId: faker.string.uuid(),
+    methods: ['totp', 'sms'],
+    expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+  },
+});
+
+export const createPaginatedResponse = <T>(
+  data: T[],
+  options: { page?: number; limit?: number; total?: number } = {},
+): PaginatedResponse<T> => ({
+  data,
+  meta: {
+    page: options.page ?? 1,
+    limit: options.limit ?? 10,
+    total: options.total ?? data.length,
+    totalPages: Math.ceil((options.total ?? data.length) / (options.limit ?? 10)),
+  },
+});
+```
+
+## Mock Helpers
+
+### Service Mock Factory
+
+```typescript
+// test/helpers/mock-service.ts
+export type MockService<T> = {
+  [K in keyof T]: T[K] extends (...args: any[]) => any
+    ? jest.Mock<ReturnType<T[K]>, Parameters<T[K]>>
+    : T[K];
+};
+
+export function createMockService<T>(
+  methods: (keyof T)[],
+): MockService<T> {
+  const mock = {} as MockService<T>;
+  methods.forEach((method) => {
+    (mock as any)[method] = jest.fn();
+  });
+  return mock;
+}
+
+// Usage
+const mockUserService = createMockService<UserService>([
+  'create',
+  'findById',
+  'findByEmail',
+  'update',
+  'delete',
+]);
+```
+
+### Repository Mock Factory
+
+```typescript
+// test/helpers/mock-repository.ts
+export function createMockRepository<T>(): MockRepository<T> {
+  return {
+    create: jest.fn(),
+    findById: jest.fn(),
+    findOne: jest.fn(),
+    findMany: jest.fn(),
+    update: jest.fn(),
+    delete: jest.fn(),
+    count: jest.fn(),
+    exists: jest.fn(),
+  };
+}
+
+// Usage
+const mockUserRepository = createMockRepository<User>();
+mockUserRepository.findById.mockResolvedValue(createMockUser());
+```
+
+## Test Module Helpers
+
+### Create Test Module
+
+```typescript
+// test/helpers/test-module.ts
+import { Test, TestingModule } from '@nestjs/testing';
+
+interface TestModuleOptions<T> {
+  providers: any[];
+  service: new (...args: any[]) => T;
+  mocks?: Record<string, any>;
+}
+
+export async function createTestModule<T>(
+  options: TestModuleOptions<T>,
+): Promise<{
+  module: TestingModule;
+  service: T;
+  mocks: Record<string, jest.Mocked<any>>;
+}> {
+  const mockProviders = Object.entries(options.mocks || {}).map(
+    ([token, mockValue]) => ({
+      provide: token,
+      useValue: mockValue,
+    }),
+  );
+
+  const module = await Test.createTestingModule({
+    providers: [...options.providers, ...mockProviders],
+  }).compile();
+
+  return {
+    module,
+    service: module.get<T>(options.service),
+    mocks: Object.fromEntries(
+      Object.keys(options.mocks || {}).map((token) => [
+        token,
+        module.get(token),
+      ]),
+    ),
+  };
+}
+
+// Usage
+const { service, mocks } = await createTestModule({
+  providers: [UserService],
+  service: UserService,
+  mocks: {
+    UserRepository: createMockRepository<User>(),
+    EncryptionService: { hash: jest.fn(), compare: jest.fn() },
+  },
+});
+```
+
+## Assertion Helpers
+
+### Custom Jest Matchers
+
+```typescript
+// test/matchers/index.ts
+expect.extend({
+  toBeValidUuid(received: string) {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const pass = uuidRegex.test(received);
+    return {
+      pass,
+      message: () =>
+        `expected ${received} ${pass ? 'not ' : ''}to be a valid UUID v4`,
+    };
+  },
+
+  toBeWithinRange(received: number, floor: number, ceiling: number) {
+    const pass = received >= floor && received <= ceiling;
+    return {
+      pass,
+      message: () =>
+        `expected ${received} ${pass ? 'not ' : ''}to be within range ${floor} - ${ceiling}`,
+    };
+  },
+
+  toHaveBeenCalledOnceWith(
+    received: jest.Mock,
+    ...expectedArgs: any[]
+  ) {
+    const pass =
+      received.mock.calls.length === 1 &&
+      JSON.stringify(received.mock.calls[0]) === JSON.stringify(expectedArgs);
+    return {
+      pass,
+      message: () =>
+        `expected function to have been called exactly once with ${JSON.stringify(expectedArgs)}`,
+    };
+  },
+});
+
+// TypeScript declarations
+declare global {
+  namespace jest {
+    interface Matchers<R> {
+      toBeValidUuid(): R;
+      toBeWithinRange(floor: number, ceiling: number): R;
+      toHaveBeenCalledOnceWith(...args: any[]): R;
+    }
+  }
+}
+```
+
+### Response Assertions
+
+```typescript
+// test/helpers/assertions.ts
+export function expectPaginatedResponse(response: any, expectedLength?: number) {
+  expect(response).toHaveProperty('data');
+  expect(response).toHaveProperty('meta');
+  expect(Array.isArray(response.data)).toBe(true);
+  expect(response.meta).toMatchObject({
+    page: expect.any(Number),
+    limit: expect.any(Number),
+    total: expect.any(Number),
+    totalPages: expect.any(Number),
+  });
+
+  if (expectedLength !== undefined) {
+    expect(response.data).toHaveLength(expectedLength);
+  }
+}
+
+export function expectApiError(response: any, field?: string) {
+  expect(response).toHaveProperty('title');
+  expect(response).toHaveProperty('status');
+  expect(response).toHaveProperty('errors');
+  expect(Array.isArray(response.errors)).toBe(true);
+
+  if (field) {
+    expect(response.errors).toContainEqual(
+      expect.objectContaining({ field }),
+    );
+  }
+}
+```
+
+## Database Test Helpers
+
+### Seeding Helpers
+
+```typescript
+// test/helpers/seed.ts
+export async function seedUsers(
+  repository: UserRepository,
+  count: number,
+  options?: UserFactoryOptions,
+): Promise<User[]> {
+  const users: User[] = [];
+
+  for (let i = 0; i < count; i++) {
+    const user = await repository.create(createMockUser(options));
+    users.push(user);
+  }
+
+  return users;
+}
+
+export async function seedTenantWithUsers(
+  tenantRepository: TenantRepository,
+  userRepository: UserRepository,
+  userCount: number,
+): Promise<{ tenant: Tenant; users: User[] }> {
+  const tenant = await tenantRepository.create(createTenantDto());
+
+  const users = await seedUsers(userRepository, userCount, {
+    tenantId: tenant.id,
+  });
+
+  return { tenant, users };
+}
+```
+
+### Cleanup Helpers
+
+```typescript
+// test/helpers/cleanup.ts
+export async function cleanupDatabase(pool: Pool) {
+  await pool.query(`
+    DO $$ DECLARE
+      r RECORD;
+    BEGIN
+      FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
+        EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' CASCADE';
+      END LOOP;
+    END $$;
+  `);
+}
+
+export function createCleanupList() {
+  const items: Array<{ type: string; id: string }> = [];
+
+  return {
+    add(type: string, id: string) {
+      items.push({ type, id });
+    },
+    async cleanup(services: Record<string, { delete: (id: string) => Promise<void> }>) {
+      for (const item of items.reverse()) {
+        try {
+          await services[item.type]?.delete(item.id);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+      items.length = 0;
+    },
+  };
+}
+
+// Usage
+const cleanup = createCleanupList();
+
+// In test
+const user = await userService.create(dto);
+cleanup.add('user', user.id);
+
+// After each
+afterEach(async () => {
+  await cleanup.cleanup({ user: userService });
+});
+```
+
+## Time Helpers
+
+### Mock Time
+
+```typescript
+// test/helpers/time.ts
+export function mockDate(date: Date | string | number) {
+  const mockNow = new Date(date).getTime();
+  jest.spyOn(Date, 'now').mockReturnValue(mockNow);
+
+  return {
+    restore: () => jest.restoreAllMocks(),
+    advance: (ms: number) => {
+      jest.spyOn(Date, 'now').mockReturnValue(mockNow + ms);
+    },
+  };
+}
+
+// Usage
+const time = mockDate('2024-01-15T10:00:00Z');
+
+// Test token expiration
+time.advance(3600 * 1000); // Advance 1 hour
+
+// Cleanup
+time.restore();
+```
+
+### Wait Helpers
+
+```typescript
+// test/helpers/async.ts
+export const wait = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function waitFor<T>(
+  fn: () => T | Promise<T>,
+  options: { timeout?: number; interval?: number } = {},
+): Promise<T> {
+  const { timeout = 5000, interval = 100 } = options;
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeout) {
+    try {
+      const result = await fn();
+      if (result) return result;
+    } catch {
+      // Continue waiting
+    }
+    await wait(interval);
+  }
+
+  throw new Error(`waitFor timed out after ${timeout}ms`);
+}
+
+// Usage
+await waitFor(() => userService.findById(userId));
+```
+
+## Jest Setup
+
+### Global Setup
+
+```typescript
+// test/setup.ts
+import { matchers } from './matchers';
+
+expect.extend(matchers);
+
+// Global timeout
+jest.setTimeout(30000);
+
+// Mock console.error for cleaner output
+global.console.error = jest.fn();
+
+// Clean up after all tests
+afterAll(async () => {
+  // Global cleanup
+});
+```
+
+### Per-Test Setup
+
+```typescript
+// Common beforeEach pattern
+beforeEach(() => {
+  jest.clearAllMocks();
+});
+
+afterEach(async () => {
+  // Cleanup created resources
+});
+```
+
+## Best Practices
+
+<Accordion title="Use Factories for Test Data">
+```typescript
+// ✅ Good - use factories
+const user = createMockUser({ status: 'active' });
+const dto = createLoginDto({ email: 'test@test.com' });
+
+// ❌ Avoid - inline object literals
+const user = {
+  id: '123',
+  email: 'test@test.com',
+  // ... many more fields
+};
+```
+</Accordion>
+
+<Accordion title="Create Reusable Helpers">
+```typescript
+// ✅ Good - reusable helper
+const { service, mocks } = await createTestModule({...});
+
+// ❌ Avoid - duplicating setup in every test file
+const module = await Test.createTestingModule({...}).compile();
+```
+</Accordion>
+
+<Accordion title="Clean Up After Tests">
+```typescript
+// ✅ Good - explicit cleanup
+afterEach(async () => {
+  await cleanup.cleanup(services);
+  jest.clearAllMocks();
+});
+
+// ❌ Avoid - leaving test data
+// Tests may interfere with each other
+```
+</Accordion>

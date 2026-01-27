@@ -43,16 +43,16 @@ Server-Sent Events (SSE) provide real-time push notifications for mobile verific
 
 ```mermaid
 flowchart TD
-    A[Client] -->|1. Connect| B[SSE Endpoint]
-    B -->|2. Validate JWT| C[SseAuthGuard]
-    C -->|3. Create Connection| D[SseConnectionService]
-    D -->|4. Store Subject| E[User Connections Map]
+    A[Client] -->|"1: Connect"| B[SSE Endpoint]
+    B -->|"2: Validate JWT"| C[SseAuthGuard]
+    C -->|"3: Create Connection"| D[SseConnectionService]
+    D -->|"4: Store Subject"| E[User Connections Map]
 
-    F[Webhook Handler] -->|5. Verify Token| G[MobileVerificationService]
-    G -->|6. Emit Event| H[EventEmitter]
-    H -->|7. Catch Event| I[VerificationEventListener]
-    I -->|8. Send to User| D
-    D -->|9. Push Event| A
+    F[Webhook Handler] -->|"5: Verify Token"| G[MobileVerificationService]
+    G -->|"6: Emit Event"| H[EventEmitter]
+    H -->|"7: Catch Event"| I[VerificationEventListener]
+    I -->|"8: Send to User"| D
+    D -->|"9: Push Event"| A
 
     J[Cleanup Timer] -->|Every 60s| D
 ```

@@ -1,0 +1,435 @@
+---
+title: "Drizzle Studio"
+description: "Web-based database management interface for viewing, editing, and querying your PostgreSQL database"
+---
+
+## What is Drizzle Studio
+
+Drizzle Studio is a web-based database management interface that comes bundled with Drizzle Kit. It provides a visual way to interact with your PostgreSQL database without writing SQL queries manually.
+
+<Info>
+Drizzle Studio connects directly to your database using the `DATABASE_URL` environment variable from your `.env` file.
+</Info>
+
+### Key Features
+
+- **Visual Table Browser** - Browse all tables and their relationships
+- **Data Editor** - View, add, edit, and delete records directly
+- **Query Runner** - Execute raw SQL queries with syntax highlighting
+- **Schema Viewer** - Inspect table structures, columns, and constraints
+- **Data Export** - Export query results to various formats
+
+## Starting Drizzle Studio
+
+Launch Drizzle Studio using the following command:
+
+```bash
+npm run db:studio
+```
+
+This runs `drizzle-kit studio` under the hood and starts a local web server.
+
+<Steps>
+  <Step title="Ensure Database is Running">
+    Make sure your PostgreSQL database is running and accessible. If using Docker:
+    ```bash
+    docker-compose up -d postgres
+    ```
+  </Step>
+  <Step title="Verify Environment Variables">
+    Confirm your `.env` file contains a valid `DATABASE_URL`:
+    ```bash
+    DATABASE_URL="postgresql://user:password@localhost:5432/vritti"
+    ```
+  </Step>
+  <Step title="Start Drizzle Studio">
+    Run the studio command:
+    ```bash
+    npm run db:studio
+    ```
+  </Step>
+  <Step title="Open in Browser">
+    Drizzle Studio will automatically open in your default browser, typically at:
+    ```
+    https://local.drizzle.studio
+    ```
+    If it doesn't open automatically, check the terminal output for the URL.
+  </Step>
+</Steps>
+
+<Tip>
+The studio runs on a secure local connection. You may see a browser security warning on first launch - this is expected for local development tools.
+</Tip>
+
+## Navigating the Interface
+
+Drizzle Studio provides an intuitive interface for database management.
+
+### Main Layout
+
+<Frame>
+  <p>**Screenshot Description:** The Drizzle Studio interface showing a sidebar with table names on the left, and a main content area displaying table data in a spreadsheet-like grid on the right.</p>
+</Frame>
+
+| Component | Description |
+|-----------|-------------|
+| **Sidebar** | Lists all database tables with record counts |
+| **Table View** | Displays selected table data in a grid format |
+| **Query Tab** | SQL editor for running custom queries |
+| **Toolbar** | Actions for filtering, sorting, and exporting data |
+
+### Table Navigation
+
+1. Click on any table name in the sidebar to view its contents
+2. Use the search box to filter tables by name
+3. Tables display their row count next to the name
+
+## Viewing and Editing Data
+
+### Viewing Records
+
+<Frame>
+  <p>**Screenshot Description:** Table view showing rows of data with columns for id, name, email, created_at. Each row has action buttons for edit and delete on hover.</p>
+</Frame>
+
+- **Pagination** - Navigate through large datasets using page controls at the bottom
+- **Column Sorting** - Click column headers to sort ascending/descending
+- **Column Filtering** - Use the filter icon to add conditions
+- **Column Resizing** - Drag column borders to adjust width
+
+### Editing Records
+
+<Warning>
+Be cautious when editing production data. Always verify changes before saving.
+</Warning>
+
+<Steps>
+  <Step title="Select a Record">
+    Click on any cell in the table to select it for editing.
+  </Step>
+  <Step title="Modify the Value">
+    Double-click the cell to enter edit mode and change the value.
+  </Step>
+  <Step title="Save Changes">
+    Press `Enter` or click outside the cell to save. Changes are applied immediately.
+  </Step>
+</Steps>
+
+### Adding New Records
+
+1. Click the **+ Add Row** button in the toolbar
+2. Fill in the required fields in the new row
+3. Press `Enter` or click **Save** to insert the record
+
+### Deleting Records
+
+1. Select the row(s) you want to delete
+2. Click the **Delete** button or press `Delete` key
+3. Confirm the deletion in the dialog
+
+<Note>
+Deletions are permanent and cannot be undone through the interface. Consider backing up important data before making changes.
+</Note>
+
+## Running Queries
+
+Drizzle Studio includes a SQL query editor for executing custom queries.
+
+### Using the Query Editor
+
+<Frame>
+  <p>**Screenshot Description:** The SQL query editor tab showing a text area with syntax highlighting, a Run button, and query results displayed in a table below.</p>
+</Frame>
+
+```sql
+-- Example: Find all users created in the last 7 days
+SELECT * FROM users
+WHERE created_at > NOW() - INTERVAL '7 days'
+ORDER BY created_at DESC;
+```
+
+### Query Features
+
+<CardGroup cols={2}>
+  <Card title="Syntax Highlighting" icon="code">
+    SQL keywords, strings, and numbers are color-coded for readability
+  </Card>
+  <Card title="Auto-completion" icon="keyboard">
+    Table and column names are suggested as you type
+  </Card>
+  <Card title="Multiple Queries" icon="layer-group">
+    Execute multiple statements separated by semicolons
+  </Card>
+  <Card title="Query History" icon="clock-rotate-left">
+    Access previously executed queries from the history panel
+  </Card>
+</CardGroup>
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Cmd/Ctrl + Enter` | Execute query |
+| `Cmd/Ctrl + S` | Save query |
+| `Cmd/Ctrl + /` | Toggle comment |
+
+## Exporting Data
+
+Export query results or table data in various formats.
+
+### Export Options
+
+<Steps>
+  <Step title="Select Data">
+    Either view a table or run a query to get the data you want to export.
+  </Step>
+  <Step title="Click Export">
+    Click the **Export** button in the toolbar.
+  </Step>
+  <Step title="Choose Format">
+    Select your preferred format:
+    - **CSV** - Comma-separated values
+    - **JSON** - JavaScript Object Notation
+    - **SQL** - INSERT statements
+  </Step>
+  <Step title="Download">
+    The file will download to your default downloads folder.
+  </Step>
+</Steps>
+
+### Export via SQL
+
+For more control over exports, use SQL queries:
+
+```sql
+-- Export specific columns
+SELECT id, email, created_at FROM users;
+
+-- Export with conditions
+SELECT * FROM orders WHERE status = 'completed';
+
+-- Export aggregated data
+SELECT
+  DATE(created_at) as date,
+  COUNT(*) as order_count
+FROM orders
+GROUP BY DATE(created_at);
+```
+
+## Security Considerations
+
+<Warning>
+Drizzle Studio is designed for **local development only**. Never expose it to the public internet.
+</Warning>
+
+### Best Practices
+
+<AccordionGroup>
+  <Accordion title="Local Use Only">
+    Drizzle Studio binds to localhost by default. Do not configure it to accept remote connections or expose it through port forwarding.
+  </Accordion>
+  <Accordion title="Production Database Access">
+    Avoid connecting Drizzle Studio directly to production databases. Instead:
+    - Use read replicas for data viewing
+    - Create database snapshots for testing
+    - Use proper database admin tools with audit logging
+  </Accordion>
+  <Accordion title="Credential Management">
+    - Never commit `.env` files with database credentials
+    - Use different credentials for development and production
+    - Rotate passwords regularly
+  </Accordion>
+  <Accordion title="Network Security">
+    If you must access remote databases:
+    - Use SSH tunnels for secure connections
+    - Ensure database firewall rules are properly configured
+    - Use SSL/TLS for database connections
+  </Accordion>
+</AccordionGroup>
+
+### SSH Tunnel Example
+
+To securely connect to a remote database:
+
+```bash
+# Create SSH tunnel
+ssh -L 5432:localhost:5432 user@remote-server
+
+# Update DATABASE_URL to use local tunnel
+DATABASE_URL="postgresql://user:password@localhost:5432/dbname"
+```
+
+## Troubleshooting Connection Issues
+
+### Common Issues and Solutions
+
+<AccordionGroup>
+  <Accordion title="Connection Refused">
+    **Error:** `Connection refused` or `ECONNREFUSED`
+
+    **Solutions:**
+    1. Verify PostgreSQL is running:
+       ```bash
+       docker ps | grep postgres
+       # or
+       pg_isready -h localhost -p 5432
+       ```
+    2. Check the port is correct in `DATABASE_URL`
+    3. Ensure no firewall is blocking the connection
+  </Accordion>
+
+  <Accordion title="Authentication Failed">
+    **Error:** `password authentication failed`
+
+    **Solutions:**
+    1. Verify credentials in `.env` file
+    2. Check for special characters that need URL encoding:
+       ```bash
+       # If password contains @, encode it as %40
+       DATABASE_URL="postgresql://user:p%40ssword@localhost:5432/db"
+       ```
+    3. Reset password if necessary:
+       ```sql
+       ALTER USER username WITH PASSWORD 'newpassword';
+       ```
+  </Accordion>
+
+  <Accordion title="Database Does Not Exist">
+    **Error:** `database "vritti" does not exist`
+
+    **Solutions:**
+    1. Create the database:
+       ```bash
+       createdb vritti
+       # or
+       docker exec -it postgres psql -U postgres -c "CREATE DATABASE vritti;"
+       ```
+    2. Verify database name in `DATABASE_URL`
+  </Accordion>
+
+  <Accordion title="SSL Connection Required">
+    **Error:** `SSL connection is required`
+
+    **Solutions:**
+    Add SSL parameters to your connection string:
+    ```bash
+    DATABASE_URL="postgresql://user:password@host:5432/db?sslmode=require"
+    ```
+  </Accordion>
+
+  <Accordion title="Studio Not Opening">
+    **Error:** Browser doesn't open or shows blank page
+
+    **Solutions:**
+    1. Check terminal for the correct URL
+    2. Try manually opening `https://local.drizzle.studio`
+    3. Clear browser cache and cookies
+    4. Try a different browser
+    5. Check if port is already in use:
+       ```bash
+       lsof -i :4983
+       ```
+  </Accordion>
+</AccordionGroup>
+
+### Diagnostic Commands
+
+```bash
+# Check database connectivity
+psql $DATABASE_URL -c "SELECT 1"
+
+# Verify Drizzle configuration
+npx drizzle-kit check
+
+# View Drizzle Kit version
+npx drizzle-kit --version
+
+# Test with verbose output
+DEBUG=* npm run db:studio
+```
+
+## Alternatives
+
+While Drizzle Studio is convenient for quick tasks, you may prefer dedicated database tools for advanced operations.
+
+### pgAdmin
+
+<Card title="pgAdmin" icon="database" href="https://www.pgadmin.org/">
+  The most popular open-source administration tool for PostgreSQL.
+</Card>
+
+**Pros:**
+- Full-featured PostgreSQL administration
+- Query builder with visual interface
+- Server monitoring and statistics
+- Backup and restore functionality
+
+**Installation:**
+```bash
+# macOS
+brew install --cask pgadmin4
+
+# Or download from pgadmin.org
+```
+
+### DBeaver
+
+<Card title="DBeaver" icon="table" href="https://dbeaver.io/">
+  Universal database tool supporting multiple database types.
+</Card>
+
+**Pros:**
+- Supports PostgreSQL, MySQL, SQLite, and many more
+- ER diagram generation
+- Data comparison and migration tools
+- SSH tunnel support built-in
+
+**Installation:**
+```bash
+# macOS
+brew install --cask dbeaver-community
+
+# Or download from dbeaver.io
+```
+
+### Command Line (psql)
+
+For quick operations, the PostgreSQL command-line client is always available:
+
+```bash
+# Connect to database
+psql $DATABASE_URL
+
+# Common commands
+\dt          # List tables
+\d tablename # Describe table
+\q           # Quit
+```
+
+### Comparison Table
+
+| Feature | Drizzle Studio | pgAdmin | DBeaver | psql |
+|---------|---------------|---------|---------|------|
+| Setup Required | None | Medium | Medium | None |
+| Visual Interface | Yes | Yes | Yes | No |
+| Query Editor | Basic | Advanced | Advanced | Basic |
+| Schema Design | No | Yes | Yes | No |
+| Multiple Databases | No | Yes | Yes | Yes |
+| Best For | Quick edits | PostgreSQL admin | Multi-database | Scripts |
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Database Migrations" icon="arrow-right-arrow-left" href="/developer-docs/operations/database/migrations">
+    Learn how to create and run database migrations
+  </Card>
+  <Card title="Schema Management" icon="sitemap" href="/developer-docs/operations/database/schema">
+    Understanding your database schema structure
+  </Card>
+  <Card title="Backup & Restore" icon="cloud-arrow-up" href="/developer-docs/operations/database/backup">
+    Database backup and recovery procedures
+  </Card>
+  <Card title="Performance Tuning" icon="gauge-high" href="/developer-docs/operations/database/performance">
+    Optimize database queries and indexes
+  </Card>
+</CardGroup>

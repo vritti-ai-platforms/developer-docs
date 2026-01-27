@@ -1,0 +1,739 @@
+---
+title: "Environment Configuration"
+description: "Comprehensive guide for managing environment variables across development, staging, and production environments"
+---
+
+## Environment Overview
+
+Vritti operates across three distinct environments, each serving a specific purpose in the development lifecycle.
+
+| Environment | Purpose | Database | API URL | Deployment |
+|-------------|---------|----------|---------|------------|
+| **Development** | Local development and testing | Local PostgreSQL | `http://localhost:3000` | Manual |
+| **Staging** | Pre-production testing and QA | Staging PostgreSQL | `https://staging-api.vritti.app` | Auto on PR merge |
+| **Production** | Live user-facing application | Production PostgreSQL | `https://api.vritti.app` | Manual approval |
+
+<Warning>
+Never use production credentials in development or staging environments. Each environment should have isolated credentials and databases.
+</Warning>
+
+## Backend Environment Variables
+
+### Database Configuration
+
+```bash
+# PostgreSQL connection string
+DATABASE_URL="postgresql://user:password@host:5432/database?schema=public"
+
+# Connection pool settings (optional)
+DATABASE_POOL_MIN=2
+DATABASE_POOL_MAX=10
+```
+
+<Accordion title="Database URL Examples by Environment">
+```bash
+# Development
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/vritti_dev?schema=public"
+
+# Staging
+DATABASE_URL="postgresql://vritti_staging:password@staging-db.example.com:5432/vritti_staging?schema=public"
+
+# Production
+DATABASE_URL="postgresql://vritti_prod:password@prod-db.example.com:5432/vritti_prod?schema=public"
+```
+</Accordion>
+
+### Authentication & Security
+
+```bash
+# JWT Configuration
+JWT_SECRET="your-256-bit-secret-key-minimum-32-characters"
+JWT_EXPIRES_IN="7d"
+JWT_REFRESH_SECRET="your-refresh-token-secret-key"
+JWT_REFRESH_EXPIRES_IN="30d"
+
+# Session Configuration
+SESSION_SECRET="your-session-secret-key"
+
+# Password Hashing
+BCRYPT_ROUNDS=12
+```
+
+<Note>
+JWT secrets should be cryptographically random strings of at least 256 bits (32 characters). Use `openssl rand -base64 32` to generate secure secrets.
+</Note>
+
+### OAuth Provider Credentials
+
+```bash
+# Google OAuth
+GOOGLE_CLIENT_ID="your-google-client-id.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET="your-google-client-secret"
+GOOGLE_CALLBACK_URL="http://localhost:3000/auth/google/callback"
+
+# LinkedIn OAuth
+LINKEDIN_CLIENT_ID="your-linkedin-client-id"
+LINKEDIN_CLIENT_SECRET="your-linkedin-client-secret"
+LINKEDIN_CALLBACK_URL="http://localhost:3000/auth/linkedin/callback"
+
+# GitHub OAuth (if applicable)
+GITHUB_CLIENT_ID="your-github-client-id"
+GITHUB_CLIENT_SECRET="your-github-client-secret"
+GITHUB_CALLBACK_URL="http://localhost:3000/auth/github/callback"
+```
+
+### Communication Services
+
+#### Twilio (SMS & Voice)
+
+```bash
+# Twilio Configuration
+TWILIO_ACCOUNT_SID="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+TWILIO_AUTH_TOKEN="your-twilio-auth-token"
+TWILIO_PHONE_NUMBER="+1234567890"
+TWILIO_VERIFY_SERVICE_SID="VAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# Twilio WhatsApp (optional)
+TWILIO_WHATSAPP_NUMBER="whatsapp:+1234567890"
+```
+
+#### Brevo (Email Service)
+
+```bash
+# Brevo (formerly Sendinblue) Configuration
+BREVO_API_KEY="xkeysib-xxxxxxxxxxxxxxxxxxxxxxxx"
+BREVO_SENDER_EMAIL="noreply@vritti.app"
+BREVO_SENDER_NAME="Vritti"
+
+# Email Templates (optional)
+BREVO_WELCOME_TEMPLATE_ID="1"
+BREVO_RESET_PASSWORD_TEMPLATE_ID="2"
+BREVO_VERIFICATION_TEMPLATE_ID="3"
+```
+
+### Application Settings
+
+```bash
+# Server Configuration
+NODE_ENV="development"
+PORT=3000
+HOST="0.0.0.0"
+
+# API Configuration
+API_PREFIX="/api/v1"
+API_RATE_LIMIT=100
+API_RATE_LIMIT_WINDOW=60000
+
+# CORS Configuration
+CORS_ORIGIN="http://localhost:5173"
+CORS_CREDENTIALS=true
+
+# Logging
+LOG_LEVEL="debug"
+LOG_FORMAT="pretty"
+```
+
+### External Services
+
+```bash
+# File Storage (S3-compatible)
+AWS_ACCESS_KEY_ID="your-access-key"
+AWS_SECRET_ACCESS_KEY="your-secret-key"
+AWS_REGION="us-east-1"
+AWS_S3_BUCKET="vritti-uploads"
+
+# Redis (Caching & Sessions)
+REDIS_URL="redis://localhost:6379"
+REDIS_PASSWORD=""
+
+# Sentry (Error Tracking)
+SENTRY_DSN="https://xxx@xxx.ingest.sentry.io/xxx"
+```
+
+### Complete Backend `.env.example`
+
+<CodeGroup>
+```bash .env.example
+# ===========================================
+# Vritti Backend Environment Configuration
+# ===========================================
+# Copy this file to .env and fill in the values
+# Never commit .env files to version control
+
+# ----- Database -----
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/vritti_dev?schema=public"
+
+# ----- Authentication -----
+JWT_SECRET="CHANGE_ME_min_32_characters_random_string"
+JWT_EXPIRES_IN="7d"
+JWT_REFRESH_SECRET="CHANGE_ME_another_random_string"
+JWT_REFRESH_EXPIRES_IN="30d"
+SESSION_SECRET="CHANGE_ME_session_secret"
+BCRYPT_ROUNDS=12
+
+# ----- OAuth Providers -----
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""
+GOOGLE_CALLBACK_URL="http://localhost:3000/auth/google/callback"
+
+LINKEDIN_CLIENT_ID=""
+LINKEDIN_CLIENT_SECRET=""
+LINKEDIN_CALLBACK_URL="http://localhost:3000/auth/linkedin/callback"
+
+# ----- Twilio -----
+TWILIO_ACCOUNT_SID=""
+TWILIO_AUTH_TOKEN=""
+TWILIO_PHONE_NUMBER=""
+TWILIO_VERIFY_SERVICE_SID=""
+
+# ----- Brevo (Email) -----
+BREVO_API_KEY=""
+BREVO_SENDER_EMAIL="noreply@vritti.app"
+BREVO_SENDER_NAME="Vritti"
+
+# ----- Server -----
+NODE_ENV="development"
+PORT=3000
+HOST="0.0.0.0"
+API_PREFIX="/api/v1"
+
+# ----- CORS -----
+CORS_ORIGIN="http://localhost:5173"
+CORS_CREDENTIALS=true
+
+# ----- Logging -----
+LOG_LEVEL="debug"
+LOG_FORMAT="pretty"
+
+# ----- Redis (Optional) -----
+REDIS_URL="redis://localhost:6379"
+
+# ----- File Storage (Optional) -----
+AWS_ACCESS_KEY_ID=""
+AWS_SECRET_ACCESS_KEY=""
+AWS_REGION="us-east-1"
+AWS_S3_BUCKET=""
+
+# ----- Error Tracking (Optional) -----
+SENTRY_DSN=""
+```
+</CodeGroup>
+
+## Frontend Environment Variables
+
+Frontend environment variables are prefixed based on the framework used.
+
+### Vite Applications
+
+```bash
+# API Configuration
+VITE_API_URL="http://localhost:3000"
+VITE_API_VERSION="v1"
+
+# OAuth Configuration
+VITE_GOOGLE_CLIENT_ID="your-google-client-id.apps.googleusercontent.com"
+VITE_LINKEDIN_CLIENT_ID="your-linkedin-client-id"
+
+# Feature Flags
+VITE_FEATURE_ANALYTICS=true
+VITE_FEATURE_DARK_MODE=true
+VITE_FEATURE_NOTIFICATIONS=false
+
+# Application Settings
+VITE_APP_NAME="Vritti"
+VITE_APP_ENV="development"
+
+# Analytics (Optional)
+VITE_GA_TRACKING_ID=""
+VITE_MIXPANEL_TOKEN=""
+```
+
+<Warning>
+Frontend environment variables are exposed to the browser. Never include sensitive credentials like API keys, secrets, or tokens in frontend `.env` files.
+</Warning>
+
+### Complete Frontend `.env.example`
+
+<CodeGroup>
+```bash .env.example
+# ===========================================
+# Vritti Frontend Environment Configuration
+# ===========================================
+
+# ----- API Configuration -----
+VITE_API_URL="http://localhost:3000"
+VITE_API_VERSION="v1"
+
+# ----- OAuth (Client IDs only - NOT secrets) -----
+VITE_GOOGLE_CLIENT_ID=""
+VITE_LINKEDIN_CLIENT_ID=""
+
+# ----- Feature Flags -----
+VITE_FEATURE_ANALYTICS=false
+VITE_FEATURE_DARK_MODE=true
+VITE_FEATURE_NOTIFICATIONS=false
+VITE_FEATURE_BETA_FEATURES=false
+
+# ----- Application -----
+VITE_APP_NAME="Vritti"
+VITE_APP_ENV="development"
+
+# ----- Analytics (Production only) -----
+VITE_GA_TRACKING_ID=""
+VITE_MIXPANEL_TOKEN=""
+VITE_SENTRY_DSN=""
+```
+</CodeGroup>
+
+## Secrets Management Best Practices
+
+### Do's and Don'ts
+
+<CardGroup cols={2}>
+<Card title="Do" icon="check" color="#22c55e">
+- Use environment variables for all secrets
+- Rotate secrets regularly (quarterly minimum)
+- Use different secrets per environment
+- Encrypt secrets at rest
+- Use secret management services in production
+- Audit secret access logs
+</Card>
+
+<Card title="Don't" icon="xmark" color="#ef4444">
+- Never commit `.env` files to git
+- Never log secrets in application logs
+- Never share secrets via chat/email
+- Never hardcode secrets in source code
+- Never use production secrets locally
+- Never expose secrets in error messages
+</Card>
+</CardGroup>
+
+### Secret Rotation Schedule
+
+| Secret Type | Rotation Frequency | Notes |
+|-------------|-------------------|-------|
+| JWT Secrets | Quarterly | Invalidates all existing tokens |
+| OAuth Secrets | Annually | Coordinate with OAuth provider |
+| Database Passwords | Quarterly | Update connection strings |
+| API Keys | Bi-annually | Update all integrations |
+| Twilio Auth Token | Annually | Available in Twilio console |
+
+### Using Secret Management Services
+
+<Tabs>
+<Tab title="AWS Secrets Manager">
+```bash
+# Install AWS CLI and configure credentials
+aws secretsmanager get-secret-value --secret-id vritti/production/database
+
+# In application code (Node.js)
+import { SecretsManager } from '@aws-sdk/client-secrets-manager';
+
+const client = new SecretsManager({ region: 'us-east-1' });
+const secret = await client.getSecretValue({ SecretId: 'vritti/production/database' });
+```
+</Tab>
+
+<Tab title="HashiCorp Vault">
+```bash
+# Authenticate with Vault
+vault login -method=token token=your-token
+
+# Read secrets
+vault kv get -format=json secret/vritti/production
+
+# In application code
+const vault = require('node-vault')({ endpoint: 'https://vault.example.com' });
+const secrets = await vault.read('secret/vritti/production');
+```
+</Tab>
+
+<Tab title="Doppler">
+```bash
+# Install and authenticate
+doppler login
+
+# Run application with injected secrets
+doppler run -- npm start
+
+# Fetch secrets programmatically
+doppler secrets download --no-file --format=env
+```
+</Tab>
+</Tabs>
+
+## Environment-Specific Configurations
+
+### Development Environment
+
+```bash
+# .env.development
+NODE_ENV=development
+LOG_LEVEL=debug
+LOG_FORMAT=pretty
+
+# Relaxed security for local development
+BCRYPT_ROUNDS=4
+API_RATE_LIMIT=1000
+
+# Local services
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/vritti_dev"
+REDIS_URL="redis://localhost:6379"
+
+# Mock external services (optional)
+MOCK_TWILIO=true
+MOCK_BREVO=true
+```
+
+### Staging Environment
+
+```bash
+# .env.staging
+NODE_ENV=staging
+LOG_LEVEL=info
+LOG_FORMAT=json
+
+# Production-like security
+BCRYPT_ROUNDS=10
+API_RATE_LIMIT=100
+
+# Staging services
+DATABASE_URL="postgresql://user:pass@staging-db:5432/vritti_staging"
+REDIS_URL="redis://staging-redis:6379"
+
+# Real services with test accounts
+MOCK_TWILIO=false
+MOCK_BREVO=false
+```
+
+### Production Environment
+
+```bash
+# .env.production
+NODE_ENV=production
+LOG_LEVEL=warn
+LOG_FORMAT=json
+
+# Maximum security
+BCRYPT_ROUNDS=12
+API_RATE_LIMIT=50
+
+# Production services (use secrets manager)
+# DATABASE_URL - from secrets manager
+# REDIS_URL - from secrets manager
+
+# All real services
+MOCK_TWILIO=false
+MOCK_BREVO=false
+```
+
+### Configuration Comparison Table
+
+| Configuration | Development | Staging | Production |
+|--------------|-------------|---------|------------|
+| `NODE_ENV` | development | staging | production |
+| `LOG_LEVEL` | debug | info | warn |
+| `BCRYPT_ROUNDS` | 4 | 10 | 12 |
+| `API_RATE_LIMIT` | 1000 | 100 | 50 |
+| SSL Required | No | Yes | Yes |
+| Mock Services | Yes | No | No |
+| Error Details | Full | Limited | None |
+| Debug Endpoints | Enabled | Disabled | Disabled |
+
+## Feature Flags Per Environment
+
+### Feature Flag Configuration
+
+```typescript
+// config/feature-flags.ts
+interface FeatureFlags {
+  analytics: boolean;
+  darkMode: boolean;
+  notifications: boolean;
+  betaFeatures: boolean;
+  maintenanceMode: boolean;
+  newOnboarding: boolean;
+}
+
+const featureFlags: Record<string, FeatureFlags> = {
+  development: {
+    analytics: false,
+    darkMode: true,
+    notifications: true,
+    betaFeatures: true,
+    maintenanceMode: false,
+    newOnboarding: true,
+  },
+  staging: {
+    analytics: true,
+    darkMode: true,
+    notifications: true,
+    betaFeatures: true,
+    maintenanceMode: false,
+    newOnboarding: true,
+  },
+  production: {
+    analytics: true,
+    darkMode: true,
+    notifications: true,
+    betaFeatures: false,
+    maintenanceMode: false,
+    newOnboarding: false,
+  },
+};
+```
+
+### Feature Flag Matrix
+
+| Feature | Development | Staging | Production | Description |
+|---------|-------------|---------|------------|-------------|
+| `analytics` | Off | On | On | User analytics tracking |
+| `darkMode` | On | On | On | Dark mode UI option |
+| `notifications` | On | On | On | Push notifications |
+| `betaFeatures` | On | On | Off | Experimental features |
+| `maintenanceMode` | Off | Off | Off | Site-wide maintenance |
+| `newOnboarding` | On | On | Off | New user onboarding flow |
+
+### Using Feature Flags in Code
+
+<CodeGroup>
+```typescript Backend (NestJS)
+// feature-flag.service.ts
+@Injectable()
+export class FeatureFlagService {
+  isEnabled(flag: keyof FeatureFlags): boolean {
+    const env = process.env.NODE_ENV || 'development';
+    return featureFlags[env]?.[flag] ?? false;
+  }
+}
+
+// Usage in controller
+@Get('/beta-endpoint')
+async betaEndpoint() {
+  if (!this.featureFlagService.isEnabled('betaFeatures')) {
+    throw new NotFoundException('Feature not available');
+  }
+  // ... endpoint logic
+}
+```
+
+```typescript Frontend (React)
+// hooks/useFeatureFlag.ts
+export function useFeatureFlag(flag: string): boolean {
+  const flagKey = `VITE_FEATURE_${flag.toUpperCase()}`;
+  return import.meta.env[flagKey] === 'true';
+}
+
+// Usage in component
+function BetaFeature() {
+  const isBetaEnabled = useFeatureFlag('beta_features');
+
+  if (!isBetaEnabled) return null;
+
+  return <BetaComponent />;
+}
+```
+</CodeGroup>
+
+## Validating Environment Variables at Startup
+
+### Using Zod for Validation
+
+```typescript
+// config/env.validation.ts
+import { z } from 'zod';
+
+const envSchema = z.object({
+  // Database
+  DATABASE_URL: z.string().url().startsWith('postgresql://'),
+
+  // Authentication
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
+  JWT_EXPIRES_IN: z.string().regex(/^\d+[smhd]$/, 'Invalid duration format'),
+  JWT_REFRESH_SECRET: z.string().min(32),
+  JWT_REFRESH_EXPIRES_IN: z.string().regex(/^\d+[smhd]$/),
+
+  // OAuth (optional in development)
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+
+  // Twilio
+  TWILIO_ACCOUNT_SID: z.string().startsWith('AC').length(34).optional(),
+  TWILIO_AUTH_TOKEN: z.string().length(32).optional(),
+  TWILIO_PHONE_NUMBER: z.string().regex(/^\+\d{10,15}$/).optional(),
+
+  // Brevo
+  BREVO_API_KEY: z.string().startsWith('xkeysib-').optional(),
+  BREVO_SENDER_EMAIL: z.string().email().optional(),
+
+  // Server
+  NODE_ENV: z.enum(['development', 'staging', 'production']).default('development'),
+  PORT: z.string().regex(/^\d+$/).transform(Number).default('3000'),
+  HOST: z.string().default('0.0.0.0'),
+
+  // CORS
+  CORS_ORIGIN: z.string().url(),
+});
+
+export type EnvConfig = z.infer<typeof envSchema>;
+
+export function validateEnv(): EnvConfig {
+  const result = envSchema.safeParse(process.env);
+
+  if (!result.success) {
+    console.error('Environment validation failed:');
+    console.error(result.error.format());
+    process.exit(1);
+  }
+
+  return result.data;
+}
+```
+
+### NestJS Configuration Module
+
+```typescript
+// config/configuration.ts
+import { registerAs } from '@nestjs/config';
+import { validateEnv } from './env.validation';
+
+export default registerAs('app', () => {
+  const env = validateEnv();
+
+  return {
+    database: {
+      url: env.DATABASE_URL,
+    },
+    jwt: {
+      secret: env.JWT_SECRET,
+      expiresIn: env.JWT_EXPIRES_IN,
+      refreshSecret: env.JWT_REFRESH_SECRET,
+      refreshExpiresIn: env.JWT_REFRESH_EXPIRES_IN,
+    },
+    oauth: {
+      google: {
+        clientId: env.GOOGLE_CLIENT_ID,
+        clientSecret: env.GOOGLE_CLIENT_SECRET,
+      },
+    },
+    server: {
+      nodeEnv: env.NODE_ENV,
+      port: env.PORT,
+      host: env.HOST,
+    },
+  };
+});
+```
+
+### Startup Validation Script
+
+```typescript
+// scripts/validate-env.ts
+#!/usr/bin/env ts-node
+import * as dotenv from 'dotenv';
+import { validateEnv } from '../config/env.validation';
+
+// Load environment file
+const envFile = process.argv[2] || '.env';
+dotenv.config({ path: envFile });
+
+console.log(`Validating environment file: ${envFile}\n`);
+
+try {
+  const config = validateEnv();
+  console.log('Environment validation successful!');
+  console.log('\nConfiguration summary:');
+  console.log(`  - Environment: ${config.NODE_ENV}`);
+  console.log(`  - Port: ${config.PORT}`);
+  console.log(`  - Database: ${config.DATABASE_URL.replace(/:[^:@]+@/, ':****@')}`);
+  console.log(`  - CORS Origin: ${config.CORS_ORIGIN}`);
+} catch (error) {
+  console.error('Environment validation failed!');
+  process.exit(1);
+}
+```
+
+### Required vs Optional Variables
+
+```typescript
+// Strict validation for production
+const productionRequiredVars = [
+  'DATABASE_URL',
+  'JWT_SECRET',
+  'JWT_REFRESH_SECRET',
+  'GOOGLE_CLIENT_ID',
+  'GOOGLE_CLIENT_SECRET',
+  'TWILIO_ACCOUNT_SID',
+  'TWILIO_AUTH_TOKEN',
+  'BREVO_API_KEY',
+];
+
+function validateProductionEnv(): void {
+  if (process.env.NODE_ENV !== 'production') return;
+
+  const missing = productionRequiredVars.filter(
+    (key) => !process.env[key]
+  );
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required environment variables for production:\n${missing.join('\n')}`
+    );
+  }
+}
+```
+
+## Quick Reference
+
+### Environment Variable Checklist
+
+<Steps>
+<Step title="Create .env file">
+Copy `.env.example` to `.env` in both backend and frontend directories.
+</Step>
+
+<Step title="Configure database">
+Set `DATABASE_URL` with your PostgreSQL connection string.
+</Step>
+
+<Step title="Generate secrets">
+Run `openssl rand -base64 32` for JWT_SECRET and other secret keys.
+</Step>
+
+<Step title="Configure OAuth">
+Set up OAuth credentials in Google Cloud Console and LinkedIn Developer Portal.
+</Step>
+
+<Step title="Configure services">
+Add Twilio and Brevo credentials from their respective dashboards.
+</Step>
+
+<Step title="Validate configuration">
+Run `npm run validate:env` to ensure all required variables are set.
+</Step>
+</Steps>
+
+### Troubleshooting
+
+<AccordionGroup>
+<Accordion title="DATABASE_URL connection refused">
+Ensure PostgreSQL is running and the connection string is correct. Check that the database exists and the user has proper permissions.
+</Accordion>
+
+<Accordion title="JWT_SECRET too short">
+JWT secrets must be at least 32 characters. Generate a new one with `openssl rand -base64 32`.
+</Accordion>
+
+<Accordion title="OAuth callback URL mismatch">
+Ensure the callback URLs in your `.env` file match exactly with those configured in the OAuth provider's dashboard.
+</Accordion>
+
+<Accordion title="Twilio authentication failed">
+Verify your Account SID and Auth Token in the Twilio Console. Ensure you're using the correct credentials for your environment (test vs live).
+</Accordion>
+
+<Accordion title="Brevo emails not sending">
+Check that your API key is valid and has the necessary permissions. Verify the sender email is verified in your Brevo account.
+</Accordion>
+</AccordionGroup>

@@ -1,0 +1,583 @@
+---
+title: "Deployment Architecture Overview"
+description: "Comprehensive guide to Vritti's deployment architecture, infrastructure requirements, and cloud deployment strategies"
+icon: "server"
+---
+
+# Deployment Architecture Overview
+
+Vritti is a modern SaaS platform built on a microservices-inspired architecture. This document provides a comprehensive overview of the deployment topology, infrastructure requirements, and recommended configurations for production environments.
+
+## High-Level Architecture
+
+```
+                                    ┌─────────────────────────────────────────────────────────────┐
+                                    │                      INTERNET                               │
+                                    └─────────────────────────────────────────────────────────────┘
+                                                              │
+                                                              ▼
+                                    ┌─────────────────────────────────────────────────────────────┐
+                                    │                    DNS PROVIDER                             │
+                                    │         *.vrittiai.com / *.local.vrittiai.com              │
+                                    └─────────────────────────────────────────────────────────────┘
+                                                              │
+                                                              ▼
+                                    ┌─────────────────────────────────────────────────────────────┐
+                                    │              LOAD BALANCER / REVERSE PROXY                  │
+                                    │                 (Nginx / Caddy / Traefik)                   │
+                                    │                    SSL Termination                          │
+                                    └─────────────────────────────────────────────────────────────┘
+                                                              │
+                      ┌───────────────────────────────────────┼───────────────────────────────────────┐
+                      │                                       │                                       │
+                      ▼                                       ▼                                       ▼
+        ┌─────────────────────────┐         ┌─────────────────────────┐         ┌─────────────────────────┐
+        │     vritti-landing      │         │     vritti-web-nexus    │         │     vritti-api-nexus    │
+        │       (Next.js)         │         │   (React 19 + ModFed)   │         │   (NestJS + Fastify)    │
+        │                         │         │                         │         │                         │
+        │  Port: 3000             │         │  Port: 5173             │         │  Port: 4000             │
+        │  Domain: vrittiai.com   │         │  Domain: cloud.*        │         │  Domain: api.*          │
+        └─────────────────────────┘         └─────────────────────────┘         └─────────────────────────┘
+                                                      │                                   │
+                                                      │                                   │
+                                                      ▼                                   │
+                                    ┌─────────────────────────┐                           │
+                                    │      vritti-auth        │                           │
+                                    │   (React 19 Remote)     │                           │
+                                    │                         │                           │
+                                    │  Port: 5174             │                           │
+                                    │  ModFed Remote Module   │                           │
+                                    └─────────────────────────┘                           │
+                                                                                          │
+                                                                                          ▼
+                                                              ┌─────────────────────────────────────────┐
+                                                              │            DATABASE LAYER               │
+                                                              │                                         │
+                                                              │  ┌─────────────────────────────────┐   │
+                                                              │  │      PostgreSQL 17              │   │
+                                                              │  │      (Drizzle ORM)              │   │
+                                                              │  │      Port: 5432                 │   │
+                                                              │  └─────────────────────────────────┘   │
+                                                              │                                         │
+                                                              │  ┌─────────────────────────────────┐   │
+                                                              │  │      Redis (Optional)           │   │
+                                                              │  │      Session/Cache              │   │
+                                                              │  │      Port: 6379                 │   │
+                                                              │  └─────────────────────────────────┘   │
+                                                              └─────────────────────────────────────────┘
+```
+
+## Service Components
+
+<CardGroup cols={2}>
+  <Card title="vritti-landing" icon="house">
+    **Next.js Landing Page**
+
+    Public-facing marketing and information site. Server-side rendered for optimal SEO and performance.
+  </Card>
+
+  <Card title="vritti-web-nexus" icon="browser">
+    **React 19 Host Application**
+
+    Main web application shell using Module Federation to orchestrate micro-frontends.
+  </Card>
+
+  <Card title="vritti-auth" icon="shield-halved">
+    **Authentication Remote**
+
+    Module Federation remote providing authentication UI components and flows.
+  </Card>
+
+  <Card title="vritti-api-nexus" icon="server">
+    **NestJS API Backend**
+
+    Core API server built with NestJS and Fastify for high-performance request handling.
+  </Card>
+</CardGroup>
+
+### Service Details
+
+| Service | Framework | Port | Purpose | Build Output |
+|---------|-----------|------|---------|--------------|
+| vritti-landing | Next.js 14+ | 3000 | Marketing site, SEO pages | `.next/` |
+| vritti-web-nexus | React 19 + Vite | 5173 | Main application host | `dist/` |
+| vritti-auth | React 19 + Vite | 5174 | Auth micro-frontend | `dist/` |
+| vritti-api-nexus | NestJS + Fastify | 4000 | REST/GraphQL API | `dist/` |
+
+## Infrastructure Requirements
+
+### Minimum Production Requirements
+
+<Tabs>
+  <Tab title="Small (< 1000 users)">
+    | Resource | Specification |
+    |----------|---------------|
+    | vCPUs | 2 cores |
+    | RAM | 4 GB |
+    | Storage | 50 GB SSD |
+    | Database | 2 vCPU, 4 GB RAM |
+    | Bandwidth | 100 Mbps |
+  </Tab>
+
+  <Tab title="Medium (1000-10000 users)">
+    | Resource | Specification |
+    |----------|---------------|
+    | vCPUs | 4 cores |
+    | RAM | 8 GB |
+    | Storage | 100 GB SSD |
+    | Database | 4 vCPU, 8 GB RAM |
+    | Bandwidth | 500 Mbps |
+  </Tab>
+
+  <Tab title="Large (10000+ users)">
+    | Resource | Specification |
+    |----------|---------------|
+    | vCPUs | 8+ cores |
+    | RAM | 16+ GB |
+    | Storage | 250+ GB SSD |
+    | Database | 8+ vCPU, 16+ GB RAM |
+    | Bandwidth | 1 Gbps |
+  </Tab>
+</Tabs>
+
+### Software Requirements
+
+| Component | Version | Notes |
+|-----------|---------|-------|
+| Node.js | 20.x LTS | Required for all services |
+| PostgreSQL | 17.x | Primary database |
+| Redis | 7.x | Optional: caching and sessions |
+| Docker | 24.x+ | Container runtime |
+| Nginx/Caddy | Latest | Reverse proxy |
+
+<Warning>
+  Ensure PostgreSQL 17 is used for compatibility with Drizzle ORM migrations and advanced features like JSON path queries.
+</Warning>
+
+## Network Topology
+
+### Port Allocation
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           PORT ALLOCATION MAP                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  EXTERNAL PORTS (Exposed)                                                   │
+│  ├── 80   → HTTP (redirects to 443)                                        │
+│  ├── 443  → HTTPS (SSL termination)                                        │
+│  └── 22   → SSH (admin access, restricted)                                 │
+│                                                                             │
+│  INTERNAL PORTS (Container/Service Network)                                 │
+│  ├── 3000 → vritti-landing (Next.js)                                       │
+│  ├── 4000 → vritti-api-nexus (NestJS API)                                  │
+│  ├── 5173 → vritti-web-nexus (React Host)                                  │
+│  ├── 5174 → vritti-auth (React Remote)                                     │
+│  ├── 5432 → PostgreSQL                                                     │
+│  └── 6379 → Redis                                                          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Internal Service Communication
+
+<Note>
+  All internal services communicate over a private Docker network or VPC. Database connections should never be exposed to the public internet.
+</Note>
+
+```yaml
+# Example Docker network configuration
+networks:
+  vritti-internal:
+    driver: bridge
+    internal: true
+  vritti-public:
+    driver: bridge
+```
+
+## Domain and Routing Setup
+
+### Production Domains
+
+| Domain | Service | Purpose |
+|--------|---------|---------|
+| `vrittiai.com` | vritti-landing | Main marketing site |
+| `cloud.vrittiai.com` | vritti-web-nexus | Application dashboard |
+| `api.vrittiai.com` | vritti-api-nexus | API endpoints |
+| `auth.vrittiai.com` | vritti-auth | Auth module assets |
+
+### Local Development Domains
+
+| Domain | Service | Purpose |
+|--------|---------|---------|
+| `local.vrittiai.com` | vritti-landing | Local marketing site |
+| `cloud.local.vrittiai.com` | vritti-web-nexus | Local app dashboard |
+| `api.local.vrittiai.com` | vritti-api-nexus | Local API |
+| `auth.local.vrittiai.com` | vritti-auth | Local auth module |
+
+### DNS Configuration
+
+Add the following to your `/etc/hosts` for local development:
+
+```bash
+# Vritti Local Development
+127.0.0.1   local.vrittiai.com
+127.0.0.1   cloud.local.vrittiai.com
+127.0.0.1   api.local.vrittiai.com
+127.0.0.1   auth.local.vrittiai.com
+```
+
+### Reverse Proxy Configuration
+
+<Tabs>
+  <Tab title="Nginx">
+```nginx
+# /etc/nginx/conf.d/vritti.conf
+
+# Landing page
+server {
+    listen 443 ssl http2;
+    server_name vrittiai.com local.vrittiai.com;
+
+    ssl_certificate /etc/ssl/certs/vrittiai.com.pem;
+    ssl_certificate_key /etc/ssl/private/vrittiai.com.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+
+# Web Application
+server {
+    listen 443 ssl http2;
+    server_name cloud.vrittiai.com cloud.local.vrittiai.com;
+
+    ssl_certificate /etc/ssl/certs/vrittiai.com.pem;
+    ssl_certificate_key /etc/ssl/private/vrittiai.com.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:5173;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+
+# API Server
+server {
+    listen 443 ssl http2;
+    server_name api.vrittiai.com api.local.vrittiai.com;
+
+    ssl_certificate /etc/ssl/certs/vrittiai.com.pem;
+    ssl_certificate_key /etc/ssl/private/vrittiai.com.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# Auth Module
+server {
+    listen 443 ssl http2;
+    server_name auth.vrittiai.com auth.local.vrittiai.com;
+
+    ssl_certificate /etc/ssl/certs/vrittiai.com.pem;
+    ssl_certificate_key /etc/ssl/private/vrittiai.com.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:5174;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+
+        # CORS headers for Module Federation
+        add_header Access-Control-Allow-Origin *;
+        add_header Access-Control-Allow-Methods 'GET, OPTIONS';
+        add_header Access-Control-Allow-Headers 'Origin, Content-Type, Accept';
+    }
+}
+```
+  </Tab>
+
+  <Tab title="Caddy">
+```caddyfile
+# Caddyfile
+
+# Landing page
+vrittiai.com, local.vrittiai.com {
+    reverse_proxy localhost:3000
+}
+
+# Web Application
+cloud.vrittiai.com, cloud.local.vrittiai.com {
+    reverse_proxy localhost:5173
+}
+
+# API Server
+api.vrittiai.com, api.local.vrittiai.com {
+    reverse_proxy localhost:4000
+}
+
+# Auth Module
+auth.vrittiai.com, auth.local.vrittiai.com {
+    reverse_proxy localhost:5174
+
+    header Access-Control-Allow-Origin *
+    header Access-Control-Allow-Methods "GET, OPTIONS"
+    header Access-Control-Allow-Headers "Origin, Content-Type, Accept"
+}
+```
+  </Tab>
+</Tabs>
+
+## SSL/TLS Considerations
+
+### Certificate Requirements
+
+<Info>
+  For production, use certificates from a trusted Certificate Authority (CA). For local development, self-signed certificates or tools like mkcert are recommended.
+</Info>
+
+| Environment | Certificate Type | Recommendation |
+|-------------|-----------------|----------------|
+| Production | Wildcard SSL | `*.vrittiai.com` from Let's Encrypt or commercial CA |
+| Staging | Wildcard SSL | Let's Encrypt with DNS validation |
+| Development | Self-signed | Use `mkcert` for local trusted certificates |
+
+### Local SSL Setup with mkcert
+
+```bash
+# Install mkcert
+brew install mkcert  # macOS
+# or
+sudo apt install mkcert  # Ubuntu
+
+# Install local CA
+mkcert -install
+
+# Generate certificates for local domains
+mkcert "local.vrittiai.com" "*.local.vrittiai.com"
+
+# Output files:
+# - local.vrittiai.com+1.pem (certificate)
+# - local.vrittiai.com+1-key.pem (private key)
+```
+
+### TLS Configuration Best Practices
+
+```nginx
+# Strong TLS configuration
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+ssl_prefer_server_ciphers off;
+ssl_session_cache shared:SSL:10m;
+ssl_session_timeout 1d;
+ssl_session_tickets off;
+
+# HSTS (uncomment in production)
+# add_header Strict-Transport-Security "max-age=63072000" always;
+```
+
+<Warning>
+  Always test TLS configuration using tools like [SSL Labs](https://www.ssllabs.com/ssltest/) before deploying to production. Aim for an A+ rating.
+</Warning>
+
+## Recommended Cloud Providers
+
+### Primary Recommendations
+
+<CardGroup cols={3}>
+  <Card title="AWS" icon="aws">
+    **Best for Enterprise**
+
+    - ECS/EKS for containers
+    - RDS for PostgreSQL
+    - CloudFront CDN
+    - Route 53 DNS
+  </Card>
+
+  <Card title="Google Cloud" icon="google">
+    **Best for AI/ML Integration**
+
+    - Cloud Run for containers
+    - Cloud SQL for PostgreSQL
+    - Cloud CDN
+    - Cloud DNS
+  </Card>
+
+  <Card title="Vercel + Railway" icon="bolt">
+    **Best for Rapid Deployment**
+
+    - Vercel for Next.js
+    - Railway for API/DB
+    - Edge functions
+    - Automatic SSL
+  </Card>
+</CardGroup>
+
+### Provider Comparison
+
+| Feature | AWS | GCP | Vercel/Railway | DigitalOcean |
+|---------|-----|-----|----------------|--------------|
+| Container Support | ECS/EKS | Cloud Run/GKE | Railway | App Platform |
+| Managed PostgreSQL | RDS | Cloud SQL | Railway | Managed DB |
+| CDN | CloudFront | Cloud CDN | Edge Network | Spaces CDN |
+| Auto-scaling | Yes | Yes | Limited | Yes |
+| Pricing Model | Pay-as-you-go | Pay-as-you-go | Usage-based | Fixed + Usage |
+| Complexity | High | Medium | Low | Low |
+| Best For | Enterprise | AI/ML workloads | Startups | Small teams |
+
+### Deployment Architecture by Provider
+
+<Tabs>
+  <Tab title="AWS">
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         AWS Architecture                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Route 53 (DNS) → CloudFront (CDN) → ALB (Load Balancer)       │
+│                                          │                      │
+│                    ┌─────────────────────┼─────────────────┐   │
+│                    │                     │                 │   │
+│                    ▼                     ▼                 ▼   │
+│              ┌──────────┐         ┌──────────┐      ┌──────────┐│
+│              │ ECS Task │         │ ECS Task │      │ ECS Task ││
+│              │ Landing  │         │ Web App  │      │   API    ││
+│              └──────────┘         └──────────┘      └──────────┘│
+│                                                          │      │
+│                                                          ▼      │
+│                                                    ┌──────────┐ │
+│                                                    │ RDS      │ │
+│                                                    │ Postgres │ │
+│                                                    └──────────┘ │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+  </Tab>
+
+  <Tab title="Vercel + Railway">
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Vercel + Railway Architecture                │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Vercel Edge Network                                            │
+│  ├── vrittiai.com → Next.js (Vercel)                           │
+│  └── cloud.vrittiai.com → React Static (Vercel)                │
+│                                                                 │
+│  Railway                                                        │
+│  ├── api.vrittiai.com → NestJS Service                         │
+│  ├── PostgreSQL 17 Database                                     │
+│  └── Redis Cache                                                │
+│                                                                 │
+│  Module Federation Assets                                       │
+│  └── auth.vrittiai.com → Vercel Static / CloudFlare R2         │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+  </Tab>
+</Tabs>
+
+## Environment Variables
+
+### Required Variables by Service
+
+<Accordion title="vritti-api-nexus">
+```bash
+# Database
+DATABASE_URL=postgresql://user:pass@host:5432/vritti
+DATABASE_SSL=true
+
+# Authentication
+JWT_SECRET=your-jwt-secret
+JWT_EXPIRATION=7d
+
+# Server
+PORT=4000
+NODE_ENV=production
+CORS_ORIGINS=https://cloud.vrittiai.com,https://vrittiai.com
+
+# Redis (optional)
+REDIS_URL=redis://host:6379
+```
+</Accordion>
+
+<Accordion title="vritti-web-nexus">
+```bash
+# API Configuration
+VITE_API_URL=https://api.vrittiai.com
+VITE_AUTH_REMOTE_URL=https://auth.vrittiai.com
+
+# Module Federation
+VITE_MF_AUTH_URL=https://auth.vrittiai.com/remoteEntry.js
+
+# Feature Flags
+VITE_ENABLE_ANALYTICS=true
+```
+</Accordion>
+
+<Accordion title="vritti-landing">
+```bash
+# API Configuration
+NEXT_PUBLIC_API_URL=https://api.vrittiai.com
+NEXT_PUBLIC_APP_URL=https://cloud.vrittiai.com
+
+# Analytics
+NEXT_PUBLIC_GA_ID=G-XXXXXXXXXX
+```
+</Accordion>
+
+## Health Checks
+
+### Endpoint Configuration
+
+| Service | Health Endpoint | Expected Response |
+|---------|-----------------|-------------------|
+| vritti-api-nexus | `GET /health` | `{ "status": "ok" }` |
+| vritti-web-nexus | `GET /` | HTTP 200 |
+| vritti-landing | `GET /api/health` | HTTP 200 |
+| PostgreSQL | TCP :5432 | Connection successful |
+
+### Docker Health Check Example
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:4000/health || exit 1
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Container Setup" icon="docker" href="/operations/deployment/docker">
+    Learn how to containerize Vritti services with Docker
+  </Card>
+
+  <Card title="CI/CD Pipeline" icon="code-branch" href="/operations/deployment/ci-cd">
+    Set up automated deployment pipelines
+  </Card>
+
+  <Card title="Monitoring" icon="chart-line" href="/operations/monitoring">
+    Configure observability and alerting
+  </Card>
+
+  <Card title="Security Hardening" icon="lock" href="/operations/security">
+    Production security best practices
+  </Card>
+</CardGroup>

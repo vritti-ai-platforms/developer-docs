@@ -1,0 +1,328 @@
+---
+title: "Landing Page Setup"
+description: "Local development setup for vritti-landing"
+---
+
+## Prerequisites
+
+<CardGroup cols={2}>
+  <Card title="Node.js 20+" icon="node-js">
+    Required runtime
+  </Card>
+  <Card title="pnpm 9+" icon="box">
+    Package manager
+  </Card>
+</CardGroup>
+
+## Step 1: Clone and Install
+
+```bash
+# Clone the repository
+git clone <repository-url> vritti-landing
+cd vritti-landing
+
+# Install dependencies
+pnpm install
+```
+
+## Step 2: Start Development Server
+
+```bash
+pnpm dev
+```
+
+The site will be available at: http://localhost:3000
+
+<Note>
+vritti-landing uses Turbopack for fast development builds. No additional configuration needed.
+</Note>
+
+## Available Scripts
+
+| Script | Command | Description |
+|--------|---------|-------------|
+| `dev` | `pnpm dev` | Start dev server with Turbopack |
+| `build` | `pnpm build` | Production build |
+| `start` | `pnpm start` | Start production server |
+| `lint` | `pnpm lint` | Run ESLint |
+
+## Project Configuration
+
+### Next.js Config
+
+```typescript
+// next.config.ts
+const nextConfig = {
+  images: {
+    remotePatterns: [
+      { protocol: 'https', hostname: '**' },
+    ],
+  },
+  experimental: {
+    optimizePackageImports: ['quantum-ui'],
+  },
+};
+```
+
+### TypeScript
+
+Strict mode enabled with Next.js recommended settings.
+
+## Development Workflow
+
+### Editing Content
+
+All content is in `src/lib/constants/content.ts`:
+
+```typescript
+// Update hero section
+export const HERO_CONTENT = {
+  headline: 'Your New Headline Here',
+  subheadline: 'Updated subheadline',
+  ctas: [
+    { label: 'Primary CTA', href: '/signup' },
+    { label: 'Secondary CTA', href: '#demo' },
+  ],
+};
+```
+
+### Adding New Sections
+
+1. Create component in `src/components/sections/`:
+
+```typescript
+// NewSection.tsx
+export function NewSection() {
+  return (
+    <section className="py-20">
+      <Paper variant="section">
+        <Typography variant="h2">New Section</Typography>
+      </Paper>
+    </section>
+  );
+}
+```
+
+2. Add to home page:
+
+```typescript
+// src/app/page.tsx
+import { NewSection } from '@/components/sections/NewSection';
+
+export default function Home() {
+  return (
+    <main>
+      <Hero />
+      <PainPoints />
+      <NewSection />  {/* Add here */}
+      <SolutionOverview />
+      ...
+    </main>
+  );
+}
+```
+
+### Adding Static Pages
+
+1. Create folder in `src/app/(static)/`:
+
+```
+src/app/(static)/new-page/
+└── page.tsx
+```
+
+2. Add page content:
+
+```typescript
+// page.tsx
+export default function NewPage() {
+  return (
+    <main>
+      <Typography variant="h1">New Page</Typography>
+    </main>
+  );
+}
+```
+
+3. Update navigation if needed in `content.ts`.
+
+## Styling Guidelines
+
+### Use quantum-ui Components
+
+```typescript
+// Correct: Use semantic variants
+<Paper variant="feature">
+  <Typography variant="h3">Title</Typography>
+  <Button intent="primary">Action</Button>
+</Paper>
+
+// Incorrect: Custom divs with arbitrary styles
+<div className="bg-blue-500 p-4 rounded-lg">
+  ...
+</div>
+```
+
+### Use Design Tokens
+
+```css
+/* Correct: Use semantic tokens */
+.element {
+  color: var(--quantum-color-text-primary);
+  background: var(--quantum-color-surface-secondary);
+  padding: var(--quantum-spacing-comfortable);
+}
+
+/* Incorrect: Hardcoded values */
+.element {
+  color: #333;
+  background: #f5f5f5;
+  padding: 16px;
+}
+```
+
+### Animation Patterns
+
+```typescript
+// CSS-based animations (preferred)
+<Animated animation="fadeInUp" delay={0.2}>
+  <Content />
+</Animated>
+
+// Staggered children
+<Stagger staggerDelay={0.1}>
+  {items.map((item) => <Card key={item.id} />)}
+</Stagger>
+```
+
+## Component Imports
+
+Always use direct imports from quantum-ui:
+
+```typescript
+// Correct: Direct import
+import { Button } from '@vritti/quantum-ui/Button';
+import { Paper } from '@vritti/quantum-ui/Paper';
+import { Typography } from '@vritti/quantum-ui/Typography';
+
+// Incorrect: Barrel import (larger bundle)
+import { Button, Paper, Typography } from '@vritti/quantum-ui';
+```
+
+## SEO Configuration
+
+### Page Metadata
+
+```typescript
+// page.tsx
+export const metadata = {
+  title: 'About Us | Vritti AI',
+  description: 'Learn about Vritti AI and our mission...',
+};
+```
+
+### Structured Data
+
+Add schema.org data in layout or page:
+
+```typescript
+<script
+  type="application/ld+json"
+  dangerouslySetInnerHTML={{
+    __html: JSON.stringify(structuredData),
+  }}
+/>
+```
+
+## Troubleshooting
+
+<Accordion title="quantum-ui components not styling correctly">
+  **Cause:** Missing CSS imports or wrong import path
+
+  **Solutions:**
+  1. Verify quantum-ui styles imported in `globals.css`
+  2. Use direct imports, not barrel exports
+  3. Check that Tailwind is processing quantum-ui
+</Accordion>
+
+<Accordion title="Animations not working">
+  **Cause:** CSS animations not loading or reduced motion enabled
+
+  **Solutions:**
+  1. Check `css-animations.ts` is imported
+  2. Verify Intersection Observer polyfill if needed
+  3. Check browser's reduced motion settings
+</Accordion>
+
+<Accordion title="Images not loading">
+  **Cause:** Remote image domain not configured
+
+  **Solutions:**
+  1. Add domain to `next.config.ts` remotePatterns
+  2. Use local images in `public/` directory
+  3. Check image path is correct
+</Accordion>
+
+<Accordion title="Build fails with type errors">
+  **Cause:** TypeScript strict mode catching issues
+
+  **Solutions:**
+  1. Fix type errors (don't disable checks)
+  2. Add proper types to content.ts
+  3. Use `as const` for readonly objects
+</Accordion>
+
+## File Structure Reference
+
+```
+src/
+├── app/
+│   ├── (static)/              # Static pages group
+│   │   ├── about/page.tsx
+│   │   ├── contact/page.tsx
+│   │   ├── how-it-works/page.tsx
+│   │   ├── mission-vision/page.tsx
+│   │   ├── pricing/page.tsx
+│   │   ├── privacy/page.tsx
+│   │   └── terms/page.tsx
+│   ├── api/
+│   │   └── contact/route.ts   # Form handler
+│   ├── layout.tsx             # Root layout
+│   ├── page.tsx               # Home page
+│   └── providers.tsx          # Context providers
+├── components/
+│   ├── layout/
+│   │   ├── Navbar.tsx
+│   │   ├── Footer.tsx
+│   │   └── MobileMenu.tsx
+│   ├── sections/              # Page sections
+│   │   ├── Hero.tsx
+│   │   ├── PainPoints.tsx
+│   │   ├── SolutionOverview.tsx
+│   │   ├── IndustryCards.tsx
+│   │   └── CTASection.tsx
+│   └── ui/                    # Shared UI
+│       ├── Animated.tsx
+│       ├── GradientText.tsx
+│       └── FeatureCard.tsx
+├── lib/
+│   ├── constants/
+│   │   └── content.ts         # All content
+│   ├── hooks/
+│   │   └── useScrollAnimation.ts
+│   └── utils/
+│       └── css-animations.ts
+└── styles/
+    └── globals.css            # Global styles
+```
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Landing Overview" icon="globe" href="/projects/landing/overview">
+    Project overview
+  </Card>
+  <Card title="quantum-ui" icon="palette" href="/projects/quantum-ui/overview">
+    Design system
+  </Card>
+</CardGroup>

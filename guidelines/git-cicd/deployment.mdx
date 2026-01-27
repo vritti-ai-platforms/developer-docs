@@ -1,0 +1,1009 @@
+---
+title: Deployment
+description: Comprehensive guide to building, deploying, and managing Vritti applications across environments
+---
+
+# Deployment
+
+This guide covers the end-to-end deployment process for Vritti applications, including build procedures, environment configuration, database migrations, containerization, and production best practices.
+
+## Build Process
+
+Each project type in the Vritti monorepo has specific build requirements.
+
+### Backend (vritti-api-nexus)
+
+```bash
+# Install dependencies
+pnpm install
+
+# Build the NestJS application
+pnpm build  # Runs: nest build
+
+# Output directory: dist/
+# Entry point: dist/main.js
+```
+
+The build process compiles TypeScript to JavaScript and outputs to the `dist/` directory:
+
+```
+vritti-api-nexus/
+└── dist/
+    ├── main.js           # Application entry point
+    ├── app.module.js
+    └── modules/
+        ├── auth/
+        ├── users/
+        └── tenants/
+```
+
+**Production Start:**
+```bash
+pnpm prod  # Runs: node dist/main
+```
+
+### Frontend Applications (RSBuild + Module Federation)
+
+```bash
+# vritti-web-nexus (Host Application)
+cd vritti-web-nexus
+pnpm install
+pnpm build  # Runs: rsbuild build
+
+# vritti-auth (Remote Module)
+cd vritti-auth
+pnpm install
+pnpm build  # Runs: rsbuild build
+```
+
+Build outputs are placed in the `dist/` directory:
+
+```
+vritti-web-nexus/
+└── dist/
+    ├── index.html
+    ├── static/
+    │   ├── js/
+    │   └── css/
+    └── remoteEntry.js    # Module Federation manifest
+```
+
+### Libraries (quantum-ui, api-sdk)
+
+```bash
+# quantum-ui (Component Library)
+cd quantum-ui
+pnpm install
+pnpm build  # Uses Vite
+
+# api-sdk (Shared SDK)
+cd api-sdk
+pnpm install
+pnpm build  # Uses tsup
+```
+
+<Accordion title="Build Output Structure">
+Libraries output ESM and CommonJS formats for compatibility:
+
+```
+api-sdk/
+└── dist/
+    ├── index.js          # ESM
+    ├── index.cjs         # CommonJS
+    ├── index.d.ts        # Type definitions
+    └── chunks/
+
+quantum-ui/
+└── dist/
+    ├── index.js
+    ├── index.css
+    └── components/
+```
+</Accordion>
+
+---
+
+## Environment Configuration
+
+### Development
+
+```bash
+# .env (vritti-api-nexus)
+NODE_ENV=development
+PORT=3002
+LOG_LEVEL=debug
+LOG_FORMAT=text
+
+# Database (local Docker)
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+DATABASE_USER=postgres
+DATABASE_PASSWORD=localdev
+DATABASE_NAME=saas_db
+DATABASE_SSL_MODE=disable
+
+# JWT
+JWT_SECRET=dev-secret-key-minimum-32-characters-long
+JWT_ACCESS_EXPIRY=15m
+JWT_REFRESH_EXPIRY=30d
+
+# CORS
+CORS_ORIGINS=http://localhost:3000,http://localhost:3001
+```
+
+### Staging
+
+```bash
+# .env.staging
+NODE_ENV=staging
+PORT=3002
+LOG_LEVEL=log
+LOG_FORMAT=json
+
+# Database (managed PostgreSQL)
+DATABASE_HOST=staging-db.example.com
+DATABASE_PORT=5432
+DATABASE_USER=vritti_staging
+DATABASE_PASSWORD=${DB_PASSWORD}  # From secrets
+DATABASE_NAME=vritti_staging
+DATABASE_SSL_MODE=require
+
+# JWT
+JWT_SECRET=${JWT_SECRET}  # From secrets
+JWT_ACCESS_EXPIRY=15m
+JWT_REFRESH_EXPIRY=7d
+
+# CORS
+CORS_ORIGINS=https://staging.vrittiai.com,https://auth.staging.vrittiai.com
+```
+
+### Production
+
+```bash
+# .env.production
+NODE_ENV=production
+PORT=3002
+LOG_LEVEL=warn
+LOG_FORMAT=json
+
+# Database (managed PostgreSQL with connection pooling)
+DATABASE_HOST=prod-db.example.com
+DATABASE_PORT=6432  # pgBouncer port
+DATABASE_USER=vritti_prod
+DATABASE_PASSWORD=${DB_PASSWORD}
+DATABASE_NAME=vritti_prod
+DATABASE_SSL_MODE=require
+
+# Direct URL for migrations (bypasses pgBouncer)
+PRIMARY_DB_DATABASE_DIRECT_URL=${DIRECT_DATABASE_URL}
+
+# JWT
+JWT_SECRET=${JWT_SECRET}
+JWT_ACCESS_EXPIRY=15m
+JWT_REFRESH_EXPIRY=30d
+
+# CORS
+CORS_ORIGINS=https://app.vrittiai.com,https://auth.vrittiai.com
+```
+
+<Warning>
+Never commit secrets to version control. Use environment variables injected at runtime from a secrets manager (AWS Secrets Manager, HashiCorp Vault, etc.).
+</Warning>
+
+---
+
+## Database Migration Strategy
+
+### Migration Commands Overview
+
+| Command | Use Case | Environment |
+|---------|----------|-------------|
+| `db:generate` | Generate migration files from schema changes | Development |
+| `db:push` | Apply schema directly (no migration files) | Development only |
+| `db:migrate` | Run pending migrations | All environments |
+| `db:reset` | Drop and recreate schema | Development only |
+
+### Schema Generation
+
+When you modify Drizzle schema files:
+
+```bash
+# 1. Make schema changes
+# Edit src/db/schema/*.ts
+
+# 2. Generate migration
+pnpm db:generate
+
+# 3. Review generated SQL
+cat src/db/migrations/[timestamp]_*/migration.sql
+
+# 4. Commit migration files
+git add src/db/migrations/
+git commit -m "feat(db): add new column to users table"
+```
+
+### Applying Migrations
+
+<Tabs>
+  <Tab title="Development">
+    ```bash
+    # Option 1: Push directly (faster iteration)
+    pnpm db:push
+
+    # Option 2: Run migrations (mirrors production)
+    pnpm db:migrate
+    ```
+  </Tab>
+  <Tab title="Staging/Production">
+    ```bash
+    # Always use migrate in non-development environments
+    pnpm db:migrate
+
+    # Or with explicit database URL
+    PRIMARY_DB_DATABASE_DIRECT_URL=$DATABASE_URL pnpm db:migrate
+    ```
+  </Tab>
+</Tabs>
+
+### Pre-Deployment Migration Workflow
+
+<Steps>
+  <Step title="Backup Database">
+    ```bash
+    # Create backup before migration
+    pg_dump -h $DB_HOST -U $DB_USER -d $DB_NAME > backup_$(date +%Y%m%d_%H%M%S).sql
+    ```
+  </Step>
+  <Step title="Test Migration on Clone">
+    ```bash
+    # Restore backup to test database
+    psql -h $TEST_DB_HOST -U $TEST_DB_USER -d $TEST_DB_NAME < backup.sql
+
+    # Run migration on test database
+    PRIMARY_DB_DATABASE_DIRECT_URL=$TEST_DATABASE_URL pnpm db:migrate
+
+    # Verify data integrity
+    ```
+  </Step>
+  <Step title="Apply to Production">
+    ```bash
+    # During maintenance window
+    PRIMARY_DB_DATABASE_DIRECT_URL=$PROD_DIRECT_URL pnpm db:migrate
+    ```
+  </Step>
+  <Step title="Verify Application">
+    ```bash
+    # Run health checks
+    curl https://api.vrittiai.com/health
+
+    # Monitor error logs
+    ```
+  </Step>
+</Steps>
+
+### Rollback Considerations
+
+<Warning>
+Drizzle does not generate automatic rollback migrations. Plan rollback strategies before applying changes.
+</Warning>
+
+**Rollback Options:**
+
+1. **Forward Migration** (Recommended)
+   ```sql
+   -- Create a new migration to fix issues
+   ALTER TABLE "cloud"."users" DROP COLUMN "problematic_column";
+   ```
+
+2. **Point-in-Time Recovery**
+   ```bash
+   # Restore from backup taken before migration
+   psql -h $DB_HOST -U $DB_USER -d $DB_NAME < backup_before_migration.sql
+   ```
+
+3. **Manual Rollback Script**
+   ```sql
+   -- Manually reverse the changes
+   -- Keep rollback scripts alongside migrations
+   -- src/db/migrations/[timestamp]_*/rollback.sql
+   ALTER TABLE "cloud"."users" DROP COLUMN "new_column";
+   DROP INDEX IF EXISTS "users_new_column_idx";
+   ```
+
+<Accordion title="Best Practices for Safe Migrations">
+- **Additive Changes First**: Add new columns as nullable, backfill data, then add constraints
+- **Avoid Locking Operations**: Break large migrations into smaller batches
+- **Test Data Volume**: Test migrations with production-scale data
+- **Schedule Maintenance Windows**: For schema changes that require locks
+- **Keep Rollback Scripts**: Document how to reverse each migration
+</Accordion>
+
+---
+
+## Deployment Checklist
+
+### Pre-Deployment
+
+<Check>Run all tests locally</Check>
+<Check>Review database migrations</Check>
+<Check>Update environment variables in secrets manager</Check>
+<Check>Create database backup</Check>
+<Check>Notify stakeholders of deployment window</Check>
+<Check>Verify rollback procedure is documented</Check>
+
+### Deployment Steps
+
+<Check>Apply database migrations</Check>
+<Check>Deploy backend services</Check>
+<Check>Verify backend health checks pass</Check>
+<Check>Deploy frontend applications</Check>
+<Check>Invalidate CDN cache if needed</Check>
+<Check>Verify frontend loads correctly</Check>
+
+### Post-Deployment
+
+<Check>Run smoke tests</Check>
+<Check>Monitor error rates for 15 minutes</Check>
+<Check>Check application logs for anomalies</Check>
+<Check>Verify critical user flows work</Check>
+<Check>Update deployment documentation</Check>
+
+---
+
+## Recommended Deployment Architecture
+
+### Containerization
+
+#### Backend Dockerfile
+
+```dockerfile
+# vritti-api-nexus/Dockerfile
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Copy package files
+COPY package.json pnpm-lock.yaml ./
+
+# Install dependencies
+RUN pnpm install --frozen-lockfile
+
+# Copy source code
+COPY . .
+
+# Build application
+RUN pnpm build
+
+# Production stage
+FROM node:20-alpine AS production
+
+WORKDIR /app
+
+# Install pnpm for production
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Copy package files
+COPY package.json pnpm-lock.yaml ./
+
+# Install production dependencies only
+RUN pnpm install --frozen-lockfile --prod
+
+# Copy built application
+COPY --from=builder /app/dist ./dist
+
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nestjs -u 1001 -G nodejs
+
+USER nestjs
+
+# Expose port
+EXPOSE 3002
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3002/health || exit 1
+
+# Start application
+CMD ["node", "dist/main"]
+```
+
+#### Frontend Dockerfile (Multi-Stage with Nginx)
+
+```dockerfile
+# vritti-web-nexus/Dockerfile
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Copy package files
+COPY package.json pnpm-lock.yaml ./
+
+# Install dependencies
+RUN pnpm install --frozen-lockfile
+
+# Copy source code
+COPY . .
+
+# Build arguments for environment
+ARG VITE_API_BASE_URL
+ARG VITE_AUTH_REMOTE_URL
+ARG VITE_ENV
+
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ENV VITE_AUTH_REMOTE_URL=$VITE_AUTH_REMOTE_URL
+ENV VITE_ENV=$VITE_ENV
+
+# Build application
+RUN pnpm build
+
+# Production stage with Nginx
+FROM nginx:alpine AS production
+
+# Copy custom nginx config
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# Copy built assets
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:80/health || exit 1
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+#### Nginx Configuration for SPA
+
+```nginx
+# vritti-web-nexus/nginx.conf
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+
+    server {
+        listen 80;
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # Health check endpoint
+        location /health {
+            return 200 'OK';
+            add_header Content-Type text/plain;
+        }
+
+        # Static assets with caching
+        location /static/ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+
+        # Module Federation remoteEntry
+        location ~ remoteEntry\.js$ {
+            expires 1m;
+            add_header Cache-Control "public, max-age=60";
+        }
+
+        # SPA fallback
+        location / {
+            try_files $uri $uri/ /index.html;
+            add_header Cache-Control "no-cache";
+        }
+    }
+}
+```
+
+### Docker Compose (Development)
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: vritti-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: saas_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./vritti-api-nexus
+      dockerfile: Dockerfile
+    container_name: vritti-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: localdev
+      DATABASE_NAME: saas_db
+    ports:
+      - "3002:3002"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  web:
+    build:
+      context: ./vritti-web-nexus
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:3002
+        VITE_AUTH_REMOTE_URL: http://localhost:3001
+        VITE_ENV: development
+    container_name: vritti-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
+
+volumes:
+  pgdata:
+```
+
+### Container Orchestration Considerations
+
+<CardGroup cols={2}>
+  <Card title="Kubernetes" icon="dharmachakra">
+    **Recommended for:**
+    - Multi-region deployments
+    - Auto-scaling requirements
+    - Complex networking needs
+    - Large teams with DevOps expertise
+  </Card>
+  <Card title="Docker Swarm" icon="docker">
+    **Recommended for:**
+    - Simpler deployments
+    - Smaller teams
+    - Single-region setups
+    - Docker-native workflows
+  </Card>
+  <Card title="Cloud Run / ECS" icon="cloud">
+    **Recommended for:**
+    - Serverless container hosting
+    - Pay-per-use pricing
+    - Managed infrastructure
+    - Quick time-to-market
+  </Card>
+  <Card title="Static Hosting" icon="bolt">
+    **For Frontends:**
+    - Vercel, Netlify, CloudFlare Pages
+    - CDN-first architecture
+    - Automatic HTTPS
+    - Edge caching
+  </Card>
+</CardGroup>
+
+### Static Hosting for Frontends
+
+For frontend applications, consider static hosting with CDN:
+
+**Vercel Deployment:**
+```json
+// vercel.json
+{
+  "buildCommand": "pnpm build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/static/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    }
+  ]
+}
+```
+
+**CloudFlare Pages:**
+```toml
+# wrangler.toml
+name = "vritti-web"
+compatibility_date = "2024-01-01"
+
+[build]
+command = "pnpm build"
+output_directory = "dist"
+
+[[rules]]
+type = "SPA"
+```
+
+---
+
+## Environment Variables by Stage
+
+### Summary Table
+
+| Variable | Development | Staging | Production |
+|----------|-------------|---------|------------|
+| `NODE_ENV` | `development` | `staging` | `production` |
+| `LOG_LEVEL` | `debug` | `log` | `warn` |
+| `LOG_FORMAT` | `text` | `json` | `json` |
+| `DATABASE_SSL_MODE` | `disable` | `require` | `require` |
+| `JWT_ACCESS_EXPIRY` | `1h` | `15m` | `15m` |
+| `JWT_REFRESH_EXPIRY` | `30d` | `7d` | `30d` |
+
+### Frontend Environment Variables
+
+| Variable | Development | Staging | Production |
+|----------|-------------|---------|------------|
+| `VITE_API_BASE_URL` | `http://localhost:3002` | `https://api.staging.vrittiai.com` | `https://api.vrittiai.com` |
+| `VITE_AUTH_REMOTE_URL` | `http://localhost:3001` | `https://auth.staging.vrittiai.com` | `https://auth.vrittiai.com` |
+| `VITE_ENV` | `development` | `staging` | `production` |
+
+---
+
+## Health Checks and Monitoring
+
+### Backend Health Endpoint
+
+```typescript
+// src/health/health.controller.ts
+import { Controller, Get } from '@nestjs/common';
+
+@Controller('health')
+export class HealthController {
+  @Get()
+  check() {
+    return {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+    };
+  }
+
+  @Get('ready')
+  readiness() {
+    // Check database connection, external services
+    return {
+      status: 'ready',
+      checks: {
+        database: 'connected',
+        cache: 'connected',
+      },
+    };
+  }
+
+  @Get('live')
+  liveness() {
+    return { status: 'alive' };
+  }
+}
+```
+
+### Kubernetes Probes
+
+```yaml
+# kubernetes/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vritti-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          image: vritti-api:latest
+          ports:
+            - containerPort: 3002
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 3002
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 3002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3002
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 30
+```
+
+### Monitoring Setup
+
+<Accordion title="Structured Logging">
+```typescript
+// Configure JSON logging for production
+// src/main.ts
+import { Logger } from '@nestjs/common';
+
+const logger = new Logger('Bootstrap');
+
+// Log format based on environment
+if (process.env.LOG_FORMAT === 'json') {
+  // Use structured JSON logging
+  // Compatible with CloudWatch, Datadog, etc.
+}
+```
+</Accordion>
+
+<Accordion title="Application Metrics">
+```typescript
+// Prometheus metrics endpoint
+// Install: pnpm add @willsoto/nestjs-prometheus prom-client
+
+import { PrometheusModule } from '@willsoto/nestjs-prometheus';
+
+@Module({
+  imports: [
+    PrometheusModule.register({
+      path: '/metrics',
+      defaultMetrics: {
+        enabled: true,
+      },
+    }),
+  ],
+})
+export class AppModule {}
+```
+</Accordion>
+
+<Accordion title="Error Tracking">
+```typescript
+// Sentry integration
+// Install: pnpm add @sentry/nestjs
+
+import * as Sentry from '@sentry/nestjs';
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV,
+  tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+});
+```
+</Accordion>
+
+---
+
+## Rollback Procedures
+
+### Application Rollback
+
+<Steps>
+  <Step title="Identify Issue">
+    - Monitor error rates and logs
+    - Identify the problematic deployment
+    - Determine rollback scope (backend, frontend, or both)
+  </Step>
+  <Step title="Rollback Backend">
+    ```bash
+    # Kubernetes
+    kubectl rollout undo deployment/vritti-api
+
+    # Docker Swarm
+    docker service update --rollback vritti-api
+
+    # Cloud Run
+    gcloud run services update-traffic vritti-api --to-revisions=PREVIOUS=100
+    ```
+  </Step>
+  <Step title="Rollback Frontend">
+    ```bash
+    # Vercel
+    vercel rollback
+
+    # CloudFlare Pages
+    # Use dashboard to rollback to previous deployment
+
+    # Manual: Re-deploy previous version
+    git checkout <previous-tag>
+    pnpm build
+    # Deploy dist/
+    ```
+  </Step>
+  <Step title="Rollback Database (if needed)">
+    ```bash
+    # Restore from backup
+    psql -h $DB_HOST -U $DB_USER -d $DB_NAME < backup_before_deployment.sql
+
+    # Or apply rollback migration
+    pnpm db:migrate  # With rollback migration committed
+    ```
+  </Step>
+  <Step title="Verify and Communicate">
+    - Run health checks
+    - Verify critical flows
+    - Notify stakeholders of rollback
+    - Document incident for post-mortem
+  </Step>
+</Steps>
+
+### Automated Rollback Triggers
+
+```yaml
+# GitHub Actions example
+- name: Deploy
+  run: |
+    kubectl apply -f kubernetes/
+    kubectl rollout status deployment/vritti-api --timeout=300s
+
+- name: Smoke Test
+  run: |
+    sleep 30
+    curl --fail https://api.vrittiai.com/health || exit 1
+
+- name: Rollback on Failure
+  if: failure()
+  run: |
+    kubectl rollout undo deployment/vritti-api
+    echo "::error::Deployment failed, rolled back to previous version"
+```
+
+---
+
+## Zero-Downtime Deployment Strategies
+
+### Rolling Updates
+
+Default strategy for Kubernetes deployments:
+
+```yaml
+# kubernetes/deployment.yaml
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # Allow 1 extra pod during update
+      maxUnavailable: 0  # Keep all existing pods running
+```
+
+### Blue-Green Deployment
+
+Run two identical environments, switch traffic atomically:
+
+```yaml
+# kubernetes/blue-green/
+# Deploy new version to "green" environment
+apiVersion: v1
+kind: Service
+metadata:
+  name: vritti-api
+spec:
+  selector:
+    app: vritti-api
+    version: green  # Switch to blue for rollback
+  ports:
+    - port: 3002
+```
+
+```bash
+# Switch traffic from blue to green
+kubectl patch service vritti-api -p '{"spec":{"selector":{"version":"green"}}}'
+
+# Rollback to blue
+kubectl patch service vritti-api -p '{"spec":{"selector":{"version":"blue"}}}'
+```
+
+### Canary Deployment
+
+Gradually shift traffic to new version:
+
+```yaml
+# Istio VirtualService for canary
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: vritti-api
+spec:
+  hosts:
+    - vritti-api
+  http:
+    - route:
+        - destination:
+            host: vritti-api
+            subset: stable
+          weight: 90
+        - destination:
+            host: vritti-api
+            subset: canary
+          weight: 10
+```
+
+<Accordion title="Canary Deployment Best Practices">
+1. **Start Small**: Begin with 5-10% traffic to canary
+2. **Monitor Closely**: Watch error rates, latency, and business metrics
+3. **Gradual Increase**: Increment traffic in steps (10% -> 25% -> 50% -> 100%)
+4. **Quick Rollback**: Have automated rollback if error rate exceeds threshold
+5. **Feature Flags**: Combine with feature flags for granular control
+</Accordion>
+
+### Database-Safe Deployments
+
+For schema changes that require downtime:
+
+<Steps>
+  <Step title="Phase 1: Backward Compatible">
+    - Add new columns as nullable
+    - Create new tables without foreign keys
+    - Deploy new code that handles both old and new schema
+  </Step>
+  <Step title="Phase 2: Data Migration">
+    - Backfill data in batches
+    - Add indexes concurrently
+    ```sql
+    CREATE INDEX CONCURRENTLY idx_users_new ON cloud.users(new_column);
+    ```
+  </Step>
+  <Step title="Phase 3: Enforce Constraints">
+    - Add NOT NULL constraints
+    - Add foreign keys
+    - Remove deprecated columns in future release
+  </Step>
+</Steps>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Database Migrations" icon="database" href="/architecture/database/migrations">
+    Detailed migration workflow with Drizzle Kit
+  </Card>
+  <Card title="Environment Variables" icon="key" href="/getting-started/environment-variables">
+    Complete environment configuration reference
+  </Card>
+  <Card title="Testing Guide" icon="flask" href="/guidelines/testing/unit-tests">
+    Ensure code quality before deployment
+  </Card>
+  <Card title="Module Federation" icon="puzzle-piece" href="/architecture/frontend/module-federation">
+    Understand micro-frontend deployment
+  </Card>
+</CardGroup>

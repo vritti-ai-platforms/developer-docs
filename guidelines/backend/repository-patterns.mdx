@@ -1,0 +1,510 @@
+---
+title: Repository Patterns
+description: Drizzle ORM repository patterns for data access in Vritti API
+---
+
+# Repository Patterns
+
+Vritti uses the repository pattern with Drizzle ORM for data access. This guide covers base repository patterns, custom repositories, and best practices.
+
+## Base Repository
+
+### Primary Database Repository
+
+```typescript
+// api-sdk/src/database/repositories/primary-base.repository.ts
+import { PgTable, InferInsertModel, InferSelectModel } from 'drizzle-orm/pg-core';
+import { eq, and } from 'drizzle-orm';
+
+export abstract class PrimaryBaseRepository<
+  TTable extends PgTable,
+  TInsert = InferInsertModel<TTable>,
+  TSelect = InferSelectModel<TTable>,
+> {
+  protected readonly logger = new Logger(this.constructor.name);
+
+  constructor(
+    protected readonly database: PrimaryDatabaseService,
+    protected readonly table: TTable,
+  ) {}
+
+  protected get db() {
+    return this.database.db;
+  }
+
+  protected get model() {
+    return this.db.query[this.tableName];
+  }
+
+  private get tableName(): string {
+    // Convert snake_case table name to camelCase
+    const snakeName = (this.table as any)[Symbol.for('drizzle:Name')];
+    return snakeName.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+  }
+
+  // CRUD Operations
+  async create(data: TInsert): Promise<TSelect> {
+    this.logger.debug(`Creating record in ${this.tableName}`);
+    const [result] = await this.db.insert(this.table).values(data).returning();
+    return result as TSelect;
+  }
+
+  async findById(id: string): Promise<TSelect | null> {
+    this.logger.debug(`Finding by ID in ${this.tableName}: ${id}`);
+    const result = await this.model.findFirst({
+      where: eq((this.table as any).id, id),
+    });
+    return result as TSelect | null;
+  }
+
+  async findOne(where: Partial<TSelect>): Promise<TSelect | null> {
+    const result = await this.model.findFirst({
+      where: this.buildWhereClause(where),
+    });
+    return result as TSelect | null;
+  }
+
+  async findMany(options?: {
+    where?: Partial<TSelect>;
+    limit?: number;
+    offset?: number;
+    orderBy?: any;
+  }): Promise<TSelect[]> {
+    const results = await this.model.findMany({
+      where: options?.where ? this.buildWhereClause(options.where) : undefined,
+      limit: options?.limit,
+      offset: options?.offset,
+      orderBy: options?.orderBy,
+    });
+    return results as TSelect[];
+  }
+
+  async update(id: string, data: Partial<TInsert>): Promise<TSelect> {
+    this.logger.debug(`Updating record in ${this.tableName}: ${id}`);
+    const [result] = await this.db
+      .update(this.table)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq((this.table as any).id, id))
+      .returning();
+    return result as TSelect;
+  }
+
+  async delete(id: string): Promise<void> {
+    this.logger.debug(`Deleting record from ${this.tableName}: ${id}`);
+    await this.db.delete(this.table).where(eq((this.table as any).id, id));
+  }
+
+  async count(where?: Partial<TSelect>): Promise<number> {
+    const result = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(this.table)
+      .where(where ? this.buildWhereClause(where) : undefined);
+    return Number(result[0].count);
+  }
+
+  async exists(where: Partial<TSelect>): Promise<boolean> {
+    const result = await this.findOne(where);
+    return result !== null;
+  }
+
+  private buildWhereClause(where: Partial<TSelect>) {
+    const conditions = Object.entries(where).map(([key, value]) =>
+      eq((this.table as any)[key], value)
+    );
+    return conditions.length === 1 ? conditions[0] : and(...conditions);
+  }
+}
+```
+
+### Tenant-Scoped Repository
+
+```typescript
+// api-sdk/src/database/repositories/tenant-base.repository.ts
+export abstract class TenantBaseRepository<
+  TTable extends PgTable,
+  TInsert = InferInsertModel<TTable>,
+  TSelect = InferSelectModel<TTable>,
+> {
+  protected readonly logger = new Logger(this.constructor.name);
+
+  constructor(
+    protected readonly database: TenantDatabaseService,
+    protected readonly table: TTable,
+  ) {}
+
+  protected get db() {
+    // Lazy getter - resolves tenant context at call time
+    return this.database.db;
+  }
+
+  // Same CRUD methods as PrimaryBaseRepository
+  // but automatically scoped to current tenant
+}
+```
+
+## Custom Repositories
+
+### Extending Base Repository
+
+```typescript
+// tenant/tenant.repository.ts
+import { Injectable } from '@nestjs/common';
+import { eq } from 'drizzle-orm';
+import { PrimaryBaseRepository } from '@vritti/api-sdk';
+import { tenants } from '@/db/schema';
+import { PrimaryDatabaseService } from '@vritti/api-sdk';
+
+@Injectable()
+export class TenantRepository extends PrimaryBaseRepository<typeof tenants> {
+  constructor(database: PrimaryDatabaseService) {
+    super(database, tenants);
+  }
+
+  // Custom query methods
+  async findBySubdomain(subdomain: string) {
+    return this.model.findFirst({
+      where: eq(tenants.subdomain, subdomain),
+    });
+  }
+
+  async findByIdWithConfig(id: string) {
+    return this.model.findFirst({
+      where: eq(tenants.id, id),
+      with: {
+        databaseConfig: true,  // Include relation
+      },
+    });
+  }
+
+  async findActivetenants() {
+    return this.model.findMany({
+      where: eq(tenants.status, 'active'),
+      orderBy: [desc(tenants.createdAt)],
+    });
+  }
+}
+```
+
+### User Repository with Business Logic
+
+```typescript
+// user/user.repository.ts
+@Injectable()
+export class UserRepository extends PrimaryBaseRepository<typeof users> {
+  constructor(database: PrimaryDatabaseService) {
+    super(database, users);
+  }
+
+  async findByEmail(email: string): Promise<User | null> {
+    return this.model.findFirst({
+      where: eq(users.email, email.toLowerCase()),
+    });
+  }
+
+  async findByEmailWithPassword(email: string): Promise<UserWithPassword | null> {
+    return this.model.findFirst({
+      where: eq(users.email, email.toLowerCase()),
+      columns: {
+        id: true,
+        email: true,
+        passwordHash: true,
+        mfaEnabled: true,
+        status: true,
+      },
+    });
+  }
+
+  async markEmailVerified(userId: string): Promise<User> {
+    this.logger.log(`Marking email verified for user: ${userId}`);
+    const [user] = await this.db
+      .update(users)
+      .set({
+        emailVerified: true,
+        emailVerifiedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async createFromOAuth(data: OAuthUserData): Promise<User> {
+    this.logger.log(`Creating user from OAuth: ${data.email}`);
+    return this.create({
+      email: data.email.toLowerCase(),
+      firstName: data.firstName,
+      lastName: data.lastName,
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
+      signupMethod: data.provider,
+    });
+  }
+
+  // Soft delete by changing status
+  async delete(id: string): Promise<void> {
+    this.logger.warn(`Soft deleting user: ${id}`);
+    await this.db
+      .update(users)
+      .set({
+        status: 'deleted',
+        deletedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, id));
+  }
+}
+```
+
+## Relation Queries
+
+### Loading Relations
+
+```typescript
+// Find with single relation
+async findByIdWithProfile(id: string) {
+  return this.model.findFirst({
+    where: eq(users.id, id),
+    with: {
+      profile: true,
+    },
+  });
+}
+
+// Find with multiple relations
+async findByIdWithDetails(id: string) {
+  return this.model.findFirst({
+    where: eq(users.id, id),
+    with: {
+      profile: true,
+      roles: true,
+      sessions: {
+        where: eq(sessions.active, true),
+        limit: 5,
+      },
+    },
+  });
+}
+
+// Nested relations
+async findTenantWithUsers(tenantId: string) {
+  return this.model.findFirst({
+    where: eq(tenants.id, tenantId),
+    with: {
+      users: {
+        with: {
+          profile: true,
+        },
+      },
+    },
+  });
+}
+```
+
+### Select Specific Columns
+
+```typescript
+async findUserSummary(id: string) {
+  return this.model.findFirst({
+    where: eq(users.id, id),
+    columns: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      // Excludes passwordHash, sensitive fields
+    },
+  });
+}
+```
+
+## Complex Queries
+
+### Aggregations
+
+```typescript
+async getUserCountByStatus(): Promise<{ status: string; count: number }[]> {
+  return this.db
+    .select({
+      status: users.status,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(users)
+    .groupBy(users.status);
+}
+
+async getTenantStats(tenantId: string) {
+  return this.db
+    .select({
+      totalUsers: sql<number>`count(*)::int`,
+      activeUsers: sql<number>`count(*) filter (where ${users.status} = 'active')::int`,
+      verifiedUsers: sql<number>`count(*) filter (where ${users.emailVerified} = true)::int`,
+    })
+    .from(users)
+    .where(eq(users.tenantId, tenantId));
+}
+```
+
+### Pagination
+
+```typescript
+interface PaginatedResult<T> {
+  data: T[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
+async findPaginated(
+  page: number,
+  limit: number,
+  where?: Partial<User>,
+): Promise<PaginatedResult<User>> {
+  const offset = (page - 1) * limit;
+
+  const [data, countResult] = await Promise.all([
+    this.model.findMany({
+      where: where ? this.buildWhereClause(where) : undefined,
+      limit,
+      offset,
+      orderBy: [desc(users.createdAt)],
+    }),
+    this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(users)
+      .where(where ? this.buildWhereClause(where) : undefined),
+  ]);
+
+  const total = Number(countResult[0].count);
+
+  return {
+    data,
+    meta: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
+```
+
+### Search
+
+```typescript
+async searchUsers(query: string, limit = 10): Promise<User[]> {
+  const searchPattern = `%${query}%`;
+
+  return this.db
+    .select()
+    .from(users)
+    .where(
+      or(
+        ilike(users.email, searchPattern),
+        ilike(users.firstName, searchPattern),
+        ilike(users.lastName, searchPattern),
+      ),
+    )
+    .limit(limit);
+}
+```
+
+## Transaction Support
+
+### Using Transactions
+
+```typescript
+// In service
+async transferOwnership(fromUserId: string, toUserId: string): Promise<void> {
+  await this.database.transaction(async (tx) => {
+    // Pass transaction to repository methods
+    await this.assetRepository.updateMany(
+      { ownerId: fromUserId },
+      { ownerId: toUserId },
+      { tx },
+    );
+
+    await this.auditRepository.create({
+      action: 'ownership_transfer',
+      fromUserId,
+      toUserId,
+    }, { tx });
+  });
+}
+
+// Repository method with transaction support
+async updateMany(
+  where: Partial<Asset>,
+  data: Partial<Asset>,
+  options?: { tx?: Transaction },
+): Promise<void> {
+  const db = options?.tx || this.db;
+  await db
+    .update(assets)
+    .set(data)
+    .where(this.buildWhereClause(where));
+}
+```
+
+## Best Practices
+
+<Accordion title="Keep Repositories Focused on Data Access">
+```typescript
+// ✅ Good - data access only
+async findByEmail(email: string) {
+  return this.model.findFirst({
+    where: eq(users.email, email),
+  });
+}
+
+// ❌ Avoid - business logic in repository
+async findByEmailAndValidate(email: string, password: string) {
+  const user = await this.findByEmail(email);
+  if (!user) throw new Error('User not found');
+  if (!bcrypt.compareSync(password, user.passwordHash)) {
+    throw new Error('Invalid password');
+  }
+  return user;
+}
+```
+</Accordion>
+
+<Accordion title="Log Database Operations">
+```typescript
+async create(data: TInsert): Promise<TSelect> {
+  this.logger.debug(`Creating record in ${this.tableName}`);
+  const [result] = await this.db.insert(this.table).values(data).returning();
+  this.logger.debug(`Created record: ${result.id}`);
+  return result as TSelect;
+}
+```
+</Accordion>
+
+<Accordion title="Use Type-Safe Queries">
+```typescript
+// ✅ Good - type-safe with Drizzle
+await this.model.findFirst({
+  where: eq(users.email, email),  // Type checked
+});
+
+// ❌ Avoid - raw SQL without types
+await this.db.execute(
+  sql`SELECT * FROM users WHERE email = ${email}`
+);
+```
+</Accordion>
+
+<Accordion title="Handle Null Results">
+```typescript
+// Always handle null in service layer
+async findById(id: string): Promise<User> {
+  const user = await this.userRepository.findById(id);
+  if (!user) {
+    throw new NotFoundException('user', `User not found`);
+  }
+  return user;
+}
+```
+</Accordion>

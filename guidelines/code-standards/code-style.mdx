@@ -1,0 +1,246 @@
+---
+title: Code Style
+description: BiomeJS configuration and formatting standards across the Vritti codebase
+---
+
+# Code Style
+
+All Vritti projects use **BiomeJS** as the unified linter and formatter. This ensures consistent code style across frontend and backend applications.
+
+## BiomeJS Configuration
+
+BiomeJS serves as a single source of truth for both linting and formatting, replacing the need for separate ESLint and Prettier configurations.
+
+### Core Formatting Rules
+
+| Property | Value | Description |
+|----------|-------|-------------|
+| **Indent Style** | `space` | Use spaces for indentation |
+| **Indent Width** | `2` | Two spaces per indent level |
+| **Line Width** | `120` | Maximum line length |
+| **Quote Style** | `single` | Single quotes for strings |
+| **Trailing Commas** | `all` | Trailing commas everywhere |
+| **Semicolons** | Required | Always use semicolons |
+
+### Standard Configuration
+
+```json title="biome.json"
+{
+  "$schema": "https://biomejs.dev/schemas/2.3.11/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "organizeImports": {
+    "enabled": true
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 120
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "trailingCommas": "all"
+    },
+    "parser": {
+      "unsafeParameterDecoratorsEnabled": true
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "suspicious": {
+        "noExplicitAny": "warn"
+      }
+    }
+  }
+}
+```
+
+## Project-Specific Rules
+
+### Frontend Projects
+
+Frontend applications enable Tailwind CSS directive parsing:
+
+```json title="biome.json (Frontend)"
+{
+  "css": {
+    "parser": {
+      "cssModules": true,
+      "tailwindDirectives": true
+    },
+    "linter": {
+      "enabled": false
+    }
+  }
+}
+```
+
+### Backend API
+
+The API project has additional rules for NestJS patterns:
+
+```json title="biome.json (Backend)"
+{
+  "linter": {
+    "rules": {
+      "recommended": true,
+      "style": {
+        "noNonNullAssertion": "warn",
+        "useImportType": "off"
+      },
+      "suspicious": {
+        "noExplicitAny": "warn"
+      }
+    }
+  }
+}
+```
+
+### Component Library (quantum-ui)
+
+The component library has the most comprehensive configuration with overrides for Storybook and shadcn files:
+
+```json title="biome.json (quantum-ui)"
+{
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    },
+    "linter": {
+      "enabled": true
+    }
+  },
+  "linter": {
+    "rules": {
+      "recommended": true,
+      "suspicious": {
+        "noExplicitAny": "warn",
+        "noArrayIndexKey": "warn"
+      },
+      "correctness": {
+        "useUniqueElementIds": "warn"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["**/*.stories.tsx", "**/*.stories.ts"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "noSvgWithoutTitle": "off",
+            "noLabelWithoutControl": "off",
+            "useButtonType": "off"
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+## Running BiomeJS
+
+### Available Commands
+
+```bash
+# Lint all files
+npm run lint
+
+# Format all files
+npm run format
+
+# Check and auto-fix issues
+npm run check
+```
+
+### Package.json Scripts
+
+```json title="package.json"
+{
+  "scripts": {
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check --write ."
+  }
+}
+```
+
+## Code Examples
+
+### Correct Style
+
+```typescript
+// Single quotes, trailing commas, 2-space indentation
+const config = {
+  setting: 'value',
+  timeout: 5000,
+  options: {
+    retry: true,
+    maxRetries: 3,
+  },
+};
+
+// Arrow functions without parens for single param
+const double = x => x * 2;
+
+// Named exports preferred
+export { UserService, UserRepository };
+```
+
+### Import Organization
+
+BiomeJS automatically organizes imports:
+
+```typescript
+// External dependencies first
+import { Injectable } from '@nestjs/common';
+import { useMutation } from '@tanstack/react-query';
+
+// Internal aliases
+import { UserService } from '@/services/user.service';
+import { formatDate } from '@/utils/date';
+
+// Relative imports last
+import { LoginForm } from './LoginForm';
+```
+
+## BiomeJS Versions
+
+| Project | BiomeJS Version |
+|---------|-----------------|
+| quantum-ui | 2.3.11 |
+| vritti-web-nexus | 2.3.11 |
+| vritti-auth | 2.3.11 |
+| vritti-api-nexus | 2.2.3 |
+| api-sdk | 2.2.3 |
+
+## IDE Integration
+
+### VS Code
+
+Install the [Biome VS Code extension](https://marketplace.visualstudio.com/items?itemName=biomejs.biome) for real-time linting and formatting.
+
+```json title=".vscode/settings.json"
+{
+  "editor.defaultFormatter": "biomejs.biome",
+  "editor.formatOnSave": true,
+  "[typescript]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  }
+}
+```
+
+### WebStorm/IntelliJ
+
+Configure Biome as the default formatter in Preferences → Languages & Frameworks → JavaScript → Code Quality Tools → Biome.

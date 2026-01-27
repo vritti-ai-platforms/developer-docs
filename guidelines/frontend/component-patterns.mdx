@@ -1,0 +1,466 @@
+---
+title: Component Patterns
+description: React component patterns and best practices for Vritti frontend applications
+---
+
+# Component Patterns
+
+All Vritti frontend applications use React 19 with TypeScript. This guide covers the component patterns used across the codebase.
+
+## Functional Components
+
+All components are functional components using hooks. Class components are not used.
+
+### Basic Component Pattern
+
+```typescript
+import type { ReactNode } from 'react';
+
+interface CardProps {
+  title: string;
+  children: ReactNode;
+  className?: string;
+}
+
+export const Card = ({ title, children, className }: CardProps) => {
+  return (
+    <div className={cn('rounded-lg border bg-card p-4', className)}>
+      <h3 className="text-lg font-semibold text-card-foreground">{title}</h3>
+      <div className="mt-2">{children}</div>
+    </div>
+  );
+};
+```
+
+### Component with ForwardRef
+
+```typescript
+import { forwardRef, type ComponentPropsWithoutRef } from 'react';
+
+interface InputProps extends ComponentPropsWithoutRef<'input'> {
+  label?: string;
+  error?: string;
+}
+
+export const Input = forwardRef<HTMLInputElement, InputProps>(
+  ({ label, error, className, ...props }, ref) => {
+    return (
+      <div>
+        {label && <label className="text-sm font-medium">{label}</label>}
+        <input
+          ref={ref}
+          className={cn(
+            'w-full rounded-md border px-3 py-2',
+            error && 'border-destructive',
+            className,
+          )}
+          {...props}
+        />
+        {error && <span className="text-sm text-destructive">{error}</span>}
+      </div>
+    );
+  },
+);
+
+Input.displayName = 'Input';
+```
+
+## Page Components
+
+Page components are the main entry points for routes.
+
+### Basic Page Pattern
+
+```typescript
+// pages/auth/LoginPage.tsx
+import { Typography } from '@vritti/quantum-ui/Typography';
+import { Form } from '@vritti/quantum-ui/Form';
+import { LoginForm } from '@/components/auth/LoginForm';
+
+export const LoginPage: React.FC = () => {
+  return (
+    <div className="space-y-6">
+      <div className="text-center space-y-2">
+        <Typography variant="h3" align="center">
+          Welcome back
+        </Typography>
+        <Typography variant="body2" align="center" intent="muted">
+          Sign in to your Vritti Cloud account
+        </Typography>
+      </div>
+
+      <LoginForm />
+    </div>
+  );
+};
+```
+
+### Page with Data Fetching
+
+```typescript
+// pages/dashboard/DashboardPage.tsx
+import { useQuery } from '@tanstack/react-query';
+import { Loader2 } from 'lucide-react';
+
+export const DashboardPage: React.FC = () => {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['dashboard', 'stats'],
+    queryFn: fetchDashboardStats,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center text-destructive">
+        Failed to load dashboard data
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold">Dashboard</h1>
+      <StatsGrid stats={data} />
+    </div>
+  );
+};
+```
+
+## Compound Components
+
+Complex components use the compound component pattern for flexibility.
+
+### Form Field Example
+
+```typescript
+// quantum-ui Field components
+import { Field, FieldLabel, FieldError, FieldDescription } from '@vritti/quantum-ui/Form';
+
+// Usage
+<Field>
+  <FieldLabel>Email Address</FieldLabel>
+  <Input name="email" placeholder="Enter your email" />
+  <FieldDescription>We'll never share your email</FieldDescription>
+  <FieldError>{errors.email?.message}</FieldError>
+</Field>
+```
+
+### Implementation Pattern
+
+```typescript
+// Context for compound component
+const FieldContext = createContext<{ id: string } | null>(null);
+
+export const Field = ({ children }: { children: ReactNode }) => {
+  const id = useId();
+
+  return (
+    <FieldContext.Provider value={{ id }}>
+      <div className="space-y-1.5">{children}</div>
+    </FieldContext.Provider>
+  );
+};
+
+export const FieldLabel = ({ children }: { children: ReactNode }) => {
+  const context = useContext(FieldContext);
+
+  return (
+    <label htmlFor={context?.id} className="text-sm font-medium">
+      {children}
+    </label>
+  );
+};
+```
+
+## Component Composition
+
+### Higher-Order Components (HOC) Alternative
+
+Instead of HOCs, use hooks and composition:
+
+```typescript
+// Instead of withAuth HOC, use a hook
+export const useRequireAuth = () => {
+  const navigate = useNavigate();
+  const { user, isLoading } = useUser();
+
+  useEffect(() => {
+    if (!isLoading && !user) {
+      navigate('/login', { replace: true });
+    }
+  }, [user, isLoading, navigate]);
+
+  return { user, isLoading };
+};
+
+// Usage in component
+export const ProtectedPage = () => {
+  const { user, isLoading } = useRequireAuth();
+
+  if (isLoading) return <LoadingSpinner />;
+  if (!user) return null;
+
+  return <div>Protected content for {user.email}</div>;
+};
+```
+
+### Render Props Pattern
+
+```typescript
+interface DataLoaderProps<T> {
+  queryKey: string[];
+  queryFn: () => Promise<T>;
+  children: (data: T) => ReactNode;
+  loadingComponent?: ReactNode;
+  errorComponent?: ReactNode;
+}
+
+export function DataLoader<T>({
+  queryKey,
+  queryFn,
+  children,
+  loadingComponent = <Loader2 className="animate-spin" />,
+  errorComponent = <span className="text-destructive">Error loading data</span>,
+}: DataLoaderProps<T>) {
+  const { data, isLoading, error } = useQuery({ queryKey, queryFn });
+
+  if (isLoading) return loadingComponent;
+  if (error) return errorComponent;
+  if (!data) return null;
+
+  return children(data);
+}
+
+// Usage
+<DataLoader queryKey={['user', userId]} queryFn={() => fetchUser(userId)}>
+  {(user) => <UserProfile user={user} />}
+</DataLoader>
+```
+
+## Provider Patterns
+
+### Context Provider
+
+```typescript
+// context/OnboardingProvider.tsx
+interface OnboardingContextType {
+  currentStep: OnboardingStep;
+  completedSteps: OnboardingStep[];
+  isLoading: boolean;
+  error: string | null;
+  refetch: () => Promise<void>;
+}
+
+const OnboardingContext = createContext<OnboardingContextType | null>(null);
+
+export const OnboardingProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['onboarding', 'status'],
+    queryFn: fetchOnboardingStatus,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const value: OnboardingContextType = {
+    currentStep: data?.currentStep ?? 'EMAIL_VERIFICATION',
+    completedSteps: data?.completedSteps ?? [],
+    isLoading,
+    error: error?.message ?? null,
+    refetch: async () => { await refetch(); },
+  };
+
+  return (
+    <OnboardingContext.Provider value={value}>
+      {children}
+    </OnboardingContext.Provider>
+  );
+};
+
+// Custom hook for consuming context
+export const useOnboarding = (): OnboardingContextType => {
+  const context = useContext(OnboardingContext);
+  if (!context) {
+    throw new Error('useOnboarding must be used within OnboardingProvider');
+  }
+  return context;
+};
+```
+
+### Multiple Providers Pattern
+
+```typescript
+// App.tsx - Provider composition
+const App = () => {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <ConfigProvider config={appConfig}>
+          <AuthProvider>
+            <AppRoutes />
+          </AuthProvider>
+        </ConfigProvider>
+      </BrowserRouter>
+      <Toaster position="bottom-right" />
+    </QueryClientProvider>
+  );
+};
+```
+
+## Smart Form Component
+
+The quantum-ui Form component demonstrates advanced patterns:
+
+```typescript
+// Simplified version of Form component
+interface FormProps<TFieldValues extends FieldValues> {
+  form: UseFormReturn<TFieldValues>;
+  onSubmit?: (data: TFieldValues) => void | Promise<void>;
+  mutation?: UseMutationResult<unknown, Error, TFieldValues>;
+  children: ReactNode;
+}
+
+export function Form<TFieldValues extends FieldValues>({
+  form,
+  onSubmit,
+  mutation,
+  children,
+}: FormProps<TFieldValues>) {
+  const isSubmitting = form.formState.isSubmitting || mutation?.isPending;
+
+  const handleSubmit = form.handleSubmit(async (data) => {
+    try {
+      if (mutation) {
+        await mutation.mutateAsync(data);
+      } else if (onSubmit) {
+        await onSubmit(data);
+      }
+    } catch (error) {
+      mapApiErrorsToForm(error, form);
+    }
+  });
+
+  // Auto-inject control into field components
+  const processedChildren = processChildren(children, form.control, isSubmitting);
+
+  return (
+    <FormProvider {...form}>
+      <form onSubmit={handleSubmit}>{processedChildren}</form>
+    </FormProvider>
+  );
+}
+```
+
+## Conditional Rendering Patterns
+
+### Loading States
+
+```typescript
+const UserProfile = () => {
+  const { data: user, isLoading, error } = useUser();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[200px]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center p-4 text-destructive">
+        <p>Failed to load profile</p>
+        <button onClick={() => refetch()}>Retry</button>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <ProfileCard user={user} />;
+};
+```
+
+### Feature Flags
+
+```typescript
+interface FeatureProps {
+  flag: string;
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+const Feature = ({ flag, children, fallback = null }: FeatureProps) => {
+  const { isEnabled } = useFeatureFlag(flag);
+  return isEnabled ? children : fallback;
+};
+
+// Usage
+<Feature flag="new-dashboard" fallback={<OldDashboard />}>
+  <NewDashboard />
+</Feature>
+```
+
+## Best Practices
+
+<Accordion title="Keep Components Small and Focused">
+Each component should do one thing well. Extract sub-components when a component grows beyond ~100 lines.
+
+```typescript
+// Good: Separate concerns
+<LoginPage>
+  <LoginHeader />
+  <LoginForm />
+  <SocialAuthButtons />
+  <LoginFooter />
+</LoginPage>
+
+// Avoid: Monolithic component with everything inline
+```
+</Accordion>
+
+<Accordion title="Use Design Tokens, Not Hardcoded Colors">
+Always use semantic design tokens from the design system:
+
+```typescript
+// Good
+<div className="bg-primary text-primary-foreground" />
+<div className="border-destructive text-destructive" />
+
+// Bad - never hardcode colors
+<div className="bg-[#3b82f6] text-white" />
+```
+</Accordion>
+
+<Accordion title="Direct Component Imports">
+Import quantum-ui components directly, not from barrel exports:
+
+```typescript
+// Good - direct import
+import { Button } from '@vritti/quantum-ui/Button';
+import { TextField } from '@vritti/quantum-ui/TextField';
+
+// Bad - barrel import (causes bundle bloat)
+import { Button, TextField } from '@vritti/quantum-ui';
+```
+</Accordion>
+
+<Accordion title="Co-locate Related Files">
+Keep component files together:
+
+```
+Button/
+├── Button.tsx
+├── Button.stories.tsx
+├── Button.test.tsx
+└── index.ts
+```
+</Accordion>

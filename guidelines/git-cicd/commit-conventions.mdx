@@ -1,0 +1,382 @@
+---
+title: "Commit Message Conventions"
+description: "Guidelines for writing clear, consistent commit messages in the Vritti monorepo using Conventional Commits format"
+---
+
+# Commit Message Conventions
+
+The Vritti monorepo follows [Conventional Commits](https://www.conventionalcommits.org/) specification for all commit messages. This ensures a readable history, enables automated changelog generation, and makes it easier to understand the impact of changes across our projects.
+
+<Note>
+While we don't currently enforce commitlint, we rely on developer discipline to maintain consistent commit messages. Please review these guidelines before committing.
+</Note>
+
+## Commit Message Format
+
+Every commit message should follow this structure:
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+### Basic Examples
+
+```bash
+feat(web): add user profile avatar upload
+fix(api): resolve race condition in payment processing
+docs: update README with new setup instructions
+chore(ui): upgrade React to v19
+```
+
+## Commit Types
+
+Use the appropriate type to categorize your changes:
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `feat` | A new feature or functionality | `feat(auth): add OAuth2 Google login` |
+| `fix` | A bug fix | `fix(api): correct null pointer in user service` |
+| `docs` | Documentation changes only | `docs(sdk): add API reference for auth module` |
+| `style` | Code style changes (formatting, whitespace) | `style(web): apply Biome formatting rules` |
+| `refactor` | Code changes that neither fix bugs nor add features | `refactor(api): extract payment logic to service` |
+| `perf` | Performance improvements | `perf(web): lazy load dashboard components` |
+| `test` | Adding or updating tests | `test(auth): add unit tests for JWT validation` |
+| `build` | Changes to build system or dependencies | `build(ui): configure Vite for library mode` |
+| `ci` | CI/CD configuration changes | `ci: add staging deployment workflow` |
+| `chore` | Maintenance tasks, tooling, configs | `chore: update TypeScript to 5.4` |
+
+<Accordion title="Choosing the Right Type">
+**When in doubt, ask yourself:**
+
+- Does this add new functionality? → `feat`
+- Does this fix something broken? → `fix`
+- Does this change how code works without changing behavior? → `refactor`
+- Does this only affect tests? → `test`
+- Does this improve speed/efficiency? → `perf`
+- Does this only change documentation? → `docs`
+- Does this only change formatting? → `style`
+- Does this update dependencies or tooling? → `chore` or `build`
+- Does this change CI/CD pipelines? → `ci`
+</Accordion>
+
+## Scope Conventions
+
+Scopes help identify which part of the monorepo is affected. Use lowercase, hyphenated names:
+
+| Scope | Project/Area | Examples |
+|-------|--------------|----------|
+| `api` | vritti-api-nexus (backend services) | `fix(api): handle timeout in search endpoint` |
+| `web` | vritti-web-nexus (main web app) | `feat(web): add dark mode toggle` |
+| `ui` | quantum-ui (component library) | `feat(ui): create DatePicker component` |
+| `auth` | Authentication services | `fix(auth): refresh token rotation logic` |
+| `sdk` | Client SDKs | `feat(sdk): add TypeScript type exports` |
+| `db` | Database migrations/schema | `chore(db): add index on users.email` |
+| `infra` | Infrastructure/deployment | `chore(infra): update Kubernetes configs` |
+| `shared` | Shared utilities/packages | `refactor(shared): extract validation utils` |
+
+### Multiple Scopes
+
+For changes spanning multiple areas, either:
+
+1. **Prefer the primary scope** - Use the most significant area affected
+2. **Omit scope entirely** - For truly cross-cutting changes
+3. **Create separate commits** - If changes are logically distinct
+
+```bash
+# Cross-cutting change - omit scope
+chore: upgrade TypeScript across all packages
+
+# Or be specific about the primary impact
+feat(api): add user preferences with web integration
+```
+
+## Writing Good Descriptions
+
+The description should be clear, concise, and written in **imperative mood** (like giving a command).
+
+### Use Imperative Mood
+
+Write as if completing the sentence: "If applied, this commit will..."
+
+| Good (Imperative) | Bad (Not Imperative) |
+|-------------------|----------------------|
+| `add user authentication` | `added user authentication` |
+| `fix memory leak in worker` | `fixes memory leak in worker` |
+| `remove deprecated API` | `removing deprecated API` |
+| `update dependencies` | `updated dependencies` |
+
+### Keep It Concise
+
+- Limit the subject line to 72 characters
+- Don't end with a period
+- Start with lowercase after the colon
+
+<Accordion title="Good vs Bad Commit Messages">
+
+**Good Examples:**
+
+```bash
+feat(web): add keyboard shortcuts for navigation
+fix(api): prevent duplicate order submissions
+refactor(auth): simplify token validation logic
+perf(ui): memoize expensive table calculations
+docs(sdk): add examples for batch operations
+test(api): add integration tests for payment flow
+chore(web): remove unused lodash dependency
+```
+
+**Bad Examples:**
+
+```bash
+# Too vague
+fix: bug fix
+feat: updates
+chore: stuff
+
+# Not imperative mood
+feat(web): added new feature
+fix(api): fixed the bug
+
+# Too long
+feat(web): add a new comprehensive user dashboard with widgets for analytics, notifications, recent activity, and quick actions that users can customize
+
+# Missing type
+add login page
+
+# Wrong capitalization
+Feat(Web): Add login page
+FEAT(API): ADD ENDPOINT
+
+# Ends with period
+fix(auth): correct token refresh.
+```
+</Accordion>
+
+## Breaking Changes
+
+Breaking changes require special attention. Use one of these formats:
+
+### Option 1: Exclamation Mark
+
+Add `!` after the type/scope:
+
+```bash
+feat(api)!: change authentication response format
+refactor(sdk)!: rename exported functions
+```
+
+### Option 2: Footer Notation
+
+Add a `BREAKING CHANGE:` footer in the commit body:
+
+```bash
+feat(api): migrate to v2 authentication
+
+BREAKING CHANGE: The /auth/login endpoint now returns a different
+response structure. The token is now nested under `data.accessToken`
+instead of `token`.
+```
+
+### Option 3: Both (Recommended for Major Changes)
+
+```bash
+feat(api)!: redesign user API response format
+
+Restructure all user-related endpoints to follow new API standards.
+
+BREAKING CHANGE: All user endpoints now return data wrapped in a
+`data` object. The `user` field is renamed to `profile`. Clients
+must update their response parsing logic.
+
+Migration guide: https://docs.vritti.dev/migration/v3-users
+```
+
+## Multi-line Commit Bodies
+
+For complex changes, add a body separated by a blank line:
+
+```bash
+refactor(api): restructure order processing pipeline
+
+- Extract validation into separate middleware
+- Add retry logic for payment gateway calls
+- Implement circuit breaker pattern for external services
+- Move email notifications to async queue
+
+This change improves reliability and makes the codebase
+easier to test and maintain.
+```
+
+### When to Use a Body
+
+- Explaining **why** a change was made (not just what)
+- Documenting trade-offs or alternative approaches considered
+- Providing context for reviewers
+- Listing multiple related changes in one commit
+
+<Accordion title="Body Formatting Tips">
+- Separate subject from body with a blank line
+- Wrap body text at 72 characters
+- Use bullet points for lists
+- Focus on the "why" more than the "what"
+- Reference relevant documentation or discussions
+</Accordion>
+
+## Linking Issues and PRs
+
+Reference related issues and pull requests in the footer:
+
+```bash
+fix(api): resolve timeout in search endpoint
+
+The search endpoint was timing out for queries with more than
+1000 results due to inefficient pagination.
+
+Fixes #234
+See also: #220, #228
+```
+
+### Common Reference Keywords
+
+| Keyword | Effect |
+|---------|--------|
+| `Fixes #123` | Closes issue when merged |
+| `Closes #123` | Closes issue when merged |
+| `Resolves #123` | Closes issue when merged |
+| `Refs #123` | References without closing |
+| `See #123` | References without closing |
+| `Related to #123` | References without closing |
+
+### Multiple References
+
+```bash
+feat(web): implement user preferences panel
+
+Add ability for users to customize their dashboard layout,
+notification settings, and theme preferences.
+
+Fixes #156
+Fixes #189
+Refs #142
+Co-authored-by: Jane Doe <jane@example.com>
+```
+
+## Complete Examples
+
+### Simple Feature
+
+```bash
+feat(ui): add Tooltip component
+```
+
+### Bug Fix with Context
+
+```bash
+fix(api): handle null user in profile endpoint
+
+The endpoint was throwing 500 errors when fetching profiles
+for deleted users. Now returns 404 with appropriate message.
+
+Fixes #312
+```
+
+### Refactoring with Details
+
+```bash
+refactor(web): migrate state management to Zustand
+
+Replace Redux with Zustand for simpler state management:
+- Remove Redux boilerplate (actions, reducers, selectors)
+- Convert stores to Zustand slices
+- Update component connections
+- Remove redux-toolkit dependency
+
+Bundle size reduced by 23KB.
+
+Refs #401
+```
+
+### Breaking Change
+
+```bash
+feat(sdk)!: redesign authentication API
+
+Simplify the authentication flow with a more intuitive API.
+
+Before:
+  const auth = new VrittiAuth(config);
+  await auth.initialize();
+  const token = await auth.getToken(credentials);
+
+After:
+  const client = createVrittiClient(config);
+  const { token } = await client.auth.login(credentials);
+
+BREAKING CHANGE: VrittiAuth class is removed. Use createVrittiClient()
+factory function instead. See migration guide for details.
+
+Migration: https://docs.vritti.dev/sdk/v4-migration
+Fixes #523
+```
+
+### CI/Build Change
+
+```bash
+ci: add automated dependency updates
+
+Configure Renovate to:
+- Check for updates weekly
+- Auto-merge patch updates
+- Create PRs for minor/major updates
+- Group related packages
+
+Refs #445
+```
+
+## Quick Reference
+
+```bash
+# Feature
+feat(scope): add something new
+
+# Bug fix
+fix(scope): correct something broken
+
+# Documentation
+docs(scope): update something in docs
+
+# Refactor
+refactor(scope): restructure without behavior change
+
+# Performance
+perf(scope): improve performance of something
+
+# Tests
+test(scope): add or update tests
+
+# Chore/Maintenance
+chore(scope): update tooling or dependencies
+
+# Breaking change
+feat(scope)!: change that breaks compatibility
+
+# With body and footer
+type(scope): subject line
+
+Optional body explaining the change in more detail.
+
+Fixes #123
+```
+
+<Tip>
+**Before committing, ask yourself:**
+1. Is the type correct for this change?
+2. Is the scope appropriate for the affected area?
+3. Is the description clear and in imperative mood?
+4. Should I add a body to explain the "why"?
+5. Are there related issues to reference?
+</Tip>

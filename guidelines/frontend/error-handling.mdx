@@ -1,0 +1,511 @@
+---
+title: Error Handling (Frontend)
+description: Error handling patterns for React applications with axios and TanStack Query
+---
+
+# Error Handling (Frontend)
+
+Vritti implements comprehensive error handling at multiple levels: API interceptors, form components, and UI feedback. This guide covers the patterns used.
+
+## API Error Response Format
+
+The backend uses RFC 7807 Problem Details format:
+
+```typescript
+interface ApiErrorResponse {
+  title: string;      // HTTP status text
+  status: number;     // HTTP status code
+  detail?: string;    // Human-readable explanation
+  errors: FieldError[];  // Field-specific errors
+}
+
+interface FieldError {
+  field?: string;     // Form field name (optional)
+  message: string;    // Error message
+}
+```
+
+Example responses:
+
+```json
+// Validation error (400)
+{
+  "title": "Bad Request",
+  "status": 400,
+  "detail": "Please check your input",
+  "errors": [
+    { "field": "email", "message": "Email already registered" },
+    { "field": "password", "message": "Password too weak" }
+  ]
+}
+
+// Server error (500)
+{
+  "title": "Internal Server Error",
+  "status": 500,
+  "detail": "Something went wrong. Please try again.",
+  "errors": [
+    { "message": "Database connection failed" }
+  ]
+}
+```
+
+## Axios Interceptors
+
+### Response Interceptor
+
+```typescript
+// utils/axios.ts
+axios.interceptors.response.use(
+  // Success handler
+  (response) => {
+    const config = response.config;
+    const method = config.method?.toUpperCase();
+    const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method || '');
+
+    // Show success toast for mutations
+    const showSuccess = config.showSuccessToast ?? isMutation;
+    if (showSuccess) {
+      const message = config.successMessage || response.data?.message;
+      if (message) {
+        toast.success(message);
+      }
+    }
+
+    return response;
+  },
+
+  // Error handler
+  (error: AxiosError<ApiErrorResponse>) => {
+    const config = error.config;
+    const status = error.response?.status;
+    const errorData = error.response?.data;
+    const showError = config?.showErrorToast ?? true;
+
+    // Handle 401 - redirect to login
+    if (status === 401) {
+      clearToken();
+      redirectToLogin();
+      return Promise.reject(error);
+    }
+
+    // Show toast for server errors (5xx)
+    if (showError && status && status >= 500) {
+      toast.error('Server Error', {
+        description: errorData?.detail || 'Something went wrong',
+      });
+    }
+
+    // Show toast for network errors
+    if (showError && !error.response) {
+      toast.error('Network Error', {
+        description: 'Please check your internet connection',
+      });
+    }
+
+    return Promise.reject(error);
+  },
+);
+```
+
+### Request Configuration Options
+
+```typescript
+// Extend axios config types
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    showSuccessToast?: boolean;
+    showErrorToast?: boolean;
+    successMessage?: string;
+    public?: boolean;  // Skip auth recovery
+  }
+}
+
+// Usage
+axios.post('/users', data, {
+  showSuccessToast: true,
+  successMessage: 'User created successfully',
+  showErrorToast: false,  // Handle errors manually
+});
+```
+
+## Form Error Mapping
+
+### Automatic Mapping
+
+The quantum-ui Form component automatically maps API errors to form fields:
+
+```typescript
+import { Form } from '@vritti/quantum-ui/Form';
+
+<Form
+  form={form}
+  mutation={mutation}
+  showRootError={true}        // Show non-field errors
+  rootErrorPosition="bottom"  // 'top' | 'bottom'
+>
+  <TextField name="email" />  {/* API error auto-mapped */}
+  <TextField name="password" />
+</Form>
+```
+
+### Manual Mapping
+
+```typescript
+import { mapApiErrorsToForm } from '@vritti/quantum-ui/utils';
+
+const onSubmit = async (data: FormData) => {
+  try {
+    await api.post('/register', data);
+  } catch (error) {
+    mapApiErrorsToForm(error, form, {
+      fieldMapping: {
+        'user.email': 'email',      // API field → form field
+        'user.phone': 'phoneNumber',
+      },
+      setRootError: true,  // Set form root error for general messages
+    });
+  }
+};
+```
+
+### Implementation
+
+```typescript
+// utils/formHelpers.ts
+export function mapApiErrorsToForm<TFieldValues extends FieldValues>(
+  error: unknown,
+  form: UseFormReturn<TFieldValues>,
+  options: { fieldMapping?: Record<string, string>; setRootError?: boolean } = {},
+): void {
+  const { fieldMapping = {}, setRootError = true } = options;
+
+  // Extract error data from axios response
+  const errorData = (error as any)?.response?.data || error;
+  const apiError = errorData as ApiErrorResponse;
+
+  let hasFieldErrors = false;
+
+  // Map field-specific errors
+  if (apiError.errors && Array.isArray(apiError.errors)) {
+    for (const errorItem of apiError.errors) {
+      if (errorItem.field) {
+        const formField = fieldMapping[errorItem.field] || errorItem.field;
+
+        form.setError(formField as any, {
+          type: 'manual',
+          message: errorItem.message,
+        });
+        hasFieldErrors = true;
+      } else if (errorItem.message && setRootError) {
+        // Error without field goes to root
+        form.setError('root', {
+          type: 'manual',
+          message: errorItem.message,
+        });
+      }
+    }
+  }
+
+  // Set root error if no field errors
+  if (!hasFieldErrors && apiError.detail && setRootError) {
+    form.setError('root', {
+      type: 'manual',
+      message: apiError.detail,
+    });
+  }
+}
+```
+
+## Query Error Handling
+
+### Error Boundaries
+
+```typescript
+import { QueryErrorResetBoundary } from '@tanstack/react-query';
+import { ErrorBoundary } from 'react-error-boundary';
+
+const App = () => (
+  <QueryErrorResetBoundary>
+    {({ reset }) => (
+      <ErrorBoundary
+        onReset={reset}
+        fallbackRender={({ error, resetErrorBoundary }) => (
+          <div className="p-4 text-center">
+            <p className="text-destructive">Something went wrong</p>
+            <p className="text-sm text-muted-foreground">{error.message}</p>
+            <Button onClick={resetErrorBoundary}>Try again</Button>
+          </div>
+        )}
+      >
+        <AppRoutes />
+      </ErrorBoundary>
+    )}
+  </QueryErrorResetBoundary>
+);
+```
+
+### Query-Level Error Handling
+
+```typescript
+const { data, error, isError, refetch } = useQuery({
+  queryKey: ['user', userId],
+  queryFn: fetchUser,
+  retry: (failureCount, error) => {
+    // Don't retry on 4xx errors
+    if (error.response?.status && error.response.status < 500) {
+      return false;
+    }
+    return failureCount < 3;
+  },
+});
+
+if (isError) {
+  return (
+    <div className="text-center p-4">
+      <AlertCircle className="h-8 w-8 text-destructive mx-auto" />
+      <p className="mt-2 text-destructive">{error.message}</p>
+      <Button onClick={() => refetch()} className="mt-4">
+        Retry
+      </Button>
+    </div>
+  );
+}
+```
+
+### Mutation Error Handling
+
+```typescript
+const mutation = useMutation({
+  mutationFn: createUser,
+  onError: (error: AxiosError<ApiErrorResponse>) => {
+    const status = error.response?.status;
+    const detail = error.response?.data?.detail;
+
+    // Handle specific error cases
+    if (status === 409) {
+      toast.error('User already exists');
+      return;
+    }
+
+    if (status === 403) {
+      toast.error('Permission denied');
+      navigate('/unauthorized');
+      return;
+    }
+
+    // Generic error toast
+    toast.error(detail || 'Failed to create user');
+  },
+});
+```
+
+## Authentication Errors
+
+### Token Recovery
+
+```typescript
+// Auto-recover session on 401
+export async function recoverToken(): Promise<{ success: boolean; expiresIn: number }> {
+  try {
+    const response = await axios.get('/auth/token', {
+      withCredentials: true,  // Send httpOnly cookie
+    });
+
+    if (response.data.accessToken) {
+      setToken(response.data.accessToken);
+      return { success: true, expiresIn: response.data.expiresIn };
+    }
+
+    return { success: false, expiresIn: 0 };
+  } catch {
+    clearToken();
+    return { success: false, expiresIn: 0 };
+  }
+}
+```
+
+### Session Expiry Handling
+
+```typescript
+// Schedule proactive token refresh at 80% of lifetime
+export function scheduleTokenRefresh(expiresIn: number): void {
+  cancelTokenRefresh();
+
+  const refreshAt = expiresIn * 0.8 * 1000;
+
+  refreshTimer = setTimeout(async () => {
+    try {
+      const response = await axios.post('/auth/refresh', {}, {
+        withCredentials: true,
+      });
+
+      if (response.data.accessToken) {
+        setToken(response.data.accessToken);
+        scheduleTokenRefresh(response.data.expiresIn);
+      }
+    } catch {
+      clearToken();
+      redirectToLogin();
+    }
+  }, refreshAt);
+}
+```
+
+## Toast Notifications
+
+### Sonner Integration
+
+```typescript
+import { toast } from 'sonner';
+
+// Success toast
+toast.success('User created successfully');
+
+// Error toast
+toast.error('Failed to save', {
+  description: 'Please try again later',
+});
+
+// Loading toast
+const toastId = toast.loading('Saving...');
+// Update later
+toast.success('Saved!', { id: toastId });
+// Or error
+toast.error('Failed', { id: toastId });
+
+// Custom toast
+toast('Custom message', {
+  action: {
+    label: 'Undo',
+    onClick: () => undoAction(),
+  },
+});
+```
+
+### Toast in Axios Interceptor
+
+```typescript
+axios.interceptors.request.use((config) => {
+  // Show loading toast for mutations
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(config.method?.toUpperCase() || '')) {
+    const toastId = toast.loading('Processing...');
+    (config as any)._toastId = toastId;
+  }
+  return config;
+});
+
+axios.interceptors.response.use(
+  (response) => {
+    const toastId = (response.config as any)._toastId;
+    if (toastId) {
+      const message = response.data?.message || 'Done';
+      toast.success(message, { id: toastId });
+    }
+    return response;
+  },
+  (error) => {
+    const toastId = (error.config as any)?._toastId;
+    if (toastId) {
+      const message = error.response?.data?.detail || 'Request failed';
+      toast.error(message, { id: toastId });
+    }
+    return Promise.reject(error);
+  },
+);
+```
+
+## Component Error States
+
+### Loading and Error Pattern
+
+```typescript
+const DataComponent = () => {
+  const { data, isLoading, isError, error, refetch } = useData();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="p-4 border border-destructive/20 rounded-lg bg-destructive/5">
+        <div className="flex items-center gap-2 text-destructive">
+          <AlertCircle className="h-5 w-5" />
+          <span className="font-medium">Failed to load data</span>
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {error.message}
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => refetch()}
+          className="mt-3"
+        >
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
+  return <DataDisplay data={data} />;
+};
+```
+
+## Best Practices
+
+<Accordion title="Don't Swallow Errors">
+Always provide feedback for errors:
+
+```typescript
+// ✅ Good - show error state
+if (error) {
+  return <ErrorMessage error={error} onRetry={refetch} />;
+}
+
+// ❌ Avoid - silent failure
+if (error) {
+  return null;
+}
+```
+</Accordion>
+
+<Accordion title="Use Toast for Background Operations">
+Use toast for operations that don't block UI:
+
+```typescript
+// ✅ Good - toast for async operation
+mutation.mutate(data, {
+  onSuccess: () => toast.success('Saved'),
+  onError: () => toast.error('Failed to save'),
+});
+
+// ❌ Avoid - alert for async operation
+mutation.mutate(data, {
+  onError: () => alert('Failed to save'),
+});
+```
+</Accordion>
+
+<Accordion title="Handle Network Errors Gracefully">
+```typescript
+if (!error.response) {
+  // Network error - no response from server
+  toast.error('Connection failed', {
+    description: 'Please check your internet connection',
+  });
+} else if (error.response.status >= 500) {
+  // Server error
+  toast.error('Server error', {
+    description: 'Please try again later',
+  });
+} else {
+  // Client error - let form handle field errors
+}
+```
+</Accordion>

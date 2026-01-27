@@ -1,0 +1,330 @@
+---
+title: Naming Conventions
+description: Standard naming patterns for files, variables, and components across Vritti projects
+---
+
+# Naming Conventions
+
+Consistent naming conventions improve code readability and maintainability. This guide covers the naming standards used across the Vritti codebase.
+
+## File Naming
+
+### React Components
+
+```
+PascalCase.tsx
+```
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| Component | `ComponentName.tsx` | `LoginPage.tsx`, `UserCard.tsx` |
+| Stories | `ComponentName.stories.tsx` | `Button.stories.tsx` |
+| Test | `ComponentName.test.tsx` | `LoginPage.test.tsx` |
+| Index | `index.ts` | Barrel exports |
+
+### NestJS Backend
+
+```
+kebab-case.suffix.ts
+```
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| Module | `feature.module.ts` | `user.module.ts` |
+| Controller | `feature.controller.ts` | `user.controller.ts` |
+| Service | `feature.service.ts` | `user.service.ts` |
+| Repository | `feature.repository.ts` | `user.repository.ts` |
+| DTO | `action-feature.dto.ts` | `create-user.dto.ts` |
+| Entity | `feature.entity.ts` | `user.entity.ts` |
+| Guard | `feature.guard.ts` | `auth.guard.ts` |
+| Interceptor | `feature.interceptor.ts` | `logging.interceptor.ts` |
+| Filter | `feature.filter.ts` | `http-exception.filter.ts` |
+| Test | `feature.spec.ts` | `user.service.spec.ts` |
+
+### Utilities and Hooks
+
+```
+camelCase.ts
+```
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| Hook | `useFeature.ts` | `useLogin.ts`, `useUser.ts` |
+| Utility | `featureName.ts` | `formatDate.ts`, `axios.ts` |
+| Schema | `feature.ts` (in schemas/) | `auth.ts`, `user.ts` |
+| Types | `feature.types.ts` | `error-response.types.ts` |
+
+## Variable Naming
+
+### Case Conventions
+
+```typescript
+// camelCase for variables and functions
+const userName = 'John';
+const getUserById = (id: string) => {};
+
+// PascalCase for classes and components
+class UserService {}
+const LoginPage: React.FC = () => {};
+
+// UPPER_SNAKE_CASE for constants
+const MAX_RETRY_COUNT = 3;
+const API_BASE_URL = '/api';
+
+// camelCase for enum values (modern preference)
+enum UserRole {
+  admin = 'admin',
+  member = 'member',
+  guest = 'guest',
+}
+```
+
+### Boolean Variables
+
+```typescript
+// Prefix with is, has, should, can
+const isLoading = true;
+const hasPermission = false;
+const shouldRefetch = true;
+const canEdit = user.role === 'admin';
+
+// For component props
+interface ButtonProps {
+  isDisabled?: boolean;
+  isLoading?: boolean;
+  hasIcon?: boolean;
+}
+```
+
+### Event Handlers
+
+```typescript
+// Prefix with handle or on
+// handle* for internal handlers
+const handleSubmit = (e: FormEvent) => {};
+const handleClick = () => {};
+
+// on* for props that accept callbacks
+interface FormProps {
+  onSubmit: (data: FormData) => void;
+  onChange: (value: string) => void;
+  onError?: (error: Error) => void;
+}
+```
+
+### Collections
+
+```typescript
+// Plural for arrays/collections
+const users: User[] = [];
+const selectedItems: Item[] = [];
+
+// Singular for single items
+const user = users[0];
+const currentItem = selectedItems.find(i => i.active);
+
+// Map/Set naming
+const userById = new Map<string, User>();
+const uniqueEmails = new Set<string>();
+```
+
+## Component Naming
+
+### React Components
+
+```typescript
+// Component names match file names (PascalCase)
+// File: LoginPage.tsx
+export const LoginPage: React.FC = () => {};
+
+// File: UserCard.tsx
+export const UserCard: React.FC<UserCardProps> = () => {};
+
+// Sub-components use parent prefix
+// File: UserCard.tsx
+export const UserCard = () => {};
+export const UserCardHeader = () => {};
+export const UserCardBody = () => {};
+```
+
+### Props Interface
+
+```typescript
+// ComponentNameProps pattern
+interface UserCardProps {
+  user: User;
+  onSelect?: (user: User) => void;
+}
+
+// Extending HTML element props
+interface ButtonProps extends React.ComponentPropsWithoutRef<'button'> {
+  variant?: 'primary' | 'secondary';
+}
+```
+
+## NestJS Naming
+
+### Classes
+
+```typescript
+// Service
+@Injectable()
+export class UserService {}
+export class AuthService {}
+export class TenantDatabaseConfigService {}
+
+// Repository
+@Injectable()
+export class UserRepository extends PrimaryBaseRepository<typeof users> {}
+
+// Controller
+@Controller('users')
+export class UserController {}
+
+// Module
+@Module({})
+export class UserModule {}
+```
+
+### DTO Classes
+
+```typescript
+// Action + Entity + Dto pattern
+export class CreateUserDto {}
+export class UpdateUserDto {}
+export class LoginDto {}
+export class SignupDto {}
+
+// Response DTOs
+export class UserResponseDto {}
+export class TenantResponseDto {}
+export class LoginResponseDto {}
+```
+
+### Exception Classes
+
+```typescript
+// HttpStatus + Exception pattern
+export class BadRequestException extends BaseFieldException {}
+export class NotFoundException extends BaseFieldException {}
+export class ConflictException extends BaseFieldException {}
+export class UnauthorizedException extends BaseFieldException {}
+```
+
+## Database Naming
+
+### Drizzle Schema
+
+```typescript
+// Table names: snake_case, plural
+export const users = pgTable('users', {
+  id: uuid('id').primaryKey(),
+  // Column names: snake_case
+  firstName: varchar('first_name', { length: 100 }),
+  lastName: varchar('last_name', { length: 100 }),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
+// Junction tables: entity1_entity2
+export const userRoles = pgTable('user_roles', {});
+export const tenantUsers = pgTable('tenant_users', {});
+```
+
+### TypeScript Property Names
+
+```typescript
+// Use camelCase in TypeScript (Drizzle handles conversion)
+interface User {
+  id: string;
+  firstName: string;  // Maps to first_name column
+  lastName: string;   // Maps to last_name column
+  createdAt: Date;    // Maps to created_at column
+}
+```
+
+## Path Aliases
+
+### Standard Aliases
+
+```typescript
+// All projects use @/* for source root
+import { UserService } from '@/services/user.service';
+import { Button } from '@/components/Button';
+
+// Backend additional aliases
+import { users } from '@/db/schema';
+import { UserModel } from '@/generated/models';
+
+// quantum-ui aliases
+import { cn } from '@/utils/cn';
+import { Button } from '@shadcn/button';
+```
+
+## API Routes
+
+### REST Endpoints
+
+```
+/resource (plural noun)
+/resource/:id
+/resource/:id/sub-resource
+```
+
+| Method | Pattern | Example |
+|--------|---------|---------|
+| GET all | `/users` | List users |
+| GET one | `/users/:id` | Get user by ID |
+| POST | `/users` | Create user |
+| PATCH | `/users/:id` | Update user |
+| DELETE | `/users/:id` | Delete user |
+| Nested | `/tenants/:id/users` | Users in tenant |
+
+### Authentication Routes
+
+```
+/auth/login
+/auth/signup
+/auth/logout
+/auth/refresh
+/auth/verify-email
+/auth/forgot-password
+/auth/reset-password
+```
+
+## Environment Variables
+
+```bash
+# UPPER_SNAKE_CASE
+DATABASE_URL=postgresql://...
+JWT_SECRET=your-secret
+API_BASE_URL=https://api.example.com
+
+# Prefixed by service/feature
+LOG_PROVIDER=winston
+LOG_TO_FILE=false
+LOG_FILE_PATH=./logs
+
+# OAuth providers
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+MICROSOFT_CLIENT_ID=...
+```
+
+## Quick Reference
+
+| Context | Convention | Example |
+|---------|------------|---------|
+| Component files | PascalCase | `LoginPage.tsx` |
+| Backend files | kebab-case | `user.service.ts` |
+| Variables | camelCase | `userName` |
+| Constants | UPPER_SNAKE | `MAX_RETRIES` |
+| Classes | PascalCase | `UserService` |
+| Interfaces | PascalCase | `UserProps` |
+| Types | PascalCase | `LoginResponse` |
+| Hooks | camelCase (use prefix) | `useLogin` |
+| Handlers | camelCase (handle prefix) | `handleSubmit` |
+| Booleans | camelCase (is/has prefix) | `isLoading` |
+| Database tables | snake_case (plural) | `user_roles` |
+| API routes | kebab-case (plural) | `/users/:id` |
+| Env variables | UPPER_SNAKE | `DATABASE_URL` |

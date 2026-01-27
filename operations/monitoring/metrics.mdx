@@ -1,0 +1,1775 @@
+---
+title: "Metrics & Performance Monitoring"
+description: "Comprehensive guide to metrics collection, performance monitoring, and observability for the Vritti platform"
+---
+
+## Overview
+
+Metrics are quantitative measurements that provide visibility into the health, performance, and behavior of your application. In a multi-tenant SaaS environment like Vritti, proper metrics collection is essential for:
+
+- **Performance Optimization**: Identify bottlenecks and optimize critical paths
+- **Capacity Planning**: Understand resource utilization trends
+- **SLA Compliance**: Track and guarantee service level agreements
+- **Incident Detection**: Quickly identify and diagnose issues
+- **Business Intelligence**: Track tenant usage and growth patterns
+
+<Info>
+Vritti uses a combination of Prometheus for metrics collection, Grafana for visualization, and optional APM tools for deep application insights.
+</Info>
+
+## Metrics Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Vritti Application                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
+│  │   NestJS    │  │   Fastify   │  │  TypeORM    │             │
+│  │  Services   │  │   Server    │  │  Queries    │             │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘             │
+│         │                │                │                     │
+│         └────────────────┼────────────────┘                     │
+│                          ▼                                      │
+│              ┌───────────────────────┐                         │
+│              │   Prometheus Client   │                         │
+│              │   (prom-client)       │                         │
+│              └───────────┬───────────┘                         │
+│                          │                                      │
+│                          ▼                                      │
+│              ┌───────────────────────┐                         │
+│              │   /metrics endpoint   │                         │
+│              └───────────┬───────────┘                         │
+└──────────────────────────┼──────────────────────────────────────┘
+                           │
+                           ▼
+              ┌───────────────────────┐
+              │      Prometheus       │
+              │   (Scrape & Store)    │
+              └───────────┬───────────┘
+                          │
+              ┌───────────┴───────────┐
+              ▼                       ▼
+┌───────────────────────┐  ┌───────────────────────┐
+│       Grafana         │  │     Alertmanager      │
+│   (Visualization)     │  │     (Alerting)        │
+└───────────────────────┘  └───────────────────────┘
+```
+
+## Key Metrics Categories
+
+### The Four Golden Signals
+
+Google's Site Reliability Engineering (SRE) methodology defines four golden signals that should be monitored for every service:
+
+<CardGroup cols={2}>
+  <Card title="Latency" icon="clock">
+    The time it takes to service a request. Track both successful and failed request latencies separately.
+  </Card>
+  <Card title="Traffic" icon="chart-line">
+    A measure of demand on your system. For web services, this is typically HTTP requests per second.
+  </Card>
+  <Card title="Errors" icon="triangle-exclamation">
+    The rate of requests that fail. This includes explicit failures (500s) and implicit failures (wrong content).
+  </Card>
+  <Card title="Saturation" icon="gauge-high">
+    How "full" your service is. A measure of system fraction, emphasizing resources that are most constrained.
+  </Card>
+</CardGroup>
+
+### RED Method Metrics
+
+For request-driven services, the RED method provides a simpler framework:
+
+| Metric | Description | Example |
+|--------|-------------|---------|
+| **R**ate | Requests per second | `http_requests_total` |
+| **E**rrors | Failed requests per second | `http_request_errors_total` |
+| **D**uration | Time per request | `http_request_duration_seconds` |
+
+### USE Method Metrics
+
+For resource metrics (CPU, memory, disk, network):
+
+| Metric | Description | Example |
+|--------|-------------|---------|
+| **U**tilization | Percentage of resource busy | `cpu_usage_percent` |
+| **S**aturation | Degree of queued work | `thread_pool_queue_size` |
+| **E**rrors | Error events | `disk_errors_total` |
+
+## Prometheus Integration
+
+### Installation
+
+```bash
+# Install Prometheus client for Node.js
+npm install prom-client @willsoto/nestjs-prometheus
+```
+
+### Module Configuration
+
+```typescript
+// src/infrastructure/metrics/metrics.module.ts
+import { Module, Global } from '@nestjs/common';
+import { PrometheusModule, makeCounterProvider, makeHistogramProvider, makeGaugeProvider } from '@willsoto/nestjs-prometheus';
+import { MetricsService } from './metrics.service';
+import { MetricsController } from './metrics.controller';
+
+@Global()
+@Module({
+  imports: [
+    PrometheusModule.register({
+      path: '/metrics',
+      defaultMetrics: {
+        enabled: true,
+        config: {
+          prefix: 'vritti_',
+        },
+      },
+      defaultLabels: {
+        app: 'vritti',
+        environment: process.env.NODE_ENV || 'development',
+      },
+    }),
+  ],
+  providers: [
+    MetricsService,
+    // HTTP Request Metrics
+    makeHistogramProvider({
+      name: 'vritti_http_request_duration_seconds',
+      help: 'Duration of HTTP requests in seconds',
+      labelNames: ['method', 'route', 'status_code', 'tenant_id'],
+      buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+    }),
+    makeCounterProvider({
+      name: 'vritti_http_requests_total',
+      help: 'Total number of HTTP requests',
+      labelNames: ['method', 'route', 'status_code', 'tenant_id'],
+    }),
+    makeCounterProvider({
+      name: 'vritti_http_request_errors_total',
+      help: 'Total number of HTTP request errors',
+      labelNames: ['method', 'route', 'error_type', 'tenant_id'],
+    }),
+    // Database Metrics
+    makeHistogramProvider({
+      name: 'vritti_db_query_duration_seconds',
+      help: 'Duration of database queries in seconds',
+      labelNames: ['operation', 'table', 'tenant_id'],
+      buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+    }),
+    makeCounterProvider({
+      name: 'vritti_db_queries_total',
+      help: 'Total number of database queries',
+      labelNames: ['operation', 'table', 'tenant_id'],
+    }),
+    makeGaugeProvider({
+      name: 'vritti_db_connection_pool_size',
+      help: 'Current database connection pool size',
+      labelNames: ['pool_name', 'state'],
+    }),
+    // Business Metrics
+    makeGaugeProvider({
+      name: 'vritti_active_tenants',
+      help: 'Number of active tenants',
+    }),
+    makeCounterProvider({
+      name: 'vritti_tenant_api_calls_total',
+      help: 'Total API calls per tenant',
+      labelNames: ['tenant_id', 'endpoint'],
+    }),
+    makeGaugeProvider({
+      name: 'vritti_tenant_storage_bytes',
+      help: 'Storage usage per tenant in bytes',
+      labelNames: ['tenant_id'],
+    }),
+  ],
+  controllers: [MetricsController],
+  exports: [MetricsService, PrometheusModule],
+})
+export class MetricsModule {}
+```
+
+### Metrics Service
+
+```typescript
+// src/infrastructure/metrics/metrics.service.ts
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { InjectMetric } from '@willsoto/nestjs-prometheus';
+import { Counter, Histogram, Gauge, Registry } from 'prom-client';
+
+@Injectable()
+export class MetricsService implements OnModuleInit {
+  constructor(
+    @InjectMetric('vritti_http_request_duration_seconds')
+    private readonly httpDuration: Histogram<string>,
+    @InjectMetric('vritti_http_requests_total')
+    private readonly httpRequestsTotal: Counter<string>,
+    @InjectMetric('vritti_http_request_errors_total')
+    private readonly httpErrorsTotal: Counter<string>,
+    @InjectMetric('vritti_db_query_duration_seconds')
+    private readonly dbQueryDuration: Histogram<string>,
+    @InjectMetric('vritti_db_queries_total')
+    private readonly dbQueriesTotal: Counter<string>,
+    @InjectMetric('vritti_db_connection_pool_size')
+    private readonly dbPoolSize: Gauge<string>,
+    @InjectMetric('vritti_active_tenants')
+    private readonly activeTenants: Gauge<string>,
+    @InjectMetric('vritti_tenant_api_calls_total')
+    private readonly tenantApiCalls: Counter<string>,
+    @InjectMetric('vritti_tenant_storage_bytes')
+    private readonly tenantStorage: Gauge<string>,
+  ) {}
+
+  onModuleInit() {
+    // Initialize any startup metrics
+    this.activeTenants.set(0);
+  }
+
+  // HTTP Metrics
+  recordHttpRequest(
+    method: string,
+    route: string,
+    statusCode: number,
+    duration: number,
+    tenantId?: string,
+  ): void {
+    const labels = {
+      method,
+      route: this.normalizeRoute(route),
+      status_code: statusCode.toString(),
+      tenant_id: tenantId || 'unknown',
+    };
+
+    this.httpDuration.observe(labels, duration);
+    this.httpRequestsTotal.inc(labels);
+
+    if (statusCode >= 400) {
+      this.httpErrorsTotal.inc({
+        method,
+        route: this.normalizeRoute(route),
+        error_type: statusCode >= 500 ? 'server_error' : 'client_error',
+        tenant_id: tenantId || 'unknown',
+      });
+    }
+  }
+
+  // Start a timer for HTTP requests
+  startHttpTimer(): () => number {
+    return this.httpDuration.startTimer();
+  }
+
+  // Database Metrics
+  recordDbQuery(
+    operation: string,
+    table: string,
+    duration: number,
+    tenantId?: string,
+  ): void {
+    const labels = {
+      operation,
+      table,
+      tenant_id: tenantId || 'unknown',
+    };
+
+    this.dbQueryDuration.observe(labels, duration);
+    this.dbQueriesTotal.inc(labels);
+  }
+
+  startDbTimer(): () => number {
+    return this.dbQueryDuration.startTimer();
+  }
+
+  updateDbPoolSize(poolName: string, active: number, idle: number, waiting: number): void {
+    this.dbPoolSize.set({ pool_name: poolName, state: 'active' }, active);
+    this.dbPoolSize.set({ pool_name: poolName, state: 'idle' }, idle);
+    this.dbPoolSize.set({ pool_name: poolName, state: 'waiting' }, waiting);
+  }
+
+  // Business Metrics
+  setActiveTenants(count: number): void {
+    this.activeTenants.set(count);
+  }
+
+  incrementTenantApiCalls(tenantId: string, endpoint: string): void {
+    this.tenantApiCalls.inc({ tenant_id: tenantId, endpoint });
+  }
+
+  setTenantStorage(tenantId: string, bytes: number): void {
+    this.tenantStorage.set({ tenant_id: tenantId }, bytes);
+  }
+
+  // Utility method to normalize routes (replace IDs with placeholders)
+  private normalizeRoute(route: string): string {
+    return route
+      .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '/:id')
+      .replace(/\/\d+/g, '/:id');
+  }
+}
+```
+
+### Metrics Interceptor
+
+```typescript
+// src/infrastructure/metrics/metrics.interceptor.ts
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+} from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { tap, catchError } from 'rxjs/operators';
+import { MetricsService } from './metrics.service';
+import { FastifyRequest, FastifyReply } from 'fastify';
+
+@Injectable()
+export class MetricsInterceptor implements NestInterceptor {
+  constructor(private readonly metricsService: MetricsService) {}
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const startTime = process.hrtime.bigint();
+    const httpContext = context.switchToHttp();
+    const request = httpContext.getRequest<FastifyRequest>();
+    const response = httpContext.getResponse<FastifyReply>();
+
+    const method = request.method;
+    const route = request.routerPath || request.url;
+    const tenantId = request.headers['x-tenant-id'] as string;
+
+    return next.handle().pipe(
+      tap(() => {
+        const duration = this.calculateDuration(startTime);
+        this.metricsService.recordHttpRequest(
+          method,
+          route,
+          response.statusCode,
+          duration,
+          tenantId,
+        );
+      }),
+      catchError((error) => {
+        const duration = this.calculateDuration(startTime);
+        const statusCode = error.status || 500;
+        this.metricsService.recordHttpRequest(
+          method,
+          route,
+          statusCode,
+          duration,
+          tenantId,
+        );
+        throw error;
+      }),
+    );
+  }
+
+  private calculateDuration(startTime: bigint): number {
+    const endTime = process.hrtime.bigint();
+    return Number(endTime - startTime) / 1e9; // Convert to seconds
+  }
+}
+```
+
+### Global Interceptor Registration
+
+```typescript
+// src/app.module.ts
+import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { MetricsModule } from './infrastructure/metrics/metrics.module';
+import { MetricsInterceptor } from './infrastructure/metrics/metrics.interceptor';
+
+@Module({
+  imports: [MetricsModule],
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: MetricsInterceptor,
+    },
+  ],
+})
+export class AppModule {}
+```
+
+## Database Query Performance
+
+### TypeORM Query Subscriber
+
+```typescript
+// src/infrastructure/metrics/typeorm-metrics.subscriber.ts
+import {
+  EntitySubscriberInterface,
+  EventSubscriber,
+  InsertEvent,
+  UpdateEvent,
+  RemoveEvent,
+  LoadEvent,
+} from 'typeorm';
+import { Injectable } from '@nestjs/common';
+import { MetricsService } from './metrics.service';
+import { ClsService } from 'nestjs-cls';
+
+@Injectable()
+@EventSubscriber()
+export class TypeOrmMetricsSubscriber implements EntitySubscriberInterface {
+  private queryTimers: Map<string, number> = new Map();
+
+  constructor(
+    private readonly metricsService: MetricsService,
+    private readonly cls: ClsService,
+  ) {}
+
+  beforeInsert(event: InsertEvent<any>): void {
+    this.startTimer(event, 'INSERT');
+  }
+
+  afterInsert(event: InsertEvent<any>): void {
+    this.recordMetric(event, 'INSERT');
+  }
+
+  beforeUpdate(event: UpdateEvent<any>): void {
+    this.startTimer(event, 'UPDATE');
+  }
+
+  afterUpdate(event: UpdateEvent<any>): void {
+    this.recordMetric(event, 'UPDATE');
+  }
+
+  beforeRemove(event: RemoveEvent<any>): void {
+    this.startTimer(event, 'DELETE');
+  }
+
+  afterRemove(event: RemoveEvent<any>): void {
+    this.recordMetric(event, 'DELETE');
+  }
+
+  afterLoad(entity: any, event?: LoadEvent<any>): void {
+    // Load events don't have beforeLoad, handle differently
+    if (event) {
+      const tableName = event.metadata.tableName;
+      const tenantId = this.cls.get('tenantId');
+      // Record a minimal duration for SELECT operations
+      this.metricsService.recordDbQuery('SELECT', tableName, 0.001, tenantId);
+    }
+  }
+
+  private startTimer(event: any, operation: string): void {
+    const key = `${operation}-${event.metadata?.tableName}-${Date.now()}`;
+    this.queryTimers.set(key, performance.now());
+  }
+
+  private recordMetric(event: any, operation: string): void {
+    const tableName = event.metadata?.tableName || 'unknown';
+    const tenantId = this.cls.get('tenantId');
+
+    // Find and remove the timer
+    const timerKey = Array.from(this.queryTimers.keys()).find(
+      (key) => key.startsWith(`${operation}-${tableName}`),
+    );
+
+    if (timerKey) {
+      const startTime = this.queryTimers.get(timerKey);
+      const duration = (performance.now() - (startTime || 0)) / 1000; // Convert to seconds
+      this.queryTimers.delete(timerKey);
+
+      this.metricsService.recordDbQuery(operation, tableName, duration, tenantId);
+    }
+  }
+}
+```
+
+### Database Connection Pool Monitoring
+
+```typescript
+// src/infrastructure/metrics/db-pool-monitor.service.ts
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
+import { MetricsService } from './metrics.service';
+
+@Injectable()
+export class DbPoolMonitorService implements OnModuleInit, OnModuleDestroy {
+  private intervalId: NodeJS.Timeout;
+
+  constructor(
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
+    private readonly metricsService: MetricsService,
+  ) {}
+
+  onModuleInit(): void {
+    // Monitor pool every 10 seconds
+    this.intervalId = setInterval(() => this.recordPoolMetrics(), 10000);
+  }
+
+  onModuleDestroy(): void {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+    }
+  }
+
+  private async recordPoolMetrics(): Promise<void> {
+    if (!this.dataSource.isInitialized) {
+      return;
+    }
+
+    try {
+      // For PostgreSQL with pg driver
+      const pool = (this.dataSource.driver as any).master;
+
+      if (pool) {
+        this.metricsService.updateDbPoolSize(
+          'master',
+          pool.totalCount - pool.idleCount,  // active
+          pool.idleCount,                      // idle
+          pool.waitingCount,                   // waiting
+        );
+      }
+    } catch (error) {
+      // Pool metrics not available, skip
+    }
+  }
+}
+```
+
+### Slow Query Logger
+
+```typescript
+// src/infrastructure/metrics/slow-query.logger.ts
+import { Logger as TypeOrmLogger } from 'typeorm';
+import { Logger } from '@nestjs/common';
+import { MetricsService } from './metrics.service';
+
+export class SlowQueryLogger implements TypeOrmLogger {
+  private readonly logger = new Logger('SlowQueryLogger');
+  private readonly slowQueryThreshold = 1000; // 1 second
+
+  constructor(private readonly metricsService: MetricsService) {}
+
+  logQuery(query: string, parameters?: any[], queryRunner?: any): void {
+    // Standard query logging handled elsewhere
+  }
+
+  logQueryError(
+    error: string | Error,
+    query: string,
+    parameters?: any[],
+    queryRunner?: any,
+  ): void {
+    this.logger.error(`Query Error: ${query}`, {
+      error,
+      parameters,
+    });
+  }
+
+  logQuerySlow(
+    time: number,
+    query: string,
+    parameters?: any[],
+    queryRunner?: any,
+  ): void {
+    if (time > this.slowQueryThreshold) {
+      this.logger.warn(`Slow Query (${time}ms): ${query.substring(0, 200)}...`, {
+        duration: time,
+        parameters,
+      });
+    }
+  }
+
+  logSchemaBuild(message: string, queryRunner?: any): void {
+    this.logger.log(message);
+  }
+
+  logMigration(message: string, queryRunner?: any): void {
+    this.logger.log(message);
+  }
+
+  log(level: 'log' | 'info' | 'warn', message: any, queryRunner?: any): void {
+    switch (level) {
+      case 'log':
+      case 'info':
+        this.logger.log(message);
+        break;
+      case 'warn':
+        this.logger.warn(message);
+        break;
+    }
+  }
+}
+```
+
+## Custom Business Metrics
+
+### Tenant Usage Metrics
+
+```typescript
+// src/infrastructure/metrics/tenant-metrics.service.ts
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { MetricsService } from './metrics.service';
+import { Tenant } from '../../tenants/entities/tenant.entity';
+import { InjectMetric } from '@willsoto/nestjs-prometheus';
+import { Gauge, Counter } from 'prom-client';
+
+@Injectable()
+export class TenantMetricsService implements OnModuleInit {
+  constructor(
+    @InjectRepository(Tenant)
+    private readonly tenantRepository: Repository<Tenant>,
+    private readonly metricsService: MetricsService,
+    @InjectMetric('vritti_tenant_users_total')
+    private readonly tenantUsers: Gauge<string>,
+    @InjectMetric('vritti_tenant_subscription_status')
+    private readonly subscriptionStatus: Gauge<string>,
+    @InjectMetric('vritti_feature_usage_total')
+    private readonly featureUsage: Counter<string>,
+  ) {}
+
+  async onModuleInit(): Promise<void> {
+    await this.collectTenantMetrics();
+  }
+
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async collectTenantMetrics(): Promise<void> {
+    const tenants = await this.tenantRepository.find({
+      relations: ['users', 'subscription'],
+    });
+
+    // Update active tenants count
+    const activeCount = tenants.filter((t) => t.status === 'active').length;
+    this.metricsService.setActiveTenants(activeCount);
+
+    // Update per-tenant metrics
+    for (const tenant of tenants) {
+      // User count per tenant
+      this.tenantUsers.set(
+        { tenant_id: tenant.id, plan: tenant.subscription?.plan || 'free' },
+        tenant.users?.length || 0,
+      );
+
+      // Subscription status
+      this.subscriptionStatus.set(
+        {
+          tenant_id: tenant.id,
+          plan: tenant.subscription?.plan || 'free',
+          status: tenant.subscription?.status || 'inactive',
+        },
+        tenant.subscription?.status === 'active' ? 1 : 0,
+      );
+    }
+  }
+
+  // Track feature usage
+  recordFeatureUsage(tenantId: string, feature: string): void {
+    this.featureUsage.inc({ tenant_id: tenantId, feature });
+  }
+}
+```
+
+### API Rate Limit Metrics
+
+```typescript
+// src/infrastructure/metrics/rate-limit-metrics.service.ts
+import { Injectable } from '@nestjs/common';
+import { InjectMetric } from '@willsoto/nestjs-prometheus';
+import { Counter, Gauge } from 'prom-client';
+
+@Injectable()
+export class RateLimitMetricsService {
+  constructor(
+    @InjectMetric('vritti_rate_limit_hits_total')
+    private readonly rateLimitHits: Counter<string>,
+    @InjectMetric('vritti_rate_limit_remaining')
+    private readonly rateLimitRemaining: Gauge<string>,
+  ) {}
+
+  recordRateLimitHit(tenantId: string, endpoint: string): void {
+    this.rateLimitHits.inc({ tenant_id: tenantId, endpoint });
+  }
+
+  updateRateLimitRemaining(
+    tenantId: string,
+    endpoint: string,
+    remaining: number,
+    limit: number,
+  ): void {
+    this.rateLimitRemaining.set(
+      { tenant_id: tenantId, endpoint, type: 'remaining' },
+      remaining,
+    );
+    this.rateLimitRemaining.set(
+      { tenant_id: tenantId, endpoint, type: 'limit' },
+      limit,
+    );
+  }
+}
+```
+
+## Memory and CPU Monitoring
+
+### Process Metrics Service
+
+```typescript
+// src/infrastructure/metrics/process-metrics.service.ts
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { InjectMetric } from '@willsoto/nestjs-prometheus';
+import { Gauge } from 'prom-client';
+import * as v8 from 'v8';
+import * as os from 'os';
+
+@Injectable()
+export class ProcessMetricsService implements OnModuleInit, OnModuleDestroy {
+  private intervalId: NodeJS.Timeout;
+
+  constructor(
+    @InjectMetric('vritti_process_memory_bytes')
+    private readonly memoryUsage: Gauge<string>,
+    @InjectMetric('vritti_process_cpu_seconds_total')
+    private readonly cpuUsage: Gauge<string>,
+    @InjectMetric('vritti_process_heap_bytes')
+    private readonly heapUsage: Gauge<string>,
+    @InjectMetric('vritti_process_event_loop_lag_seconds')
+    private readonly eventLoopLag: Gauge<string>,
+    @InjectMetric('vritti_process_gc_duration_seconds')
+    private readonly gcDuration: Gauge<string>,
+  ) {}
+
+  onModuleInit(): void {
+    // Collect metrics every 5 seconds
+    this.intervalId = setInterval(() => this.collectMetrics(), 5000);
+    this.collectMetrics();
+  }
+
+  onModuleDestroy(): void {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+    }
+  }
+
+  private collectMetrics(): void {
+    this.collectMemoryMetrics();
+    this.collectCpuMetrics();
+    this.collectHeapMetrics();
+    this.measureEventLoopLag();
+  }
+
+  private collectMemoryMetrics(): void {
+    const memUsage = process.memoryUsage();
+
+    this.memoryUsage.set({ type: 'rss' }, memUsage.rss);
+    this.memoryUsage.set({ type: 'heapTotal' }, memUsage.heapTotal);
+    this.memoryUsage.set({ type: 'heapUsed' }, memUsage.heapUsed);
+    this.memoryUsage.set({ type: 'external' }, memUsage.external);
+    this.memoryUsage.set({ type: 'arrayBuffers' }, memUsage.arrayBuffers);
+  }
+
+  private collectCpuMetrics(): void {
+    const cpuUsage = process.cpuUsage();
+
+    this.cpuUsage.set({ type: 'user' }, cpuUsage.user / 1e6); // Convert to seconds
+    this.cpuUsage.set({ type: 'system' }, cpuUsage.system / 1e6);
+  }
+
+  private collectHeapMetrics(): void {
+    const heapStats = v8.getHeapStatistics();
+
+    this.heapUsage.set({ type: 'total_heap_size' }, heapStats.total_heap_size);
+    this.heapUsage.set({ type: 'used_heap_size' }, heapStats.used_heap_size);
+    this.heapUsage.set({ type: 'heap_size_limit' }, heapStats.heap_size_limit);
+    this.heapUsage.set({ type: 'malloced_memory' }, heapStats.malloced_memory);
+    this.heapUsage.set({ type: 'peak_malloced_memory' }, heapStats.peak_malloced_memory);
+  }
+
+  private measureEventLoopLag(): void {
+    const start = process.hrtime.bigint();
+
+    setImmediate(() => {
+      const lag = Number(process.hrtime.bigint() - start) / 1e9;
+      this.eventLoopLag.set(lag);
+    });
+  }
+}
+```
+
+### Custom Heap Histogram
+
+```typescript
+// src/infrastructure/metrics/heap-histogram.service.ts
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { InjectMetric } from '@willsoto/nestjs-prometheus';
+import { Gauge } from 'prom-client';
+import * as v8 from 'v8';
+
+@Injectable()
+export class HeapHistogramService implements OnModuleInit, OnModuleDestroy {
+  private intervalId: NodeJS.Timeout;
+
+  constructor(
+    @InjectMetric('vritti_heap_space_bytes')
+    private readonly heapSpace: Gauge<string>,
+  ) {}
+
+  onModuleInit(): void {
+    // Collect heap space metrics every 30 seconds
+    this.intervalId = setInterval(() => this.collectHeapSpaceMetrics(), 30000);
+  }
+
+  onModuleDestroy(): void {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+    }
+  }
+
+  private collectHeapSpaceMetrics(): void {
+    const heapSpaces = v8.getHeapSpaceStatistics();
+
+    for (const space of heapSpaces) {
+      this.heapSpace.set(
+        { space: space.space_name, type: 'size' },
+        space.space_size,
+      );
+      this.heapSpace.set(
+        { space: space.space_name, type: 'used_size' },
+        space.space_used_size,
+      );
+      this.heapSpace.set(
+        { space: space.space_name, type: 'available_size' },
+        space.space_available_size,
+      );
+    }
+  }
+}
+```
+
+## Grafana Dashboard Setup
+
+### Prometheus Configuration
+
+```yaml
+# prometheus/prometheus.yml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+rule_files:
+  - "/etc/prometheus/rules/*.yml"
+
+scrape_configs:
+  - job_name: 'vritti-api'
+    static_configs:
+      - targets: ['vritti-api:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  - job_name: 'vritti-api-kubernetes'
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: kubernetes_namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: kubernetes_pod_name
+```
+
+### Grafana Dashboard JSON
+
+```json
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 80 }
+            ]
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(vritti_http_requests_total[5m])) by (route)",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Request Rate by Route",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": {
+        "legend": { "calcs": ["mean", "p95"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.95, sum(rate(vritti_http_request_duration_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "p95 - {{route}}",
+          "refId": "A"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.50, sum(rate(vritti_http_request_duration_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "p50 - {{route}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Response Time Percentiles",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 8 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(vritti_http_request_errors_total[5m])) / sum(rate(vritti_http_requests_total[5m])) * 100",
+          "legendFormat": "Error Rate",
+          "refId": "A"
+        }
+      ],
+      "title": "Error Rate %",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 8 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "vritti_active_tenants",
+          "legendFormat": "Active Tenants",
+          "refId": "A"
+        }
+      ],
+      "title": "Active Tenants",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 5,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "vritti_process_memory_bytes{type=\"heapUsed\"}",
+          "legendFormat": "Heap Used",
+          "refId": "A"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "vritti_process_memory_bytes{type=\"heapTotal\"}",
+          "legendFormat": "Heap Total",
+          "refId": "B"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "vritti_process_memory_bytes{type=\"rss\"}",
+          "legendFormat": "RSS",
+          "refId": "C"
+        }
+      ],
+      "title": "Memory Usage",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 37,
+  "style": "dark",
+  "tags": ["vritti", "api", "performance"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "datasource": "Prometheus",
+        "definition": "label_values(vritti_http_requests_total, tenant_id)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Tenant",
+        "multi": true,
+        "name": "tenant_id",
+        "options": [],
+        "query": "label_values(vritti_http_requests_total, tenant_id)",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Vritti API Performance Dashboard",
+  "uid": "vritti-api-performance",
+  "version": 1
+}
+```
+
+## Alerting Rules
+
+### Prometheus Alert Rules
+
+```yaml
+# prometheus/rules/vritti-alerts.yml
+groups:
+  - name: vritti-api-alerts
+    rules:
+      # High Error Rate
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(vritti_http_request_errors_total[5m]))
+          / sum(rate(vritti_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+
+      # High Latency
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, sum(rate(vritti_http_request_duration_seconds_bucket[5m])) by (le)) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency detected"
+          description: "95th percentile latency is {{ $value }}s (threshold: 2s)"
+
+      # Low Request Rate (potential outage)
+      - alert: LowRequestRate
+        expr: |
+          sum(rate(vritti_http_requests_total[5m])) < 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unusually low request rate"
+          description: "Request rate is {{ $value }} req/s - possible service issue"
+
+      # High Memory Usage
+      - alert: HighMemoryUsage
+        expr: |
+          vritti_process_memory_bytes{type="heapUsed"}
+          / vritti_process_memory_bytes{type="heapTotal"} > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage detected"
+          description: "Heap usage is {{ $value | humanizePercentage }}"
+
+      # Database Connection Pool Exhaustion
+      - alert: DbPoolExhausted
+        expr: |
+          vritti_db_connection_pool_size{state="waiting"} > 5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection pool exhausted"
+          description: "{{ $value }} connections waiting for pool"
+
+      # Slow Database Queries
+      - alert: SlowDatabaseQueries
+        expr: |
+          histogram_quantile(0.95, sum(rate(vritti_db_query_duration_seconds_bucket[5m])) by (le, operation)) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow database queries detected"
+          description: "95th percentile query time for {{ $labels.operation }} is {{ $value }}s"
+
+      # Event Loop Lag
+      - alert: HighEventLoopLag
+        expr: |
+          vritti_process_event_loop_lag_seconds > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High event loop lag detected"
+          description: "Event loop lag is {{ $value }}s - application may be blocking"
+
+  - name: vritti-business-alerts
+    rules:
+      # Tenant API Quota Near Limit
+      - alert: TenantNearApiQuota
+        expr: |
+          sum(increase(vritti_tenant_api_calls_total[1h])) by (tenant_id)
+          / vritti_tenant_api_quota > 0.9
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} near API quota"
+          description: "Tenant has used {{ $value | humanizePercentage }} of hourly API quota"
+
+      # No Active Tenants
+      - alert: NoActiveTenants
+        expr: vritti_active_tenants == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No active tenants"
+          description: "Active tenant count is 0 - possible data issue"
+```
+
+### Alertmanager Configuration
+
+```yaml
+# alertmanager/alertmanager.yml
+global:
+  resolve_timeout: 5m
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'default'
+  routes:
+    - receiver: 'critical-alerts'
+      match:
+        severity: critical
+    - receiver: 'warning-alerts'
+      match:
+        severity: warning
+
+receivers:
+  - name: 'default'
+    slack_configs:
+      - channel: '#vritti-alerts'
+        title: '{{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+  - name: 'critical-alerts'
+    slack_configs:
+      - channel: '#vritti-critical'
+        title: '[CRITICAL] {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        color: 'danger'
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_SERVICE_KEY}'
+        severity: critical
+
+  - name: 'warning-alerts'
+    slack_configs:
+      - channel: '#vritti-alerts'
+        title: '[WARNING] {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        color: 'warning'
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname']
+```
+
+## APM Tools Integration
+
+### Datadog Integration
+
+```typescript
+// src/infrastructure/apm/datadog.module.ts
+import { Module, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+@Module({})
+export class DatadogModule implements OnModuleInit {
+  constructor(private readonly configService: ConfigService) {}
+
+  onModuleInit(): void {
+    if (this.configService.get('DATADOG_ENABLED') === 'true') {
+      // Initialize Datadog tracer (must be done before other imports)
+      const tracer = require('dd-trace').init({
+        service: 'vritti-api',
+        env: this.configService.get('NODE_ENV'),
+        version: this.configService.get('APP_VERSION'),
+        logInjection: true,
+        runtimeMetrics: true,
+        profiling: true,
+        tags: {
+          app: 'vritti',
+          team: 'platform',
+        },
+      });
+
+      // Enable runtime metrics
+      tracer.use('fastify');
+      tracer.use('pg');
+      tracer.use('redis');
+      tracer.use('ioredis');
+    }
+  }
+}
+```
+
+```typescript
+// Initialize Datadog at the very top of main.ts
+// src/main.ts
+if (process.env.DATADOG_ENABLED === 'true') {
+  require('dd-trace').init({
+    service: 'vritti-api',
+    env: process.env.NODE_ENV,
+  });
+}
+
+import { NestFactory } from '@nestjs/core';
+// ... rest of bootstrap
+```
+
+### Datadog Custom Metrics
+
+```typescript
+// src/infrastructure/apm/datadog-metrics.service.ts
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as StatsD from 'hot-shots';
+
+@Injectable()
+export class DatadogMetricsService {
+  private readonly dogstatsd: StatsD;
+
+  constructor(private readonly configService: ConfigService) {
+    this.dogstatsd = new StatsD({
+      host: this.configService.get('DATADOG_AGENT_HOST', 'localhost'),
+      port: 8125,
+      prefix: 'vritti.',
+      globalTags: {
+        env: this.configService.get('NODE_ENV'),
+        service: 'vritti-api',
+      },
+    });
+  }
+
+  // Custom metrics
+  incrementCounter(name: string, tags?: string[]): void {
+    this.dogstatsd.increment(name, 1, tags);
+  }
+
+  gauge(name: string, value: number, tags?: string[]): void {
+    this.dogstatsd.gauge(name, value, tags);
+  }
+
+  histogram(name: string, value: number, tags?: string[]): void {
+    this.dogstatsd.histogram(name, value, tags);
+  }
+
+  timing(name: string, value: number, tags?: string[]): void {
+    this.dogstatsd.timing(name, value, tags);
+  }
+
+  // Business metrics
+  recordTenantActivity(tenantId: string, activity: string): void {
+    this.incrementCounter('tenant.activity', [
+      `tenant_id:${tenantId}`,
+      `activity:${activity}`,
+    ]);
+  }
+
+  recordApiLatency(endpoint: string, duration: number, tenantId: string): void {
+    this.timing('api.latency', duration, [
+      `endpoint:${endpoint}`,
+      `tenant_id:${tenantId}`,
+    ]);
+  }
+}
+```
+
+### New Relic Integration
+
+```typescript
+// src/infrastructure/apm/newrelic.module.ts
+import { Module, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+@Module({})
+export class NewRelicModule implements OnModuleInit {
+  constructor(private readonly configService: ConfigService) {}
+
+  onModuleInit(): void {
+    if (this.configService.get('NEW_RELIC_ENABLED') === 'true') {
+      // New Relic is initialized via newrelic.js in the project root
+      const newrelic = require('newrelic');
+
+      // Add custom attributes
+      newrelic.addCustomAttribute('app', 'vritti');
+      newrelic.addCustomAttribute('environment', this.configService.get('NODE_ENV'));
+    }
+  }
+}
+```
+
+```javascript
+// newrelic.js (project root)
+'use strict';
+
+exports.config = {
+  app_name: ['Vritti API'],
+  license_key: process.env.NEW_RELIC_LICENSE_KEY,
+  distributed_tracing: {
+    enabled: true,
+  },
+  logging: {
+    level: 'info',
+  },
+  allow_all_headers: true,
+  attributes: {
+    exclude: [
+      'request.headers.cookie',
+      'request.headers.authorization',
+      'request.headers.proxyAuthorization',
+      'request.headers.setCookie*',
+      'request.headers.x*',
+      'response.headers.cookie',
+      'response.headers.authorization',
+      'response.headers.proxyAuthorization',
+      'response.headers.setCookie*',
+      'response.headers.x*',
+    ],
+  },
+  transaction_tracer: {
+    enabled: true,
+    transaction_threshold: 'apdex_f',
+    record_sql: 'obfuscated',
+    explain_threshold: 500,
+  },
+  slow_sql: {
+    enabled: true,
+    max_samples: 10,
+  },
+  error_collector: {
+    enabled: true,
+    ignore_status_codes: [404],
+  },
+};
+```
+
+### New Relic Custom Instrumentation
+
+```typescript
+// src/infrastructure/apm/newrelic-metrics.service.ts
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class NewRelicMetricsService {
+  private newrelic: any;
+
+  constructor(private readonly configService: ConfigService) {
+    if (this.configService.get('NEW_RELIC_ENABLED') === 'true') {
+      this.newrelic = require('newrelic');
+    }
+  }
+
+  // Record custom events
+  recordCustomEvent(eventType: string, attributes: Record<string, any>): void {
+    if (this.newrelic) {
+      this.newrelic.recordCustomEvent(eventType, {
+        ...attributes,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  // Add custom attributes to current transaction
+  addCustomAttribute(name: string, value: any): void {
+    if (this.newrelic) {
+      this.newrelic.addCustomAttribute(name, value);
+    }
+  }
+
+  // Custom metrics
+  recordMetric(name: string, value: number): void {
+    if (this.newrelic) {
+      this.newrelic.recordMetric(`Custom/${name}`, value);
+    }
+  }
+
+  // Increment metric
+  incrementMetric(name: string, amount: number = 1): void {
+    if (this.newrelic) {
+      this.newrelic.incrementMetric(`Custom/${name}`, amount);
+    }
+  }
+
+  // Business events
+  recordTenantSignup(tenantId: string, plan: string): void {
+    this.recordCustomEvent('TenantSignup', {
+      tenantId,
+      plan,
+    });
+  }
+
+  recordSubscriptionChange(
+    tenantId: string,
+    oldPlan: string,
+    newPlan: string,
+  ): void {
+    this.recordCustomEvent('SubscriptionChange', {
+      tenantId,
+      oldPlan,
+      newPlan,
+    });
+  }
+
+  recordApiUsage(tenantId: string, endpoint: string, responseTime: number): void {
+    this.addCustomAttribute('tenantId', tenantId);
+    this.recordCustomEvent('ApiUsage', {
+      tenantId,
+      endpoint,
+      responseTime,
+    });
+  }
+}
+```
+
+## Best Practices
+
+### Metric Naming Conventions
+
+<AccordionGroup>
+  <Accordion title="Naming Rules">
+    Follow these conventions for consistent metric naming:
+
+    ```
+    # Format: <namespace>_<subsystem>_<name>_<unit>
+
+    # Good examples
+    vritti_http_requests_total
+    vritti_http_request_duration_seconds
+    vritti_db_query_duration_seconds
+    vritti_tenant_storage_bytes
+
+    # Bad examples
+    httpRequests          # No namespace, not descriptive
+    request_time_ms       # Inconsistent unit naming
+    vritti.requests.count # Dots instead of underscores
+    ```
+  </Accordion>
+
+  <Accordion title="Label Best Practices">
+    Use labels wisely to avoid cardinality explosion:
+
+    ```typescript
+    // Good: Limited, bounded label values
+    const labels = {
+      method: 'GET',           // Limited HTTP methods
+      status_code: '200',      // Limited status codes
+      endpoint: '/api/users',  // Normalized routes
+    };
+
+    // Bad: Unbounded label values
+    const labels = {
+      user_id: '12345',        // Infinite possible values
+      request_id: 'abc-123',   // Unique per request
+      timestamp: '1234567890', // Continuously changing
+    };
+    ```
+  </Accordion>
+
+  <Accordion title="Histogram Buckets">
+    Choose appropriate bucket boundaries based on expected latencies:
+
+    ```typescript
+    // API response times (most < 1s)
+    const apiBuckets = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
+
+    // Database queries (most < 100ms)
+    const dbBuckets = [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1];
+
+    // Background jobs (can take minutes)
+    const jobBuckets = [1, 5, 10, 30, 60, 120, 300, 600];
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Performance Considerations
+
+<Warning>
+High-cardinality metrics can significantly impact Prometheus performance and storage costs. Always normalize routes and avoid using unbounded values as labels.
+</Warning>
+
+```typescript
+// Route normalization example
+function normalizeRoute(route: string): string {
+  return route
+    // Replace UUIDs
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ':id')
+    // Replace numeric IDs
+    .replace(/\/\d+/g, '/:id')
+    // Replace MongoDB ObjectIds
+    .replace(/[0-9a-f]{24}/gi, ':id');
+}
+
+// Before: /api/users/550e8400-e29b-41d4-a716-446655440000/orders/12345
+// After:  /api/users/:id/orders/:id
+```
+
+### Multi-Tenant Considerations
+
+When collecting metrics in a multi-tenant environment:
+
+1. **Include tenant_id label** for tenant-specific metrics
+2. **Aggregate carefully** to avoid exposing tenant data
+3. **Set up per-tenant dashboards** with variable filtering
+4. **Monitor tenant quotas** and usage patterns
+
+```typescript
+// Per-tenant metric collection
+recordTenantMetric(tenantId: string, metric: string, value: number): void {
+  this.gauge.set({ tenant_id: tenantId, metric }, value);
+
+  // Also record aggregate (use with caution)
+  this.aggregateGauge.set({ metric }, value);
+}
+```
+
+## Troubleshooting
+
+### Common Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Metrics endpoint returns 404 | Module not imported | Ensure MetricsModule is imported in AppModule |
+| High memory usage | Too many unique label combinations | Reduce cardinality, normalize routes |
+| Prometheus scrape failures | Firewall/network issues | Check network policies, verify port access |
+| Missing metrics | Metric not registered | Verify provider registration in module |
+| Slow /metrics endpoint | Too many metrics | Enable gzip, reduce metric count |
+
+### Debugging Metrics
+
+```typescript
+// Debug endpoint to view current metrics
+@Controller('debug')
+export class DebugController {
+  constructor(private readonly registry: Registry) {}
+
+  @Get('metrics-debug')
+  async getMetricsDebug(): Promise<any> {
+    const metrics = await this.registry.getMetricsAsJSON();
+    return {
+      count: metrics.length,
+      metrics: metrics.map((m) => ({
+        name: m.name,
+        type: m.type,
+        help: m.help,
+        values: m.values?.length || 0,
+      })),
+    };
+  }
+}
+```
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Logging" icon="file-lines" href="/operations/monitoring/logging">
+    Centralized logging and log aggregation
+  </Card>
+  <Card title="Distributed Tracing" icon="diagram-project" href="/operations/monitoring/tracing">
+    Request tracing across services
+  </Card>
+  <Card title="Health Checks" icon="heart-pulse" href="/operations/monitoring/health-checks">
+    Service health monitoring
+  </Card>
+  <Card title="Alerting" icon="bell" href="/operations/monitoring/alerting">
+    Alert configuration and escalation
+  </Card>
+</CardGroup>

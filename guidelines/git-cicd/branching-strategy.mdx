@@ -1,0 +1,460 @@
+---
+title: Branching Strategy
+description: Git branching conventions and workflows for the Vritti monorepo
+---
+
+# Branching Strategy
+
+This guide outlines the Git branching strategy for the Vritti monorepo. Following these conventions ensures consistent collaboration across all projects: quantum-ui, vritti-web-nexus, vritti-auth, api-sdk, vritti-api-nexus, vritti-landing, and slicingpie.
+
+## Main Branch Strategy
+
+The Vritti monorepo follows a **trunk-based development** approach with `main` as the primary branch.
+
+| Branch | Purpose | Protection |
+|--------|---------|------------|
+| `main` | Production-ready code | Protected, requires PR |
+| `feature/*` | New features | Temporary |
+| `bugfix/*` | Non-critical bug fixes | Temporary |
+| `hotfix/*` | Critical production fixes | Temporary |
+| `chore/*` | Maintenance tasks | Temporary |
+| `release/*` | Release preparation (optional) | Temporary |
+
+### Branch Flow Diagram
+
+```
+main ─────────────────────────────────────────────────────────►
+       │                    │                    │
+       │ feature/auth-flow  │ bugfix/login-error │
+       └───────────────────►└───────────────────►
+                (PR)                 (PR)
+```
+
+## Branch Naming Conventions
+
+### Format
+
+```
+<type>/<ticket-id>-<short-description>
+```
+
+### Branch Types
+
+| Prefix | Use Case | Example |
+|--------|----------|---------|
+| `feature/` | New features or enhancements | `feature/VR-123-oauth-google` |
+| `bugfix/` | Bug fixes (non-urgent) | `bugfix/VR-456-login-validation` |
+| `hotfix/` | Critical production fixes | `hotfix/VR-789-auth-token-expiry` |
+| `chore/` | Maintenance, deps, refactoring | `chore/VR-012-update-deps` |
+| `docs/` | Documentation updates | `docs/VR-345-api-endpoints` |
+| `test/` | Test additions or fixes | `test/VR-678-unit-auth-service` |
+
+### Naming Rules
+
+```bash
+# Good branch names
+feature/VR-123-user-profile-api
+bugfix/VR-456-fix-password-reset
+hotfix/VR-789-critical-auth-bypass
+chore/VR-012-upgrade-nestjs-11
+
+# Without ticket (for small changes)
+feature/add-dark-mode-toggle
+bugfix/fix-typo-in-login
+chore/update-readme
+
+# Bad branch names (avoid)
+feature/new-stuff           # Too vague
+Feature/VR-123-oauth        # Wrong case
+feature/VR123-oauth         # Missing hyphen after ticket
+my-feature                  # No type prefix
+```
+
+## Branch Lifecycle
+
+### 1. Create Branch
+
+Always create branches from an up-to-date `main`:
+
+```bash
+# Update main first
+git checkout main
+git pull origin main
+
+# Create and switch to new branch
+git checkout -b feature/VR-123-user-profile
+```
+
+### 2. Develop on Branch
+
+Make commits with clear, descriptive messages:
+
+```bash
+# Stage changes
+git add src/modules/user/user.service.ts
+
+# Commit with descriptive message
+git commit -m "feat(user): add profile update endpoint"
+
+# Push branch to remote
+git push -u origin feature/VR-123-user-profile
+```
+
+### 3. Keep Branch Updated
+
+Regularly sync with `main` to avoid large merge conflicts:
+
+```bash
+# Fetch latest changes
+git fetch origin main
+
+# Rebase your branch on main (preferred for clean history)
+git rebase origin/main
+
+# Or merge if rebase causes issues
+git merge origin/main
+```
+
+### 4. Create Pull Request
+
+Open a PR when your feature is ready for review:
+
+```bash
+# Push final changes
+git push origin feature/VR-123-user-profile
+
+# Create PR via GitHub CLI (optional)
+gh pr create --title "feat(user): add profile update endpoint" \
+  --body "Implements user profile update functionality"
+```
+
+### 5. Merge and Delete
+
+After PR approval and merge:
+
+```bash
+# Switch to main and pull merged changes
+git checkout main
+git pull origin main
+
+# Delete local branch
+git branch -d feature/VR-123-user-profile
+
+# Delete remote branch (if not auto-deleted)
+git push origin --delete feature/VR-123-user-profile
+```
+
+## Working with Multiple Projects
+
+The Vritti monorepo uses **pnpm workspaces**. When working on changes that span multiple projects, follow these guidelines.
+
+### Single-Project Changes
+
+For changes affecting only one project:
+
+```bash
+# Branch name can reference the project
+feature/VR-123-quantum-ui-button-variant
+
+# Or use commit scope
+git commit -m "feat(quantum-ui): add outline button variant"
+```
+
+### Cross-Project Changes
+
+For changes spanning multiple projects (e.g., API + frontend):
+
+```bash
+# Use a general branch name
+feature/VR-123-user-profile-feature
+
+# Use multiple commit scopes
+git commit -m "feat(api-nexus): add profile endpoint"
+git commit -m "feat(web-nexus): integrate profile API"
+git commit -m "feat(quantum-ui): add ProfileCard component"
+```
+
+### Commit Scopes by Project
+
+| Project | Commit Scope |
+|---------|--------------|
+| quantum-ui | `quantum-ui` |
+| vritti-web-nexus | `web-nexus` |
+| vritti-auth | `auth` |
+| api-sdk | `api-sdk` |
+| vritti-api-nexus | `api-nexus` |
+| vritti-landing | `landing` |
+| slicingpie | `slicingpie` |
+
+Example multi-project commit:
+
+```bash
+git commit -m "feat(api-nexus,api-sdk): add tenant resolution utilities"
+```
+
+## Release Branch Strategy
+
+For coordinated releases across projects, use release branches:
+
+### Creating a Release Branch
+
+```bash
+# Create release branch from main
+git checkout main
+git pull origin main
+git checkout -b release/v2.5.0
+```
+
+### Release Branch Workflow
+
+```
+main ─────────────────────────────────────────────────────────►
+       │                                         ▲
+       │ release/v2.5.0                          │
+       └─────────────────────────────────────────┘
+                    (merge back)
+```
+
+### Release Process
+
+```bash
+# 1. Create release branch
+git checkout -b release/v2.5.0
+
+# 2. Make release-specific changes (version bumps, changelog)
+# Edit package.json files, CHANGELOG.md
+
+# 3. Commit release changes
+git commit -m "chore(release): prepare v2.5.0"
+
+# 4. Create PR to main
+gh pr create --title "chore(release): v2.5.0" --base main
+
+# 5. After merge, tag the release
+git checkout main
+git pull origin main
+git tag -a v2.5.0 -m "Release v2.5.0"
+git push origin v2.5.0
+```
+
+## Hotfix Workflow
+
+For critical production issues that need immediate fixes:
+
+```bash
+# 1. Create hotfix from main
+git checkout main
+git pull origin main
+git checkout -b hotfix/VR-999-critical-auth-fix
+
+# 2. Make the fix
+# ... code changes ...
+
+# 3. Commit with urgency indicator
+git commit -m "fix(auth): resolve critical token validation bypass"
+
+# 4. Create expedited PR
+gh pr create --title "HOTFIX: critical auth token fix" \
+  --label "hotfix,priority:critical"
+```
+
+## Branch Protection Recommendations
+
+While the Vritti monorepo currently doesn't enforce Git hooks, the following branch protections are recommended for GitHub:
+
+### Recommended `main` Branch Rules
+
+| Rule | Setting | Rationale |
+|------|---------|-----------|
+| Require pull request | Yes | All changes need review |
+| Required approvals | 1-2 | Balance speed and quality |
+| Dismiss stale approvals | Yes | Re-review after changes |
+| Require status checks | Yes | Ensure CI passes |
+| Require up-to-date branch | Yes | Prevent merge conflicts |
+| Include administrators | Yes | Everyone follows rules |
+
+### GitHub Branch Protection Setup
+
+```json
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": ["build", "lint", "test"]
+  },
+  "enforce_admins": true,
+  "required_pull_request_reviews": {
+    "required_approving_review_count": 1,
+    "dismiss_stale_reviews": true
+  },
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false
+}
+```
+
+<Accordion title="Setting Up Branch Protection in GitHub">
+1. Go to repository **Settings** > **Branches**
+2. Click **Add rule** under "Branch protection rules"
+3. Enter `main` as the branch name pattern
+4. Enable the following:
+   - **Require a pull request before merging**
+   - **Require approvals** (set to 1 or 2)
+   - **Dismiss stale pull request approvals when new commits are pushed**
+   - **Require status checks to pass before merging**
+   - **Require branches to be up to date before merging**
+   - **Do not allow bypassing the above settings**
+5. Click **Create** to save the rule
+</Accordion>
+
+## Best Practices
+
+<Accordion title="Keep Branches Short-Lived">
+Branches should be merged within 1-3 days to minimize:
+- Merge conflicts
+- Code drift from main
+- Context switching burden
+
+```bash
+# Check branch age
+git log --oneline main..HEAD | wc -l
+
+# If too many commits, consider splitting the PR
+```
+</Accordion>
+
+<Accordion title="Atomic Commits">
+Each commit should represent a single logical change:
+
+```bash
+# Good - atomic commits
+git commit -m "feat(user): add user entity schema"
+git commit -m "feat(user): implement user repository"
+git commit -m "feat(user): add user service with CRUD"
+git commit -m "feat(user): create user controller endpoints"
+
+# Bad - monolithic commit
+git commit -m "add user module with everything"
+```
+</Accordion>
+
+<Accordion title="Rebase vs Merge">
+**Prefer rebasing** for feature branches to maintain clean history:
+
+```bash
+# Rebase feature branch on main
+git fetch origin main
+git rebase origin/main
+
+# If conflicts, resolve and continue
+git add .
+git rebase --continue
+
+# Force push after rebase (only on your own branches!)
+git push --force-with-lease origin feature/VR-123-my-feature
+```
+
+**Use merge** when:
+- Multiple developers work on the same branch
+- You need to preserve branch history
+- Rebase causes too many conflicts
+</Accordion>
+
+<Accordion title="Clean Up Stale Branches">
+Regularly remove merged branches:
+
+```bash
+# List merged branches
+git branch --merged main
+
+# Delete local merged branches (except main)
+git branch --merged main | grep -v "main" | xargs git branch -d
+
+# Delete remote merged branches
+git fetch --prune origin
+
+# List remote branches older than 2 weeks
+git for-each-ref --sort=committerdate refs/remotes/ \
+  --format='%(committerdate:short) %(refname:short)'
+```
+</Accordion>
+
+<Accordion title="Handling Merge Conflicts">
+When encountering merge conflicts:
+
+```bash
+# Start rebase
+git rebase origin/main
+
+# If conflicts occur, VS Code or your IDE will highlight them
+# After resolving:
+git add .
+git rebase --continue
+
+# If you need to abort
+git rebase --abort
+
+# For complex conflicts, consider:
+# 1. Breaking the branch into smaller PRs
+# 2. Pair programming to resolve
+# 3. Using git rerere for repeated conflicts
+```
+</Accordion>
+
+## Quick Reference
+
+### Common Git Commands
+
+```bash
+# Create feature branch
+git checkout -b feature/VR-123-description
+
+# Check branch status
+git status
+git branch -vv
+
+# Stage and commit
+git add -p                    # Interactive staging
+git commit -m "type(scope): message"
+
+# Sync with main
+git fetch origin main
+git rebase origin/main
+
+# Push branch
+git push -u origin feature/VR-123-description
+git push --force-with-lease   # After rebase
+
+# Clean up
+git branch -d feature/VR-123-description
+```
+
+### Commit Message Format
+
+```
+<type>(<scope>): <subject>
+
+[optional body]
+
+[optional footer]
+```
+
+Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+
+Examples:
+
+```bash
+feat(auth): implement OAuth2 Google login
+fix(api-nexus): resolve race condition in token refresh
+docs(quantum-ui): add button component documentation
+chore(deps): update @nestjs/core to v11.0.0
+```
+
+## Future Improvements
+
+The following Git workflow improvements are planned:
+
+1. **Git Hooks with Husky** - Automated commit message validation
+2. **Commitlint** - Enforce conventional commit format
+3. **lint-staged** - Run linters on staged files only
+4. **Automated Branch Cleanup** - GitHub Actions to delete stale branches
+5. **PR Templates** - Standardized pull request descriptions

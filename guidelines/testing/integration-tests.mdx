@@ -1,0 +1,475 @@
+---
+title: Integration Tests
+description: Integration testing patterns for NestJS with database and external services
+---
+
+# Integration Tests
+
+Integration tests verify that multiple components work together correctly. This guide covers patterns for testing NestJS modules with real or mocked dependencies.
+
+## Integration vs Unit Tests
+
+| Aspect | Unit Tests | Integration Tests |
+|--------|------------|-------------------|
+| Scope | Single class/function | Multiple components |
+| Dependencies | All mocked | Some real, some mocked |
+| Speed | Fast (ms) | Slower (seconds) |
+| Database | Never used | May use test database |
+| Location | `*.spec.ts` | `*.integration.spec.ts` |
+
+## Module Integration Tests
+
+### Testing Module with Real Dependencies
+
+```typescript
+// auth/auth.integration.spec.ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { AuthModule } from './auth.module';
+import { UserModule } from '../user/user.module';
+import { AuthService } from './services/auth.service';
+import { UserService } from '../user/user.service';
+import { DatabaseModule } from '@vritti/api-sdk';
+
+describe('AuthModule Integration', () => {
+  let module: TestingModule;
+  let authService: AuthService;
+  let userService: UserService;
+
+  beforeAll(async () => {
+    module = await Test.createTestingModule({
+      imports: [
+        // Use test database
+        DatabaseModule.forTest(),
+        AuthModule,
+        UserModule,
+      ],
+    }).compile();
+
+    authService = module.get<AuthService>(AuthService);
+    userService = module.get<UserService>(UserService);
+  });
+
+  afterAll(async () => {
+    await module.close();
+  });
+
+  describe('login flow', () => {
+    let testUser: User;
+
+    beforeEach(async () => {
+      // Create test user
+      testUser = await userService.create({
+        email: 'test@example.com',
+        password: 'SecureP@ss123',
+        firstName: 'Test',
+        lastName: 'User',
+      });
+    });
+
+    afterEach(async () => {
+      // Cleanup
+      await userService.delete(testUser.id);
+    });
+
+    it('should authenticate valid credentials', async () => {
+      const result = await authService.login({
+        email: 'test@example.com',
+        password: 'SecureP@ss123',
+      });
+
+      expect(result.accessToken).toBeDefined();
+      expect(result.user.email).toBe('test@example.com');
+    });
+
+    it('should reject invalid password', async () => {
+      await expect(
+        authService.login({
+          email: 'test@example.com',
+          password: 'wrongpassword',
+        }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+  });
+});
+```
+
+### Testing with Partial Mocks
+
+```typescript
+// user/user.integration.spec.ts
+describe('UserService Integration', () => {
+  let module: TestingModule;
+  let userService: UserService;
+  let emailService: jest.Mocked<EmailService>;
+
+  beforeAll(async () => {
+    module = await Test.createTestingModule({
+      imports: [
+        DatabaseModule.forTest(),
+        UserModule,
+      ],
+    })
+      .overrideProvider(EmailService)
+      .useValue({
+        sendWelcome: jest.fn().mockResolvedValue(undefined),
+        sendVerification: jest.fn().mockResolvedValue(undefined),
+      })
+      .compile();
+
+    userService = module.get<UserService>(UserService);
+    emailService = module.get(EmailService);
+  });
+
+  it('should send welcome email after registration', async () => {
+    const user = await userService.create({
+      email: 'new@example.com',
+      password: 'SecureP@ss123',
+      firstName: 'New',
+      lastName: 'User',
+    });
+
+    expect(emailService.sendWelcome).toHaveBeenCalledWith(user.email);
+  });
+});
+```
+
+## Database Integration Tests
+
+### Test Database Setup
+
+```typescript
+// test/setup/database.ts
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { Pool } from 'pg';
+
+export async function setupTestDatabase() {
+  const pool = new Pool({
+    connectionString: process.env.TEST_DATABASE_URL,
+  });
+
+  const db = drizzle(pool);
+
+  // Run migrations
+  await migrate(db, { migrationsFolder: './drizzle' });
+
+  return { pool, db };
+}
+
+export async function cleanupTestDatabase(pool: Pool) {
+  // Truncate all tables
+  await pool.query(`
+    DO $$ DECLARE
+      r RECORD;
+    BEGIN
+      FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
+        EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' CASCADE';
+      END LOOP;
+    END $$;
+  `);
+}
+
+export async function teardownTestDatabase(pool: Pool) {
+  await pool.end();
+}
+```
+
+### Using Test Database
+
+```typescript
+// user/user.db.spec.ts
+import { setupTestDatabase, cleanupTestDatabase, teardownTestDatabase } from '../test/setup/database';
+
+describe('UserRepository (Database)', () => {
+  let pool: Pool;
+  let db: DrizzleDb;
+  let repository: UserRepository;
+
+  beforeAll(async () => {
+    const setup = await setupTestDatabase();
+    pool = setup.pool;
+    db = setup.db;
+
+    repository = new UserRepository(db);
+  });
+
+  beforeEach(async () => {
+    await cleanupTestDatabase(pool);
+  });
+
+  afterAll(async () => {
+    await teardownTestDatabase(pool);
+  });
+
+  describe('create', () => {
+    it('should persist user to database', async () => {
+      const user = await repository.create({
+        email: 'test@example.com',
+        firstName: 'Test',
+        lastName: 'User',
+        passwordHash: 'hashed',
+      });
+
+      expect(user.id).toBeDefined();
+
+      // Verify persisted
+      const found = await repository.findById(user.id);
+      expect(found).toEqual(user);
+    });
+
+    it('should enforce unique email constraint', async () => {
+      await repository.create({
+        email: 'test@example.com',
+        firstName: 'Test',
+        lastName: 'User',
+        passwordHash: 'hashed',
+      });
+
+      await expect(
+        repository.create({
+          email: 'test@example.com',
+          firstName: 'Another',
+          lastName: 'User',
+          passwordHash: 'hashed',
+        }),
+      ).rejects.toThrow(/unique/i);
+    });
+  });
+});
+```
+
+## Service Integration Tests
+
+### Testing Service Interactions
+
+```typescript
+// order/order.integration.spec.ts
+describe('OrderService Integration', () => {
+  let module: TestingModule;
+  let orderService: OrderService;
+  let inventoryService: InventoryService;
+  let paymentService: PaymentService;
+
+  beforeAll(async () => {
+    module = await Test.createTestingModule({
+      imports: [
+        DatabaseModule.forTest(),
+        OrderModule,
+        InventoryModule,
+        PaymentModule,
+      ],
+    })
+      .overrideProvider(PaymentGateway)
+      .useValue({
+        charge: jest.fn().mockResolvedValue({ transactionId: 'tx-123' }),
+      })
+      .compile();
+
+    orderService = module.get<OrderService>(OrderService);
+    inventoryService = module.get<InventoryService>(InventoryService);
+    paymentService = module.get<PaymentService>(PaymentService);
+  });
+
+  describe('createOrder', () => {
+    it('should create order and update inventory', async () => {
+      // Setup inventory
+      await inventoryService.addStock('product-1', 100);
+
+      // Create order
+      const order = await orderService.create({
+        items: [{ productId: 'product-1', quantity: 5 }],
+        paymentMethod: 'card',
+      });
+
+      // Verify order created
+      expect(order.status).toBe('pending');
+
+      // Verify inventory updated
+      const stock = await inventoryService.getStock('product-1');
+      expect(stock).toBe(95);
+    });
+
+    it('should rollback on payment failure', async () => {
+      const paymentGateway = module.get(PaymentGateway);
+      paymentGateway.charge.mockRejectedValue(new Error('Payment declined'));
+
+      await inventoryService.addStock('product-1', 100);
+
+      await expect(
+        orderService.create({
+          items: [{ productId: 'product-1', quantity: 5 }],
+          paymentMethod: 'card',
+        }),
+      ).rejects.toThrow('Payment declined');
+
+      // Verify inventory not changed
+      const stock = await inventoryService.getStock('product-1');
+      expect(stock).toBe(100);
+    });
+  });
+});
+```
+
+## Testing External Services
+
+### HTTP Service Mocking
+
+```typescript
+// external/weather.integration.spec.ts
+import { HttpModule, HttpService } from '@nestjs/axios';
+import { of, throwError } from 'rxjs';
+
+describe('WeatherService Integration', () => {
+  let service: WeatherService;
+  let httpService: HttpService;
+
+  beforeEach(async () => {
+    const module = await Test.createTestingModule({
+      imports: [HttpModule],
+      providers: [WeatherService],
+    }).compile();
+
+    service = module.get<WeatherService>(WeatherService);
+    httpService = module.get<HttpService>(HttpService);
+  });
+
+  it('should fetch weather data', async () => {
+    const mockResponse = {
+      data: { temperature: 25, condition: 'sunny' },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config: {},
+    };
+
+    jest.spyOn(httpService, 'get').mockReturnValue(of(mockResponse) as any);
+
+    const weather = await service.getCurrentWeather('London');
+
+    expect(weather.temperature).toBe(25);
+    expect(weather.condition).toBe('sunny');
+  });
+
+  it('should handle API errors', async () => {
+    jest.spyOn(httpService, 'get').mockReturnValue(
+      throwError(() => ({ response: { status: 503 } })),
+    );
+
+    await expect(service.getCurrentWeather('London')).rejects.toThrow(
+      'Weather service unavailable',
+    );
+  });
+});
+```
+
+### Database Transaction Tests
+
+```typescript
+// transaction.integration.spec.ts
+describe('Transaction Integration', () => {
+  it('should rollback all changes on error', async () => {
+    const initialBalance = await accountService.getBalance('account-1');
+
+    try {
+      await database.transaction(async (tx) => {
+        await accountService.debit('account-1', 100, { tx });
+        await accountService.credit('account-2', 100, { tx });
+
+        // Simulate error
+        throw new Error('Something went wrong');
+      });
+    } catch {
+      // Expected
+    }
+
+    // Verify no changes
+    const finalBalance = await accountService.getBalance('account-1');
+    expect(finalBalance).toBe(initialBalance);
+  });
+});
+```
+
+## Test Configuration
+
+### Jest Setup File
+
+```typescript
+// test/setup.ts
+import { setupTestDatabase, teardownTestDatabase } from './setup/database';
+
+let pool: Pool;
+
+beforeAll(async () => {
+  const setup = await setupTestDatabase();
+  pool = setup.pool;
+});
+
+afterAll(async () => {
+  await teardownTestDatabase(pool);
+});
+```
+
+### Jest Config for Integration Tests
+
+```json title="jest.integration.config.json"
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testRegex": ".*\\.integration\\.spec\\.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": ["@swc/jest"]
+  },
+  "testEnvironment": "node",
+  "setupFilesAfterEnv": ["./test/setup.ts"],
+  "testTimeout": 30000
+}
+```
+
+## Best Practices
+
+<Accordion title="Use Test Database">
+```typescript
+// ✅ Good - isolated test database
+DatabaseModule.forTest()
+
+// ❌ Avoid - production database
+DatabaseModule.forRoot()
+```
+</Accordion>
+
+<Accordion title="Clean Up After Tests">
+```typescript
+beforeEach(async () => {
+  await cleanupTestDatabase(pool);
+});
+
+afterAll(async () => {
+  await teardownTestDatabase(pool);
+});
+```
+</Accordion>
+
+<Accordion title="Mock External Services">
+```typescript
+// ✅ Good - mock external dependencies
+.overrideProvider(PaymentGateway)
+.useValue({ charge: jest.fn() })
+
+// ❌ Avoid - calling real external services
+// Real API calls in tests are slow and unreliable
+```
+</Accordion>
+
+<Accordion title="Test Transaction Boundaries">
+```typescript
+// Verify that failures rollback properly
+it('should rollback on error', async () => {
+  const initialState = await getState();
+
+  await expect(operationThatFails()).rejects.toThrow();
+
+  const finalState = await getState();
+  expect(finalState).toEqual(initialState);
+});
+```
+</Accordion>

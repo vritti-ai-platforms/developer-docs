@@ -1,0 +1,488 @@
+---
+title: Unit Tests
+description: Unit testing patterns with Jest and NestJS testing utilities
+---
+
+# Unit Tests
+
+Vritti API uses Jest for unit testing with NestJS testing utilities. This guide covers test setup, patterns, and best practices.
+
+## Test Configuration
+
+### Jest Configuration
+
+```json title="package.json"
+{
+  "jest": {
+    "moduleFileExtensions": ["js", "json", "ts"],
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.(t|j)s$": ["@swc/jest"]
+    },
+    "collectCoverageFrom": ["**/*.(t|j)s"],
+    "coverageDirectory": "../coverage",
+    "testEnvironment": "node"
+  }
+}
+```
+
+### Test Scripts
+
+```bash
+# Run all tests
+npm test
+
+# Watch mode
+npm run test:watch
+
+# Coverage report
+npm run test:cov
+
+# Debug mode
+npm run test:debug
+```
+
+## Basic Test Structure
+
+### Controller Test
+
+```typescript
+// app.controller.spec.ts
+import { Test, type TestingModule } from '@nestjs/testing';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+
+describe('AppController', () => {
+  let controller: AppController;
+  let service: AppService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [AppController],
+      providers: [AppService],
+    }).compile();
+
+    controller = module.get<AppController>(AppController);
+    service = module.get<AppService>(AppService);
+  });
+
+  describe('getHello', () => {
+    it('should return "Hello World!"', () => {
+      expect(controller.getHello()).toBe('Hello World!');
+    });
+  });
+});
+```
+
+### Service Test
+
+```typescript
+// user.service.spec.ts
+import { Test, type TestingModule } from '@nestjs/testing';
+import { UserService } from './user.service';
+import { UserRepository } from './user.repository';
+import { NotFoundException } from '@vritti/api-sdk';
+
+describe('UserService', () => {
+  let service: UserService;
+  let repository: jest.Mocked<UserRepository>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UserService,
+        {
+          provide: UserRepository,
+          useValue: {
+            create: jest.fn(),
+            findById: jest.fn(),
+            findByEmail: jest.fn(),
+            update: jest.fn(),
+            delete: jest.fn(),
+          },
+        },
+      ],
+    }).compile();
+
+    service = module.get<UserService>(UserService);
+    repository = module.get(UserRepository);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe('findById', () => {
+    it('should return user when found', async () => {
+      const mockUser = {
+        id: '1',
+        email: 'test@example.com',
+        firstName: 'John',
+        lastName: 'Doe',
+      };
+      repository.findById.mockResolvedValue(mockUser);
+
+      const result = await service.findById('1');
+
+      expect(result).toEqual(mockUser);
+      expect(repository.findById).toHaveBeenCalledWith('1');
+    });
+
+    it('should throw NotFoundException when user not found', async () => {
+      repository.findById.mockResolvedValue(null);
+
+      await expect(service.findById('999')).rejects.toThrow(NotFoundException);
+      expect(repository.findById).toHaveBeenCalledWith('999');
+    });
+  });
+
+  describe('create', () => {
+    const createDto = {
+      email: 'new@example.com',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      password: 'SecureP@ss123',
+    };
+
+    it('should create user successfully', async () => {
+      repository.findByEmail.mockResolvedValue(null);
+      repository.create.mockResolvedValue({
+        id: '2',
+        ...createDto,
+        passwordHash: 'hashed',
+      });
+
+      const result = await service.create(createDto);
+
+      expect(result.id).toBe('2');
+      expect(result.email).toBe(createDto.email);
+      expect(repository.findByEmail).toHaveBeenCalledWith(createDto.email);
+    });
+
+    it('should throw ConflictException when email exists', async () => {
+      repository.findByEmail.mockResolvedValue({ id: '1', email: createDto.email });
+
+      await expect(service.create(createDto)).rejects.toThrow(ConflictException);
+    });
+  });
+});
+```
+
+## Mocking Patterns
+
+### Manual Mocks
+
+```typescript
+// Create mock object
+const mockUserRepository = {
+  create: jest.fn(),
+  findById: jest.fn(),
+  findByEmail: jest.fn(),
+  update: jest.fn(),
+  delete: jest.fn(),
+};
+
+// Use in test module
+{
+  provide: UserRepository,
+  useValue: mockUserRepository,
+}
+```
+
+### Spy on Methods
+
+```typescript
+describe('UserService', () => {
+  it('should call encryption service', async () => {
+    const hashSpy = jest.spyOn(encryptionService, 'hash');
+    hashSpy.mockResolvedValue('hashed-password');
+
+    await service.create({ email: 'test@test.com', password: 'password' });
+
+    expect(hashSpy).toHaveBeenCalledWith('password');
+  });
+});
+```
+
+### Mock Implementation
+
+```typescript
+repository.findById.mockImplementation((id: string) => {
+  if (id === '1') {
+    return Promise.resolve({ id: '1', email: 'test@example.com' });
+  }
+  return Promise.resolve(null);
+});
+```
+
+### Reset Mocks
+
+```typescript
+beforeEach(() => {
+  jest.clearAllMocks();  // Clear call history
+});
+
+afterAll(() => {
+  jest.resetAllMocks();  // Reset to original implementation
+});
+```
+
+## Testing Async Code
+
+### Promises
+
+```typescript
+it('should resolve with user', async () => {
+  repository.findById.mockResolvedValue(mockUser);
+
+  const result = await service.findById('1');
+
+  expect(result).toEqual(mockUser);
+});
+
+it('should reject with error', async () => {
+  repository.findById.mockRejectedValue(new Error('Database error'));
+
+  await expect(service.findById('1')).rejects.toThrow('Database error');
+});
+```
+
+### Callbacks
+
+```typescript
+it('should handle callback', (done) => {
+  service.processAsync('data', (error, result) => {
+    expect(error).toBeNull();
+    expect(result).toBe('processed');
+    done();
+  });
+});
+```
+
+## Testing Exceptions
+
+### Expect Throws
+
+```typescript
+it('should throw NotFoundException', async () => {
+  repository.findById.mockResolvedValue(null);
+
+  await expect(service.findById('999'))
+    .rejects
+    .toThrow(NotFoundException);
+});
+
+it('should throw with specific message', async () => {
+  repository.findById.mockResolvedValue(null);
+
+  await expect(service.findById('999'))
+    .rejects
+    .toThrow('User not found');
+});
+
+it('should throw with field error', async () => {
+  repository.findById.mockResolvedValue(null);
+
+  try {
+    await service.findById('999');
+    fail('Should have thrown');
+  } catch (error) {
+    expect(error).toBeInstanceOf(NotFoundException);
+    const response = error.getResponse();
+    expect(response.errors[0].field).toBe('id');
+    expect(response.errors[0].message).toBe('User not found');
+  }
+});
+```
+
+## Test Data Factories
+
+### Factory Pattern
+
+```typescript
+// test/factories/user.factory.ts
+export const createMockUser = (overrides?: Partial<User>): User => ({
+  id: 'test-uuid-1',
+  email: 'test@example.com',
+  firstName: 'John',
+  lastName: 'Doe',
+  status: 'active',
+  emailVerified: true,
+  createdAt: new Date('2024-01-01'),
+  updatedAt: new Date('2024-01-01'),
+  ...overrides,
+});
+
+// Usage
+const user = createMockUser({ email: 'custom@example.com' });
+const adminUser = createMockUser({ role: 'admin' });
+```
+
+### DTO Factory
+
+```typescript
+// test/factories/dto.factory.ts
+export const createLoginDto = (overrides?: Partial<LoginDto>): LoginDto => ({
+  email: 'test@example.com',
+  password: 'SecureP@ss123',
+  ...overrides,
+});
+
+export const createSignupDto = (overrides?: Partial<SignupDto>): SignupDto => ({
+  email: 'new@example.com',
+  password: 'SecureP@ss123',
+  firstName: 'Jane',
+  lastName: 'Doe',
+  ...overrides,
+});
+```
+
+## Test Organization
+
+### Describe Blocks
+
+```typescript
+describe('UserService', () => {
+  // Setup...
+
+  describe('findById', () => {
+    describe('when user exists', () => {
+      it('should return the user', async () => {
+        // ...
+      });
+    });
+
+    describe('when user does not exist', () => {
+      it('should throw NotFoundException', async () => {
+        // ...
+      });
+    });
+  });
+
+  describe('create', () => {
+    describe('with valid data', () => {
+      it('should create user', async () => {
+        // ...
+      });
+
+      it('should hash password', async () => {
+        // ...
+      });
+    });
+
+    describe('with duplicate email', () => {
+      it('should throw ConflictException', async () => {
+        // ...
+      });
+    });
+  });
+});
+```
+
+## Test Utilities
+
+### Custom Matchers
+
+```typescript
+// test/matchers.ts
+expect.extend({
+  toBeValidUuid(received: string) {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const pass = uuidRegex.test(received);
+    return {
+      pass,
+      message: () => `expected ${received} ${pass ? 'not ' : ''}to be a valid UUID`,
+    };
+  },
+});
+
+// Usage
+expect(user.id).toBeValidUuid();
+```
+
+### Test Helpers
+
+```typescript
+// test/helpers.ts
+export const waitFor = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+export const createTestModule = async (providers: any[]) => {
+  return Test.createTestingModule({
+    providers,
+  }).compile();
+};
+```
+
+## Best Practices
+
+<Accordion title="Test Behavior, Not Implementation">
+```typescript
+// ✅ Good - test behavior
+it('should return user data', async () => {
+  const result = await service.findById('1');
+  expect(result.email).toBe('test@example.com');
+});
+
+// ❌ Avoid - testing implementation details
+it('should call repository.findById', async () => {
+  await service.findById('1');
+  expect(repository.findById).toHaveBeenCalledTimes(1);
+});
+```
+</Accordion>
+
+<Accordion title="One Assert Per Test (When Possible)">
+```typescript
+// ✅ Good - focused tests
+describe('create', () => {
+  it('should return created user', async () => {
+    const result = await service.create(dto);
+    expect(result.id).toBeDefined();
+  });
+
+  it('should set email verified to false', async () => {
+    const result = await service.create(dto);
+    expect(result.emailVerified).toBe(false);
+  });
+});
+
+// ❌ Avoid - multiple unrelated assertions
+it('should create user correctly', async () => {
+  const result = await service.create(dto);
+  expect(result.id).toBeDefined();
+  expect(result.emailVerified).toBe(false);
+  expect(result.status).toBe('active');
+  // ... many more
+});
+```
+</Accordion>
+
+<Accordion title="Use Descriptive Test Names">
+```typescript
+// ✅ Good - descriptive names
+it('should throw NotFoundException when user does not exist', async () => {});
+it('should hash password before saving', async () => {});
+it('should send welcome email after registration', async () => {});
+
+// ❌ Avoid - vague names
+it('should work', async () => {});
+it('test findById', async () => {});
+it('error case', async () => {});
+```
+</Accordion>
+
+<Accordion title="Isolate Tests">
+```typescript
+// ✅ Good - clean state for each test
+beforeEach(() => {
+  jest.clearAllMocks();
+});
+
+// ❌ Avoid - shared mutable state
+let counter = 0;
+it('test 1', () => { counter++; });
+it('test 2', () => { expect(counter).toBe(1); }); // Depends on test 1
+```
+</Accordion>

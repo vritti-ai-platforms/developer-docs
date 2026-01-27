@@ -1,0 +1,1019 @@
+---
+title: Backup & Restore
+description: Database backup strategies and disaster recovery procedures
+---
+
+# Backup & Restore
+
+This guide covers database backup strategies, restore procedures, and disaster recovery planning for Vritti's PostgreSQL 17 databases.
+
+## Architecture Context
+
+Vritti uses a **multi-database architecture**:
+
+```
+PostgreSQL Cluster
+├── vritti_primary    # Primary database (cloud schema) - platform data
+├── vritti_acme       # Tenant: ACME Corp
+├── vritti_beta       # Tenant: Beta Inc
+└── vritti_corp       # Tenant: Corp LLC
+```
+
+<Note>
+  Backup strategies must account for both the primary database and all tenant databases. Missing a single tenant database in your backup strategy could result in complete data loss for that tenant.
+</Note>
+
+## Backup Strategies Overview
+
+### Strategy Comparison
+
+| Strategy | RPO | RTO | Complexity | Cost |
+|----------|-----|-----|------------|------|
+| Full Backup (pg_dump) | Daily | Hours | Low | Low |
+| Incremental (WAL) | Minutes | Minutes | Medium | Medium |
+| Point-in-Time Recovery | Seconds | Minutes | High | High |
+| Cloud Provider Snapshots | Daily | Minutes | Low | Medium |
+| Continuous Replication | Real-time | Seconds | High | High |
+
+<Info>
+  **RPO** (Recovery Point Objective): Maximum acceptable data loss in time.
+  **RTO** (Recovery Time Objective): Maximum acceptable downtime.
+</Info>
+
+### Recommended Approach by Environment
+
+```
+Development:
+  └── Manual pg_dump as needed
+
+Staging:
+  └── Daily pg_dump + weekly full backup
+
+Production:
+  ├── Continuous WAL archiving
+  ├── Daily full backups
+  ├── Cloud provider snapshots
+  └── Cross-region replication (for disaster recovery)
+```
+
+## Manual Backup Using pg_dump
+
+### Local Development (Docker)
+
+<Steps>
+  <Step title="Backup Primary Database">
+    ```bash
+    # Backup primary database from Docker container
+    docker exec vritti-postgres-17 pg_dump \
+      -U vritti \
+      -d vritti \
+      -n cloud \
+      -F c \
+      -f /tmp/vritti_primary_$(date +%Y%m%d_%H%M%S).dump
+
+    # Copy backup from container to host
+    docker cp vritti-postgres-17:/tmp/vritti_primary_*.dump ./backups/
+    ```
+  </Step>
+  <Step title="Backup Specific Tenant Database">
+    ```bash
+    # Backup a tenant database
+    docker exec vritti-postgres-17 pg_dump \
+      -U vritti \
+      -d vritti_acme \
+      -F c \
+      -f /tmp/vritti_acme_$(date +%Y%m%d_%H%M%S).dump
+
+    docker cp vritti-postgres-17:/tmp/vritti_acme_*.dump ./backups/
+    ```
+  </Step>
+  <Step title="Backup All Databases">
+    ```bash
+    # Backup entire PostgreSQL cluster
+    docker exec vritti-postgres-17 pg_dumpall \
+      -U vritti \
+      -f /tmp/vritti_all_$(date +%Y%m%d_%H%M%S).sql
+
+    docker cp vritti-postgres-17:/tmp/vritti_all_*.sql ./backups/
+    ```
+  </Step>
+</Steps>
+
+### Production Server
+
+```bash
+# Full backup with compression (custom format)
+pg_dump \
+  -h $DB_HOST \
+  -U $DB_USER \
+  -d vritti \
+  -n cloud \
+  -F c \
+  -Z 9 \
+  -j 4 \
+  -f vritti_primary_$(date +%Y%m%d_%H%M%S).dump
+
+# Plain SQL backup (for inspection/portability)
+pg_dump \
+  -h $DB_HOST \
+  -U $DB_USER \
+  -d vritti \
+  -n cloud \
+  -F p \
+  --no-owner \
+  --no-acl \
+  -f vritti_primary_$(date +%Y%m%d_%H%M%S).sql
+```
+
+### pg_dump Options Reference
+
+| Option | Description |
+|--------|-------------|
+| `-F c` | Custom format (compressed, allows parallel restore) |
+| `-F p` | Plain SQL format (human-readable) |
+| `-F d` | Directory format (parallel dump) |
+| `-Z 9` | Maximum compression level |
+| `-j 4` | Use 4 parallel jobs |
+| `-n cloud` | Only backup 'cloud' schema |
+| `--no-owner` | Skip ownership commands |
+| `--no-acl` | Skip access privilege commands |
+| `--data-only` | Backup data without schema |
+| `--schema-only` | Backup schema without data |
+
+## Automated Backup Scheduling
+
+### Backup Script
+
+Create a comprehensive backup script:
+
+```bash
+#!/bin/bash
+# /opt/vritti/scripts/backup-databases.sh
+
+set -euo pipefail
+
+# Configuration
+BACKUP_DIR="/var/backups/vritti"
+RETENTION_DAYS=30
+DATE=$(date +%Y%m%d_%H%M%S)
+LOG_FILE="/var/log/vritti/backup.log"
+
+# Database credentials (use environment variables or secrets manager)
+DB_HOST="${DB_HOST:-localhost}"
+DB_USER="${DB_USER:-vritti}"
+DB_PORT="${DB_PORT:-5432}"
+
+# Ensure backup directory exists
+mkdir -p "$BACKUP_DIR/primary"
+mkdir -p "$BACKUP_DIR/tenants"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+backup_database() {
+    local db_name=$1
+    local output_dir=$2
+    local backup_file="${output_dir}/${db_name}_${DATE}.dump"
+
+    log "Starting backup: $db_name"
+
+    pg_dump \
+        -h "$DB_HOST" \
+        -p "$DB_PORT" \
+        -U "$DB_USER" \
+        -d "$db_name" \
+        -F c \
+        -Z 6 \
+        -j 4 \
+        -f "$backup_file" 2>> "$LOG_FILE"
+
+    if [ $? -eq 0 ]; then
+        local size=$(du -h "$backup_file" | cut -f1)
+        log "Completed backup: $db_name ($size)"
+        echo "$backup_file"
+    else
+        log "ERROR: Backup failed for $db_name"
+        return 1
+    fi
+}
+
+# Backup primary database
+backup_database "vritti" "$BACKUP_DIR/primary"
+
+# Get list of tenant databases
+TENANT_DBS=$(psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d vritti -t -c \
+    "SELECT db_name FROM cloud.tenant_database_configs WHERE db_name IS NOT NULL;")
+
+# Backup each tenant database
+for tenant_db in $TENANT_DBS; do
+    tenant_db=$(echo "$tenant_db" | xargs)  # Trim whitespace
+    if [ -n "$tenant_db" ]; then
+        backup_database "$tenant_db" "$BACKUP_DIR/tenants"
+    fi
+done
+
+# Cleanup old backups
+log "Cleaning up backups older than $RETENTION_DAYS days"
+find "$BACKUP_DIR" -name "*.dump" -mtime +$RETENTION_DAYS -delete
+
+# Upload to cloud storage (optional)
+if [ -n "${S3_BUCKET:-}" ]; then
+    log "Uploading to S3: $S3_BUCKET"
+    aws s3 sync "$BACKUP_DIR" "s3://$S3_BUCKET/database-backups/" \
+        --exclude "*.log"
+fi
+
+log "Backup process completed"
+```
+
+### Cron Schedule
+
+```bash
+# /etc/cron.d/vritti-backups
+
+# Daily full backup at 2 AM
+0 2 * * * vritti /opt/vritti/scripts/backup-databases.sh
+
+# Hourly backup of primary database (business hours)
+0 9-18 * * 1-5 vritti /opt/vritti/scripts/backup-primary.sh
+
+# Weekly full cluster backup on Sunday
+0 3 * * 0 vritti pg_dumpall -h $DB_HOST -U $DB_USER > /var/backups/vritti/weekly/cluster_$(date +\%Y\%m\%d).sql
+```
+
+### Systemd Timer (Alternative to Cron)
+
+```ini
+# /etc/systemd/system/vritti-backup.service
+[Unit]
+Description=Vritti Database Backup
+After=network.target
+
+[Service]
+Type=oneshot
+User=vritti
+ExecStart=/opt/vritti/scripts/backup-databases.sh
+Environment="PGPASSWORD_FILE=/run/secrets/db_password"
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```ini
+# /etc/systemd/system/vritti-backup.timer
+[Unit]
+Description=Run Vritti Database Backup Daily
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+# Enable the timer
+sudo systemctl enable vritti-backup.timer
+sudo systemctl start vritti-backup.timer
+```
+
+## Point-in-Time Recovery (PITR)
+
+PITR allows recovery to any point in time using WAL (Write-Ahead Log) archiving.
+
+### Enable WAL Archiving
+
+```bash
+# postgresql.conf
+wal_level = replica
+archive_mode = on
+archive_command = 'cp %p /var/lib/postgresql/wal_archive/%f'
+archive_timeout = 60  # Archive every 60 seconds even if WAL not full
+```
+
+### Configure WAL Archive to S3
+
+```bash
+# postgresql.conf (using wal-g)
+archive_command = 'wal-g wal-push %p'
+restore_command = 'wal-g wal-fetch %f %p'
+```
+
+### Perform Point-in-Time Recovery
+
+<Steps>
+  <Step title="Stop PostgreSQL">
+    ```bash
+    sudo systemctl stop postgresql
+    ```
+  </Step>
+  <Step title="Restore Base Backup">
+    ```bash
+    # Clear existing data
+    rm -rf /var/lib/postgresql/17/main/*
+
+    # Restore base backup
+    pg_restore \
+      -d postgres \
+      -C \
+      /var/backups/vritti/base_backup.dump
+    ```
+  </Step>
+  <Step title="Configure Recovery">
+    ```bash
+    # Create recovery configuration
+    cat > /var/lib/postgresql/17/main/postgresql.auto.conf << EOF
+    restore_command = 'cp /var/lib/postgresql/wal_archive/%f %p'
+    recovery_target_time = '2026-01-27 14:30:00 UTC'
+    recovery_target_action = 'promote'
+    EOF
+
+    # Signal recovery mode
+    touch /var/lib/postgresql/17/main/recovery.signal
+    ```
+  </Step>
+  <Step title="Start PostgreSQL">
+    ```bash
+    sudo systemctl start postgresql
+    # PostgreSQL will replay WAL files until target time
+    ```
+  </Step>
+  <Step title="Verify Recovery">
+    ```bash
+    psql -c "SELECT pg_is_in_recovery();"
+    # Should return 'f' (false) after recovery completes
+    ```
+  </Step>
+</Steps>
+
+## Restore Procedures
+
+### Restore from Custom Format Dump
+
+```bash
+# Restore entire database
+pg_restore \
+  -h $DB_HOST \
+  -U $DB_USER \
+  -d postgres \
+  -C \
+  -c \
+  vritti_primary_20260127.dump
+
+# Restore to specific database (database must exist)
+pg_restore \
+  -h $DB_HOST \
+  -U $DB_USER \
+  -d vritti \
+  -c \
+  --if-exists \
+  vritti_primary_20260127.dump
+```
+
+### Restore from Plain SQL
+
+```bash
+# Create database first
+psql -h $DB_HOST -U $DB_USER -c "CREATE DATABASE vritti_restored;"
+
+# Restore from SQL file
+psql -h $DB_HOST -U $DB_USER -d vritti_restored -f vritti_primary_20260127.sql
+```
+
+### Restore Specific Schema or Table
+
+```bash
+# List contents of dump file
+pg_restore --list vritti_primary_20260127.dump
+
+# Restore only specific table
+pg_restore \
+  -h $DB_HOST \
+  -U $DB_USER \
+  -d vritti \
+  -t users \
+  vritti_primary_20260127.dump
+
+# Restore only cloud schema
+pg_restore \
+  -h $DB_HOST \
+  -U $DB_USER \
+  -d vritti \
+  -n cloud \
+  vritti_primary_20260127.dump
+```
+
+### Local Development Restore (Docker)
+
+```bash
+# Copy backup to container
+docker cp ./backups/vritti_primary_20260127.dump vritti-postgres-17:/tmp/
+
+# Restore (drop and recreate)
+docker exec vritti-postgres-17 pg_restore \
+  -U vritti \
+  -d vritti \
+  -c \
+  --if-exists \
+  /tmp/vritti_primary_20260127.dump
+```
+
+### pg_restore Options Reference
+
+| Option | Description |
+|--------|-------------|
+| `-C` | Create database before restore |
+| `-c` | Drop objects before recreating |
+| `--if-exists` | Don't error if objects don't exist |
+| `-j 4` | Use 4 parallel jobs |
+| `-t table` | Restore specific table |
+| `-n schema` | Restore specific schema |
+| `--data-only` | Restore only data |
+| `--schema-only` | Restore only schema |
+
+## Testing Backup Integrity
+
+### Automated Backup Verification
+
+```bash
+#!/bin/bash
+# /opt/vritti/scripts/verify-backup.sh
+
+set -euo pipefail
+
+BACKUP_FILE=$1
+TEST_DB="vritti_backup_test_$(date +%s)"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+cleanup() {
+    log "Cleaning up test database"
+    psql -h "$DB_HOST" -U "$DB_USER" -c "DROP DATABASE IF EXISTS $TEST_DB;"
+}
+
+trap cleanup EXIT
+
+# Create test database
+log "Creating test database: $TEST_DB"
+psql -h "$DB_HOST" -U "$DB_USER" -c "CREATE DATABASE $TEST_DB;"
+
+# Restore backup
+log "Restoring backup to test database"
+pg_restore \
+    -h "$DB_HOST" \
+    -U "$DB_USER" \
+    -d "$TEST_DB" \
+    "$BACKUP_FILE"
+
+# Verify data integrity
+log "Verifying data integrity"
+
+# Check table counts
+TABLES=$(psql -h "$DB_HOST" -U "$DB_USER" -d "$TEST_DB" -t -c \
+    "SELECT tablename FROM pg_tables WHERE schemaname = 'cloud';")
+
+for table in $TABLES; do
+    table=$(echo "$table" | xargs)
+    if [ -n "$table" ]; then
+        count=$(psql -h "$DB_HOST" -U "$DB_USER" -d "$TEST_DB" -t -c \
+            "SELECT COUNT(*) FROM cloud.$table;")
+        log "  $table: $count rows"
+    fi
+done
+
+# Run integrity checks
+log "Running ANALYZE"
+psql -h "$DB_HOST" -U "$DB_USER" -d "$TEST_DB" -c "ANALYZE;"
+
+# Check for corruption
+log "Checking for corruption"
+psql -h "$DB_HOST" -U "$DB_USER" -d "$TEST_DB" -c \
+    "SELECT schemaname, tablename, pg_relation_size(schemaname || '.' || tablename) as size
+     FROM pg_tables WHERE schemaname = 'cloud';"
+
+log "Backup verification completed successfully"
+```
+
+### Quarterly Recovery Drill
+
+<Steps>
+  <Step title="Schedule Recovery Test">
+    Plan quarterly disaster recovery drills:
+    - Q1: Primary database recovery
+    - Q2: Full cluster recovery
+    - Q3: Point-in-time recovery
+    - Q4: Cross-region failover
+  </Step>
+  <Step title="Document Recovery Time">
+    Record actual RTO for each drill:
+    ```
+    Recovery Drill Log
+    Date: 2026-01-27
+    Type: Primary database recovery
+    Backup Used: vritti_primary_20260127_020000.dump
+    Start Time: 10:00 AM
+    End Time: 10:45 AM
+    Actual RTO: 45 minutes
+    Issues: None
+    ```
+  </Step>
+  <Step title="Update Procedures">
+    After each drill, update documentation based on findings.
+  </Step>
+</Steps>
+
+## Backup Retention Policies
+
+### Recommended Retention Schedule
+
+```yaml
+# Backup retention policy
+retention:
+  # Keep hourly backups for 24 hours
+  hourly:
+    keep: 24
+    storage: local
+
+  # Keep daily backups for 30 days
+  daily:
+    keep: 30
+    storage: s3
+
+  # Keep weekly backups for 12 weeks
+  weekly:
+    keep: 12
+    storage: s3
+
+  # Keep monthly backups for 12 months
+  monthly:
+    keep: 12
+    storage: s3-glacier
+
+  # Keep yearly backups for 7 years (compliance)
+  yearly:
+    keep: 7
+    storage: s3-glacier-deep-archive
+```
+
+### Retention Script
+
+```bash
+#!/bin/bash
+# /opt/vritti/scripts/cleanup-backups.sh
+
+BACKUP_DIR="/var/backups/vritti"
+
+# Cleanup local backups (keep 7 days)
+find "$BACKUP_DIR" -name "*.dump" -mtime +7 -delete
+
+# Move old backups to cold storage
+aws s3 mv \
+    s3://vritti-backups/daily/ \
+    s3://vritti-backups-archive/monthly/ \
+    --recursive \
+    --exclude "*" \
+    --include "*_01_*.dump" \
+    --storage-class GLACIER
+
+# Cleanup S3 (Lifecycle policy handles this automatically)
+# Configured in S3 bucket settings
+```
+
+### S3 Lifecycle Policy
+
+```json
+{
+  "Rules": [
+    {
+      "ID": "TransitionToGlacier",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "database-backups/"
+      },
+      "Transitions": [
+        {
+          "Days": 30,
+          "StorageClass": "STANDARD_IA"
+        },
+        {
+          "Days": 90,
+          "StorageClass": "GLACIER"
+        },
+        {
+          "Days": 365,
+          "StorageClass": "DEEP_ARCHIVE"
+        }
+      ],
+      "Expiration": {
+        "Days": 2555
+      }
+    }
+  ]
+}
+```
+
+## Multi-Tenant Backup Considerations
+
+### Tenant-Specific Backup Schedule
+
+Different tenants may require different backup strategies:
+
+```typescript
+// Tenant backup configuration
+interface TenantBackupConfig {
+  tenantId: string;
+  backupFrequency: 'hourly' | 'daily' | 'weekly';
+  retentionDays: number;
+  pointInTimeRecovery: boolean;
+  crossRegionReplication: boolean;
+}
+
+// Example configurations
+const backupConfigs: TenantBackupConfig[] = [
+  {
+    tenantId: 'enterprise-customer',
+    backupFrequency: 'hourly',
+    retentionDays: 90,
+    pointInTimeRecovery: true,
+    crossRegionReplication: true,
+  },
+  {
+    tenantId: 'standard-customer',
+    backupFrequency: 'daily',
+    retentionDays: 30,
+    pointInTimeRecovery: false,
+    crossRegionReplication: false,
+  },
+];
+```
+
+### Tenant Data Export
+
+Allow tenants to export their own data:
+
+```typescript
+@Injectable()
+export class TenantBackupService {
+  async exportTenantData(tenantId: string): Promise<string> {
+    const tenant = await this.tenantRepo.findById(tenantId);
+    const exportPath = `/tmp/export_${tenantId}_${Date.now()}.json`;
+
+    // Export tenant-specific tables
+    const tables = ['products', 'orders', 'customers', 'invoices'];
+
+    const exportData: Record<string, unknown[]> = {};
+
+    for (const table of tables) {
+      const data = await this.tenantDb.drizzleClient
+        .select()
+        .from(schema[table]);
+      exportData[table] = data;
+    }
+
+    await fs.writeFile(exportPath, JSON.stringify(exportData, null, 2));
+
+    // Upload to tenant's S3 bucket or secure location
+    const downloadUrl = await this.uploadToSecureStorage(exportPath, tenantId);
+
+    return downloadUrl;
+  }
+}
+```
+
+### Isolated Tenant Recovery
+
+Recover a single tenant without affecting others:
+
+```bash
+#!/bin/bash
+# recover-tenant.sh
+
+TENANT_ID=$1
+BACKUP_FILE=$2
+
+# Get tenant database name
+TENANT_DB=$(psql -h "$DB_HOST" -U "$DB_USER" -d vritti -t -c \
+    "SELECT db_name FROM cloud.tenant_database_configs WHERE tenant_id = '$TENANT_ID';")
+
+TENANT_DB=$(echo "$TENANT_DB" | xargs)
+
+if [ -z "$TENANT_DB" ]; then
+    echo "Tenant not found: $TENANT_ID"
+    exit 1
+fi
+
+echo "Recovering tenant database: $TENANT_DB"
+
+# Create temporary database for recovery
+TEMP_DB="${TENANT_DB}_recovery_$(date +%s)"
+psql -h "$DB_HOST" -U "$DB_USER" -c "CREATE DATABASE $TEMP_DB;"
+
+# Restore to temporary database
+pg_restore -h "$DB_HOST" -U "$DB_USER" -d "$TEMP_DB" "$BACKUP_FILE"
+
+# Verify recovery
+echo "Verify the recovered data in: $TEMP_DB"
+echo "To complete recovery, rename databases:"
+echo "  1. Rename $TENANT_DB to ${TENANT_DB}_old"
+echo "  2. Rename $TEMP_DB to $TENANT_DB"
+echo "  3. Restart application connections"
+```
+
+## Disaster Recovery Planning
+
+### Recovery Scenarios
+
+<AccordionGroup>
+  <Accordion title="Scenario 1: Single Table Corruption">
+    **Symptoms**: Queries on specific table fail, data appears incorrect
+    **Recovery Time**: 15-30 minutes
+    **Procedure**:
+    1. Identify corrupted table
+    2. Restore table from latest backup
+    ```bash
+    pg_restore -h $DB_HOST -U $DB_USER -d vritti -t users \
+      /var/backups/vritti/primary/vritti_20260127.dump
+    ```
+  </Accordion>
+
+  <Accordion title="Scenario 2: Database Corruption">
+    **Symptoms**: Database fails to start, multiple tables affected
+    **Recovery Time**: 1-2 hours
+    **Procedure**:
+    1. Stop application
+    2. Create new database from backup
+    3. Update connection strings
+    4. Restart application
+  </Accordion>
+
+  <Accordion title="Scenario 3: Complete Server Failure">
+    **Symptoms**: Server unreachable, all databases unavailable
+    **Recovery Time**: 2-4 hours
+    **Procedure**:
+    1. Provision new server
+    2. Install PostgreSQL 17
+    3. Restore from latest backup
+    4. Replay WAL files for point-in-time recovery
+    5. Update DNS/load balancer
+    6. Verify data integrity
+  </Accordion>
+
+  <Accordion title="Scenario 4: Region Outage">
+    **Symptoms**: Entire cloud region unavailable
+    **Recovery Time**: 4-8 hours
+    **Procedure**:
+    1. Activate cross-region replica
+    2. Promote replica to primary
+    3. Update DNS to point to new region
+    4. Notify affected tenants
+  </Accordion>
+</AccordionGroup>
+
+### Disaster Recovery Runbook
+
+```markdown
+# Vritti Database Disaster Recovery Runbook
+
+## Pre-requisites
+- [ ] Access to backup storage (S3/GCS)
+- [ ] Database admin credentials
+- [ ] Server provisioning access
+- [ ] DNS management access
+
+## Step 1: Assess Situation (5-10 minutes)
+- Identify scope of failure
+- Determine last known good backup
+- Notify stakeholders
+
+## Step 2: Provision Infrastructure (15-30 minutes)
+- Launch new database server
+- Configure security groups
+- Install PostgreSQL 17
+
+## Step 3: Restore Data (30-60 minutes)
+- Download latest backup
+- Restore primary database
+- Restore tenant databases
+- Apply WAL files if available
+
+## Step 4: Verify Recovery (15-30 minutes)
+- Run integrity checks
+- Verify row counts
+- Test application connectivity
+
+## Step 5: Cutover (5-10 minutes)
+- Update DNS records
+- Restart application services
+- Monitor for errors
+
+## Step 6: Post-Recovery (ongoing)
+- Document incident
+- Update backup procedures
+- Schedule post-mortem
+```
+
+## Cloud Provider Backup Features
+
+### AWS RDS
+
+<Tabs>
+  <Tab title="Automated Backups">
+    ```bash
+    # Enable automated backups via AWS CLI
+    aws rds modify-db-instance \
+      --db-instance-identifier vritti-production \
+      --backup-retention-period 30 \
+      --preferred-backup-window "02:00-03:00" \
+      --apply-immediately
+    ```
+
+    Features:
+    - Automatic daily snapshots
+    - Transaction log backups every 5 minutes
+    - Point-in-time recovery to any second
+    - Retention up to 35 days
+  </Tab>
+  <Tab title="Manual Snapshots">
+    ```bash
+    # Create manual snapshot
+    aws rds create-db-snapshot \
+      --db-instance-identifier vritti-production \
+      --db-snapshot-identifier vritti-pre-migration-20260127
+
+    # Copy snapshot to another region
+    aws rds copy-db-snapshot \
+      --source-db-snapshot-identifier arn:aws:rds:us-east-1:123456789:snapshot:vritti-pre-migration-20260127 \
+      --target-db-snapshot-identifier vritti-pre-migration-20260127 \
+      --region us-west-2
+    ```
+  </Tab>
+  <Tab title="Restore from Snapshot">
+    ```bash
+    # Restore to new instance
+    aws rds restore-db-instance-from-db-snapshot \
+      --db-instance-identifier vritti-restored \
+      --db-snapshot-identifier vritti-pre-migration-20260127 \
+      --db-instance-class db.r6g.large
+
+    # Point-in-time restore
+    aws rds restore-db-instance-to-point-in-time \
+      --source-db-instance-identifier vritti-production \
+      --target-db-instance-identifier vritti-pitr-restore \
+      --restore-time "2026-01-27T14:30:00Z"
+    ```
+  </Tab>
+</Tabs>
+
+### Google Cloud SQL
+
+<Tabs>
+  <Tab title="Automated Backups">
+    ```bash
+    # Enable automated backups
+    gcloud sql instances patch vritti-production \
+      --backup-start-time 02:00 \
+      --enable-bin-log \
+      --retained-backups-count 30
+
+    # Enable point-in-time recovery
+    gcloud sql instances patch vritti-production \
+      --enable-point-in-time-recovery
+    ```
+  </Tab>
+  <Tab title="On-Demand Backup">
+    ```bash
+    # Create on-demand backup
+    gcloud sql backups create \
+      --instance vritti-production \
+      --description "Pre-migration backup"
+
+    # List backups
+    gcloud sql backups list --instance vritti-production
+    ```
+  </Tab>
+  <Tab title="Restore">
+    ```bash
+    # Restore from backup
+    gcloud sql backups restore BACKUP_ID \
+      --restore-instance vritti-production
+
+    # Point-in-time restore to new instance
+    gcloud sql instances clone vritti-production vritti-pitr-restore \
+      --point-in-time "2026-01-27T14:30:00Z"
+    ```
+  </Tab>
+</Tabs>
+
+### Azure Database for PostgreSQL
+
+<Tabs>
+  <Tab title="Configuration">
+    ```bash
+    # Configure backup retention
+    az postgres flexible-server update \
+      --resource-group vritti-rg \
+      --name vritti-production \
+      --backup-retention 30
+
+    # Enable geo-redundant backup
+    az postgres flexible-server update \
+      --resource-group vritti-rg \
+      --name vritti-production \
+      --geo-redundant-backup Enabled
+    ```
+  </Tab>
+  <Tab title="Restore">
+    ```bash
+    # Point-in-time restore
+    az postgres flexible-server restore \
+      --resource-group vritti-rg \
+      --name vritti-pitr-restore \
+      --source-server vritti-production \
+      --restore-time "2026-01-27T14:30:00Z"
+
+    # Geo-restore (cross-region)
+    az postgres flexible-server geo-restore \
+      --resource-group vritti-rg \
+      --name vritti-geo-restore \
+      --source-server vritti-production \
+      --location westus2
+    ```
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Test Restores Regularly" icon="vial">
+    Backups are useless if they can't be restored. Test monthly.
+  </Card>
+  <Card title="Encrypt Backups" icon="lock">
+    Use AES-256 encryption for backups at rest and in transit.
+  </Card>
+  <Card title="Monitor Backup Jobs" icon="bell">
+    Alert on backup failures immediately. Don't wait for disaster.
+  </Card>
+  <Card title="Document Everything" icon="book">
+    Keep runbooks updated. Disaster isn't the time to figure things out.
+  </Card>
+  <Card title="Separate Storage" icon="warehouse">
+    Store backups in different regions/accounts than production.
+  </Card>
+  <Card title="Version Control Scripts" icon="code-branch">
+    Keep backup/restore scripts in version control.
+  </Card>
+</CardGroup>
+
+## Monitoring & Alerts
+
+### Backup Monitoring Checklist
+
+```yaml
+# Monitoring checks
+alerts:
+  - name: backup_failed
+    condition: backup job exit code != 0
+    severity: critical
+    notify: [ops-team, on-call]
+
+  - name: backup_size_anomaly
+    condition: backup size < 80% of previous day
+    severity: warning
+    notify: [ops-team]
+
+  - name: backup_age
+    condition: latest backup > 25 hours old
+    severity: critical
+    notify: [ops-team, on-call]
+
+  - name: storage_space
+    condition: backup storage > 80% capacity
+    severity: warning
+    notify: [ops-team]
+```
+
+### Prometheus Metrics
+
+```yaml
+# Backup metrics to track
+- vritti_backup_last_success_timestamp
+- vritti_backup_duration_seconds
+- vritti_backup_size_bytes
+- vritti_backup_tables_count
+- vritti_restore_test_last_success_timestamp
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Multi-Tenant Schemas" icon="layer-group" href="/architecture/database/multi-tenant-schemas">
+    Understand the database architecture
+  </Card>
+  <Card title="Migrations" icon="code-merge" href="/architecture/database/migrations">
+    Database migration workflow
+  </Card>
+</CardGroup>

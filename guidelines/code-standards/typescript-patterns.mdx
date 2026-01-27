@@ -1,0 +1,395 @@
+---
+title: TypeScript Patterns
+description: TypeScript configuration and best practices for Vritti projects
+---
+
+# TypeScript Patterns
+
+All Vritti projects use TypeScript with strict type safety. This guide covers the TypeScript configurations and patterns used across the codebase.
+
+## TypeScript Configuration
+
+### Backend (NestJS)
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "resolvePackageJsonExports": true,
+    "declaration": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "incremental": true,
+    "skipLibCheck": true,
+    "strictNullChecks": true,
+    "forceConsistentCasingInFileNames": true,
+    "noImplicitAny": false,
+    "paths": {
+      "@/*": ["src/*"],
+      "@/generated/*": ["src/generated/*"],
+      "@/db/*": ["src/db/*"]
+    }
+  }
+}
+```
+
+### Frontend (React)
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["DOM", "ES2020"],
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
+}
+```
+
+## Key Configuration Differences
+
+| Feature | Backend | Frontend |
+|---------|---------|----------|
+| **Target** | ES2023 | ES2020 |
+| **Module** | nodenext | ESNext |
+| **Module Resolution** | nodenext | bundler |
+| **Decorators** | Enabled | Not needed |
+| **Strict Mode** | Partial | Full |
+
+## Type Inference Patterns
+
+### Zod Schema Inference
+
+```typescript
+import { z } from 'zod';
+
+// Define schema
+export const loginSchema = z.object({
+  email: z.string().email('Please enter a valid email address'),
+  password: z.string().min(1, 'Password is required'),
+});
+
+// Infer type from schema
+export type LoginFormData = z.infer<typeof loginSchema>;
+
+// Result: { email: string; password: string }
+```
+
+### Drizzle ORM Type Inference
+
+```typescript
+import { InferInsertModel, InferSelectModel } from 'drizzle-orm';
+import { users } from '@/db/schema';
+
+// Infer types from table definition
+type UserInsert = InferInsertModel<typeof users>;
+type UserSelect = InferSelectModel<typeof users>;
+```
+
+### Generic Repository Pattern
+
+```typescript
+import type { PgTable, InferInsertModel, InferSelectModel } from 'drizzle-orm/pg-core';
+
+export abstract class BaseRepository<
+  TTable extends PgTable,
+  TInsert = InferInsertModel<TTable>,
+  TSelect = InferSelectModel<TTable>,
+> {
+  protected abstract table: TTable;
+
+  async create(data: TInsert): Promise<TSelect> {
+    // Implementation
+  }
+
+  async findById(id: string): Promise<TSelect | null> {
+    // Implementation
+  }
+}
+```
+
+## Type Guards
+
+### Exhaustive Switch Pattern
+
+```typescript
+type OnboardingStep =
+  | 'EMAIL_VERIFICATION'
+  | 'PHONE_VERIFICATION'
+  | 'SET_PASSWORD'
+  | 'MFA_SETUP'
+  | 'COMPLETED';
+
+function getStepRoute(step: OnboardingStep): string {
+  switch (step) {
+    case 'EMAIL_VERIFICATION':
+      return '/onboarding/verify-email';
+    case 'PHONE_VERIFICATION':
+      return '/onboarding/verify-mobile';
+    case 'SET_PASSWORD':
+      return '/onboarding/set-password';
+    case 'MFA_SETUP':
+      return '/onboarding/mfa-setup';
+    case 'COMPLETED':
+      return '/dashboard';
+    default:
+      // TypeScript ensures all cases are handled
+      const _exhaustive: never = step;
+      throw new Error(`Unhandled step: ${_exhaustive}`);
+  }
+}
+```
+
+### API Error Type Guard
+
+```typescript
+interface ApiErrorResponse {
+  message?: string;
+  error?: string;
+  errors?: FieldError[];
+}
+
+function isApiError(error: unknown): error is { response: { data: ApiErrorResponse } } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'response' in error &&
+    typeof (error as any).response?.data === 'object'
+  );
+}
+
+// Usage
+try {
+  await api.post('/users');
+} catch (error) {
+  if (isApiError(error)) {
+    const message = error.response.data.message;
+    // TypeScript knows message is string | undefined
+  }
+}
+```
+
+## Utility Types
+
+### Component Props Pattern
+
+```typescript
+import type { ComponentPropsWithoutRef, ReactNode } from 'react';
+
+// Extend HTML element props
+interface ButtonProps extends ComponentPropsWithoutRef<'button'> {
+  variant?: 'primary' | 'secondary' | 'outline';
+  loading?: boolean;
+  children: ReactNode;
+}
+
+// Usage
+export const Button = ({ variant = 'primary', loading, children, ...props }: ButtonProps) => {
+  return (
+    <button disabled={loading} {...props}>
+      {loading ? 'Loading...' : children}
+    </button>
+  );
+};
+```
+
+### Omit and Pick Patterns
+
+```typescript
+import type { UseMutationOptions } from '@tanstack/react-query';
+
+// Omit mutationFn to provide it internally
+type UseLoginOptions = Omit<
+  UseMutationOptions<LoginResponse, Error, LoginDto>,
+  'mutationFn'
+>;
+
+export const useLogin = (options?: UseLoginOptions) => {
+  return useMutation<LoginResponse, Error, LoginDto>({
+    mutationFn: (data: LoginDto) => login(data),
+    ...options,
+  });
+};
+```
+
+### Partial Updates
+
+```typescript
+interface User {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  createdAt: Date;
+}
+
+// Only require specific fields
+type UpdateUserDto = Partial<Pick<User, 'firstName' | 'lastName'>>;
+
+async function updateUser(id: string, data: UpdateUserDto): Promise<User> {
+  // data can be { firstName?: string; lastName?: string }
+}
+```
+
+## Decorator Types (NestJS)
+
+### Injectable Service
+
+```typescript
+import { Injectable, Logger } from '@nestjs/common';
+
+@Injectable()
+export class UserService {
+  private readonly logger = new Logger(UserService.name);
+
+  constructor(
+    private readonly userRepository: UserRepository,
+    private readonly encryptionService: EncryptionService,
+  ) {}
+}
+```
+
+### Controller with Route Parameters
+
+```typescript
+import { Controller, Get, Post, Body, Param, ParseUUIDPipe } from '@nestjs/common';
+import type { CreateUserDto } from './dto/create-user.dto';
+
+@Controller('users')
+export class UserController {
+  @Get(':id')
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
+    return this.userService.findById(id);
+  }
+
+  @Post()
+  create(@Body() dto: CreateUserDto) {
+    return this.userService.create(dto);
+  }
+}
+```
+
+## React Hook Types
+
+### Custom Hook with Generic
+
+```typescript
+import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
+
+interface User {
+  id: string;
+  email: string;
+}
+
+type UseUserOptions = Omit<UseQueryOptions<User, Error>, 'queryKey' | 'queryFn'>;
+
+export const useUser = (userId: string, options?: UseUserOptions) => {
+  return useQuery<User, Error>({
+    queryKey: ['user', userId],
+    queryFn: () => fetchUser(userId),
+    ...options,
+  });
+};
+```
+
+### Form Hook Integration
+
+```typescript
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import type { z } from 'zod';
+
+const schema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+});
+
+type FormData = z.infer<typeof schema>;
+
+export const LoginForm = () => {
+  const form = useForm<FormData>({
+    resolver: zodResolver(schema),
+    defaultValues: {
+      email: '',
+      password: '',
+    },
+  });
+
+  // form.handleSubmit receives FormData
+  const onSubmit = (data: FormData) => {
+    console.log(data.email); // TypeScript knows this is string
+  };
+};
+```
+
+## Best Practices
+
+<Accordion title="Avoid `any` - Use `unknown` Instead">
+```typescript
+// Bad
+function processData(data: any) {
+  return data.value; // No type safety
+}
+
+// Good
+function processData(data: unknown) {
+  if (typeof data === 'object' && data !== null && 'value' in data) {
+    return (data as { value: string }).value;
+  }
+  throw new Error('Invalid data');
+}
+```
+</Accordion>
+
+<Accordion title="Use Const Assertions for Literals">
+```typescript
+// Without const assertion
+const routes = {
+  home: '/',
+  login: '/login',
+}; // Type: { home: string; login: string }
+
+// With const assertion
+const routes = {
+  home: '/',
+  login: '/login',
+} as const; // Type: { readonly home: "/"; readonly login: "/login" }
+```
+</Accordion>
+
+<Accordion title="Discriminated Unions for State">
+```typescript
+type LoadingState<T> =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; data: T }
+  | { status: 'error'; error: Error };
+
+function renderState<T>(state: LoadingState<T>) {
+  switch (state.status) {
+    case 'idle':
+      return null;
+    case 'loading':
+      return <Spinner />;
+    case 'success':
+      return <Data value={state.data} />; // TypeScript knows data exists
+    case 'error':
+      return <Error message={state.error.message} />;
+  }
+}
+```
+</Accordion>

@@ -1,0 +1,519 @@
+---
+title: E2E Tests
+description: End-to-end testing patterns with Supertest for API endpoints
+---
+
+# E2E Tests
+
+End-to-end tests verify the entire request/response cycle of API endpoints. Vritti uses Supertest with Jest for E2E testing.
+
+## Configuration
+
+### E2E Jest Config
+
+```json title="test/jest-e2e.json"
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testEnvironment": "node",
+  "testRegex": ".e2e-spec.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
+  "setupFilesAfterEnv": ["./setup.ts"],
+  "testTimeout": 30000
+}
+```
+
+### Test Script
+
+```bash
+npm run test:e2e
+```
+
+## Basic E2E Test
+
+### Application Setup
+
+```typescript
+// test/app.e2e-spec.ts
+import type { INestApplication } from '@nestjs/common';
+import { Test, type TestingModule } from '@nestjs/testing';
+import request from 'supertest';
+import { AppModule } from '../src/app.module';
+
+describe('AppController (e2e)', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+
+    // Apply same configuration as main.ts
+    app.useGlobalPipes(new ValidationPipe({
+      whitelist: true,
+      transform: true,
+    }));
+    app.useGlobalFilters(new HttpExceptionFilter());
+
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('/ (GET)', () => {
+    return request(app.getHttpServer())
+      .get('/')
+      .expect(200)
+      .expect('Hello World!');
+  });
+});
+```
+
+## CRUD Endpoint Tests
+
+### User API E2E Tests
+
+```typescript
+// test/user.e2e-spec.ts
+describe('UserController (e2e)', () => {
+  let app: INestApplication;
+  let authToken: string;
+  let createdUserId: string;
+
+  beforeAll(async () => {
+    const moduleFixture = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalFilters(new HttpExceptionFilter());
+    await app.init();
+
+    // Get auth token for protected endpoints
+    const loginResponse = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: 'admin@example.com', password: 'AdminP@ss123' });
+
+    authToken = loginResponse.body.accessToken;
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  describe('POST /users', () => {
+    it('should create a new user', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/users')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          email: 'newuser@example.com',
+          firstName: 'New',
+          lastName: 'User',
+          password: 'SecureP@ss123',
+        })
+        .expect(201);
+
+      expect(response.body).toMatchObject({
+        email: 'newuser@example.com',
+        firstName: 'New',
+        lastName: 'User',
+      });
+      expect(response.body.id).toBeDefined();
+      expect(response.body.passwordHash).toBeUndefined(); // Should not expose
+
+      createdUserId = response.body.id;
+    });
+
+    it('should return 400 for invalid email', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/users')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          email: 'invalid-email',
+          firstName: 'Test',
+          lastName: 'User',
+          password: 'SecureP@ss123',
+        })
+        .expect(400);
+
+      expect(response.body.errors).toContainEqual(
+        expect.objectContaining({
+          field: 'email',
+          message: expect.stringContaining('email'),
+        }),
+      );
+    });
+
+    it('should return 401 without auth token', async () => {
+      await request(app.getHttpServer())
+        .post('/users')
+        .send({
+          email: 'test@example.com',
+          firstName: 'Test',
+          lastName: 'User',
+          password: 'SecureP@ss123',
+        })
+        .expect(401);
+    });
+
+    it('should return 409 for duplicate email', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/users')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          email: 'newuser@example.com', // Already created
+          firstName: 'Duplicate',
+          lastName: 'User',
+          password: 'SecureP@ss123',
+        })
+        .expect(409);
+
+      expect(response.body.errors[0].field).toBe('email');
+    });
+  });
+
+  describe('GET /users/:id', () => {
+    it('should return user by ID', async () => {
+      const response = await request(app.getHttpServer())
+        .get(`/users/${createdUserId}`)
+        .set('Authorization', `Bearer ${authToken}`)
+        .expect(200);
+
+      expect(response.body.id).toBe(createdUserId);
+      expect(response.body.email).toBe('newuser@example.com');
+    });
+
+    it('should return 404 for non-existent user', async () => {
+      await request(app.getHttpServer())
+        .get('/users/00000000-0000-0000-0000-000000000000')
+        .set('Authorization', `Bearer ${authToken}`)
+        .expect(404);
+    });
+
+    it('should return 400 for invalid UUID', async () => {
+      await request(app.getHttpServer())
+        .get('/users/invalid-id')
+        .set('Authorization', `Bearer ${authToken}`)
+        .expect(400);
+    });
+  });
+
+  describe('PATCH /users/:id', () => {
+    it('should update user', async () => {
+      const response = await request(app.getHttpServer())
+        .patch(`/users/${createdUserId}`)
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ firstName: 'Updated' })
+        .expect(200);
+
+      expect(response.body.firstName).toBe('Updated');
+    });
+  });
+
+  describe('DELETE /users/:id', () => {
+    it('should delete user', async () => {
+      await request(app.getHttpServer())
+        .delete(`/users/${createdUserId}`)
+        .set('Authorization', `Bearer ${authToken}`)
+        .expect(200);
+
+      // Verify deleted
+      await request(app.getHttpServer())
+        .get(`/users/${createdUserId}`)
+        .set('Authorization', `Bearer ${authToken}`)
+        .expect(404);
+    });
+  });
+});
+```
+
+## Authentication E2E Tests
+
+```typescript
+// test/auth.e2e-spec.ts
+describe('AuthController (e2e)', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    // Setup...
+  });
+
+  describe('POST /auth/login', () => {
+    it('should return tokens for valid credentials', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'test@example.com',
+          password: 'ValidP@ss123',
+        })
+        .expect(200);
+
+      expect(response.body).toMatchObject({
+        accessToken: expect.any(String),
+        expiresIn: expect.any(Number),
+        user: expect.objectContaining({
+          email: 'test@example.com',
+        }),
+      });
+    });
+
+    it('should return 401 for invalid password', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'test@example.com',
+          password: 'wrongpassword',
+        })
+        .expect(401);
+
+      expect(response.body.title).toBe('Unauthorized');
+    });
+
+    it('should return MFA challenge when MFA enabled', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'mfa-user@example.com',
+          password: 'ValidP@ss123',
+        })
+        .expect(200);
+
+      expect(response.body).toMatchObject({
+        requiresMfa: true,
+        mfaChallenge: expect.objectContaining({
+          sessionId: expect.any(String),
+          methods: expect.any(Array),
+        }),
+      });
+    });
+  });
+
+  describe('POST /auth/signup', () => {
+    it('should create new user', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/signup')
+        .send({
+          email: 'signup-test@example.com',
+          password: 'SecureP@ss123',
+          firstName: 'Sign',
+          lastName: 'Up',
+        })
+        .expect(201);
+
+      expect(response.body.user.email).toBe('signup-test@example.com');
+      expect(response.body.accessToken).toBeDefined();
+    });
+
+    it('should validate password strength', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/signup')
+        .send({
+          email: 'weak@example.com',
+          password: 'weak', // Too short, no uppercase, etc.
+          firstName: 'Test',
+          lastName: 'User',
+        })
+        .expect(400);
+
+      expect(response.body.errors).toContainEqual(
+        expect.objectContaining({
+          field: 'password',
+        }),
+      );
+    });
+  });
+
+  describe('POST /auth/refresh', () => {
+    it('should refresh token', async () => {
+      // First, login to get refresh token cookie
+      const loginResponse = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'test@example.com',
+          password: 'ValidP@ss123',
+        });
+
+      const cookies = loginResponse.headers['set-cookie'];
+
+      // Then refresh
+      const response = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', cookies)
+        .expect(200);
+
+      expect(response.body.accessToken).toBeDefined();
+    });
+  });
+});
+```
+
+## Pagination E2E Tests
+
+```typescript
+describe('Pagination (e2e)', () => {
+  describe('GET /users', () => {
+    it('should paginate results', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/users')
+        .query({ page: 1, limit: 10 })
+        .set('Authorization', `Bearer ${authToken}`)
+        .expect(200);
+
+      expect(response.body).toMatchObject({
+        data: expect.any(Array),
+        meta: {
+          page: 1,
+          limit: 10,
+          total: expect.any(Number),
+          totalPages: expect.any(Number),
+        },
+      });
+      expect(response.body.data.length).toBeLessThanOrEqual(10);
+    });
+
+    it('should filter by status', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/users')
+        .query({ status: 'active' })
+        .set('Authorization', `Bearer ${authToken}`)
+        .expect(200);
+
+      response.body.data.forEach((user: any) => {
+        expect(user.status).toBe('active');
+      });
+    });
+
+    it('should search by name', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/users')
+        .query({ search: 'john' })
+        .set('Authorization', `Bearer ${authToken}`)
+        .expect(200);
+
+      response.body.data.forEach((user: any) => {
+        const fullName = `${user.firstName} ${user.lastName}`.toLowerCase();
+        expect(fullName).toContain('john');
+      });
+    });
+  });
+});
+```
+
+## Test Helpers
+
+### Request Helpers
+
+```typescript
+// test/helpers/request.ts
+import request from 'supertest';
+
+export class TestClient {
+  constructor(private app: INestApplication) {}
+
+  private authToken?: string;
+
+  async login(email: string, password: string) {
+    const response = await request(this.app.getHttpServer())
+      .post('/auth/login')
+      .send({ email, password });
+
+    this.authToken = response.body.accessToken;
+    return response;
+  }
+
+  get(url: string) {
+    const req = request(this.app.getHttpServer()).get(url);
+    if (this.authToken) {
+      req.set('Authorization', `Bearer ${this.authToken}`);
+    }
+    return req;
+  }
+
+  post(url: string) {
+    const req = request(this.app.getHttpServer()).post(url);
+    if (this.authToken) {
+      req.set('Authorization', `Bearer ${this.authToken}`);
+    }
+    return req;
+  }
+
+  // ... patch, delete, etc.
+}
+
+// Usage
+const client = new TestClient(app);
+await client.login('admin@example.com', 'AdminP@ss123');
+const response = await client.get('/users').expect(200);
+```
+
+## Best Practices
+
+<Accordion title="Test Real HTTP Behavior">
+```typescript
+// ✅ Good - test actual HTTP response
+const response = await request(app.getHttpServer())
+  .post('/users')
+  .send(dto)
+  .expect(201);
+
+expect(response.body.id).toBeDefined();
+
+// ❌ Avoid - calling service directly in E2E
+const user = await userService.create(dto);
+```
+</Accordion>
+
+<Accordion title="Clean Up Test Data">
+```typescript
+// Create cleanup list
+const createdIds: string[] = [];
+
+afterEach(async () => {
+  for (const id of createdIds) {
+    await request(app.getHttpServer())
+      .delete(`/users/${id}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+  }
+  createdIds.length = 0;
+});
+```
+</Accordion>
+
+<Accordion title="Test Error Responses">
+```typescript
+// Test validation errors
+it('should return 400 with field errors', async () => {
+  const response = await request(app.getHttpServer())
+    .post('/users')
+    .send({ email: 'invalid' })
+    .expect(400);
+
+  expect(response.body.errors).toContainEqual(
+    expect.objectContaining({ field: 'email' }),
+  );
+});
+```
+</Accordion>
+
+<Accordion title="Use Consistent Auth Setup">
+```typescript
+// Setup auth once for all tests
+let authToken: string;
+
+beforeAll(async () => {
+  const response = await request(app.getHttpServer())
+    .post('/auth/login')
+    .send({ email: 'admin@test.com', password: 'AdminP@ss123' });
+
+  authToken = response.body.accessToken;
+});
+```
+</Accordion>

@@ -1,0 +1,364 @@
+---
+title: "Slicing Pie Setup"
+description: "Local development setup for the equity calculator"
+---
+
+## Prerequisites
+
+<CardGroup cols={2}>
+  <Card title="Node.js 20+" icon="node-js">
+    Required runtime
+  </Card>
+  <Card title="pnpm" icon="box">
+    Package manager
+  </Card>
+  <Card title="Supabase Account" icon="database">
+    Backend service
+  </Card>
+</CardGroup>
+
+## Step 1: Clone and Install
+
+```bash
+# Clone the repository
+git clone <repository-url> slicingpie
+cd slicingpie
+
+# Install dependencies
+pnpm install
+```
+
+## Step 2: Supabase Setup
+
+### Create Supabase Project
+
+1. Go to [supabase.com](https://supabase.com)
+2. Create a new project
+3. Note your project URL and anon key
+
+### Configure Environment
+
+Create a `.env` file:
+
+```bash
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+```
+
+### Run Database Migrations
+
+Execute the following SQL in Supabase SQL Editor:
+
+```sql
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Founders table
+CREATE TABLE founders (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name TEXT NOT NULL,
+  market_salary NUMERIC NOT NULL DEFAULT 0,
+  paid_salary NUMERIC NOT NULL DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Categories table
+CREATE TABLE categories (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  multiplier NUMERIC NOT NULL DEFAULT 1,
+  input_type TEXT NOT NULL DEFAULT 'currency',
+  is_auto_calculated BOOLEAN DEFAULT FALSE,
+  commission_percent NUMERIC,
+  color TEXT,
+  emoji TEXT
+);
+
+-- Ledger entries table
+CREATE TABLE ledger_entries (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  founder_id UUID REFERENCES founders(id) ON DELETE CASCADE,
+  category_id TEXT REFERENCES categories(id),
+  amount NUMERIC NOT NULL,
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  description TEXT,
+  founder_snapshot JSONB,
+  category_snapshot JSONB,
+  created_by UUID REFERENCES auth.users(id),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- User profiles table
+CREATE TABLE profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email TEXT,
+  name TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- User roles table
+CREATE TABLE user_roles (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE (user_id)
+);
+
+-- Insert default categories
+INSERT INTO categories (id, name, multiplier, input_type, emoji) VALUES
+  ('cash', 'Cash Investment', 4, 'currency', '💰'),
+  ('time', 'Time Contribution', 2, 'hours', '⏱️'),
+  ('revenue', 'Revenue', 4, 'currency', '📈'),
+  ('expenses', 'Expenses', 4, 'currency', '🧾'),
+  ('expense_received', 'Expense Received', 4, 'currency', '💸'),
+  ('intellectual_property', 'Intellectual Property', 1, 'percentage', '🧠');
+
+-- Enable Row Level Security
+ALTER TABLE founders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ledger_entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_roles ENABLE ROW LEVEL SECURITY;
+
+-- Policies for founders
+CREATE POLICY "Anyone authenticated can view founders"
+  ON founders FOR SELECT
+  TO authenticated
+  USING (true);
+
+CREATE POLICY "Admins can manage founders"
+  ON founders FOR ALL
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_roles
+      WHERE user_id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- Policies for ledger_entries
+CREATE POLICY "Anyone authenticated can view entries"
+  ON ledger_entries FOR SELECT
+  TO authenticated
+  USING (true);
+
+CREATE POLICY "Anyone authenticated can insert entries"
+  ON ledger_entries FOR INSERT
+  TO authenticated
+  WITH CHECK (true);
+
+CREATE POLICY "Users can delete own entries"
+  ON ledger_entries FOR DELETE
+  TO authenticated
+  USING (created_by = auth.uid());
+
+CREATE POLICY "Admins can delete any entry"
+  ON ledger_entries FOR DELETE
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_roles
+      WHERE user_id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- Function to assign admin to first user
+CREATE OR REPLACE FUNCTION assign_first_user_admin()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM user_roles WHERE role = 'admin') THEN
+    INSERT INTO user_roles (user_id, role) VALUES (NEW.id, 'admin');
+  ELSE
+    INSERT INTO user_roles (user_id, role) VALUES (NEW.id, 'member');
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION assign_first_user_admin();
+```
+
+## Step 3: Start Development Server
+
+```bash
+pnpm dev
+```
+
+The app will be available at: http://localhost:5173
+
+## Step 4: Create First User
+
+1. Navigate to http://localhost:5173
+2. Sign up with email and password
+3. First user automatically becomes admin
+
+## Available Scripts
+
+| Script | Command | Description |
+|--------|---------|-------------|
+| `dev` | `pnpm dev` | Start Vite dev server |
+| `build` | `pnpm build` | Production build |
+| `build:dev` | `pnpm build:dev` | Development build |
+| `preview` | `pnpm preview` | Preview production build |
+| `lint` | `pnpm lint` | Run ESLint |
+
+## Project Configuration
+
+### Vite Config
+
+```typescript
+// vite.config.ts
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
+});
+```
+
+### TypeScript
+
+Strict mode with path aliases configured.
+
+## Development Workflow
+
+### Adding a New Category
+
+1. Insert into `categories` table:
+
+```sql
+INSERT INTO categories (id, name, multiplier, input_type, emoji)
+VALUES ('new_category', 'New Category', 2, 'currency', '🆕');
+```
+
+2. Update TypeScript types in `types/slicingPie.ts`
+
+3. Update calculations in `lib/calculations.ts` if needed
+
+### Adding a Founder
+
+Use the Settings tab UI or:
+
+```sql
+INSERT INTO founders (name, market_salary, paid_salary)
+VALUES ('New Founder', 100000, 0);
+```
+
+### Recording Contributions
+
+1. Go to Ledger tab
+2. Select founder and category
+3. Enter amount and description
+4. Submit form
+
+## Troubleshooting
+
+<Accordion title="Authentication not working">
+  **Cause:** Supabase credentials incorrect
+
+  **Solutions:**
+  1. Verify environment variables match Supabase project
+  2. Check Supabase project is active
+  3. Verify email confirmations are disabled for dev
+</Accordion>
+
+<Accordion title="RLS policies blocking queries">
+  **Cause:** User not authenticated or wrong role
+
+  **Solutions:**
+  1. Sign out and sign in again
+  2. Check user_roles table for correct role
+  3. Verify RLS policies in Supabase dashboard
+</Accordion>
+
+<Accordion title="Calculations seem wrong">
+  **Cause:** Category multipliers or founder salaries incorrect
+
+  **Solutions:**
+  1. Check category multipliers in Settings
+  2. Verify founder market and paid salaries
+  3. Review ledger entries for correct amounts
+</Accordion>
+
+<Accordion title="First user not admin">
+  **Cause:** Trigger not created or failed
+
+  **Solutions:**
+  1. Check if trigger exists in Supabase
+  2. Manually insert admin role:
+  ```sql
+  INSERT INTO user_roles (user_id, role)
+  VALUES ('user-uuid', 'admin');
+  ```
+</Accordion>
+
+## File Structure Reference
+
+```
+src/
+├── components/
+│   ├── ui/                    # shadcn/ui components
+│   │   ├── button.tsx
+│   │   ├── card.tsx
+│   │   ├── input.tsx
+│   │   └── ...
+│   ├── overview/              # Dashboard overview
+│   │   ├── OverviewTab.tsx
+│   │   ├── EquityPieChart.tsx
+│   │   ├── FounderCard.tsx
+│   │   └── SummaryCards.tsx
+│   ├── ledger/                # Transaction recording
+│   │   ├── LedgerTab.tsx
+│   │   ├── AddEntryForm.tsx
+│   │   └── EntriesTable.tsx
+│   ├── forecast/              # Scenario planning
+│   │   └── ForecastTab.tsx
+│   └── settings/              # Admin settings
+│       ├── SettingsTab.tsx
+│       ├── FounderSettings.tsx
+│       └── CategorySettings.tsx
+├── hooks/
+│   ├── useAuth.tsx            # Auth context
+│   ├── useSlicingPie.ts       # Data hook
+│   └── use-toast.ts           # Notifications
+├── pages/
+│   ├── Index.tsx              # Main app
+│   ├── Auth.tsx               # Login
+│   └── NotFound.tsx           # 404
+├── integrations/
+│   └── supabase/
+│       ├── client.ts          # Supabase client
+│       └── types.ts           # Generated types
+├── lib/
+│   ├── calculations.ts        # Equity calculations
+│   ├── constants.ts           # Default values
+│   └── utils.ts               # Utilities
+└── types/
+    └── slicingPie.ts          # Type definitions
+```
+
+## Supabase Dashboard
+
+Access your Supabase project at:
+- **Dashboard**: https://supabase.com/dashboard/project/your-project
+- **SQL Editor**: For running queries
+- **Table Editor**: For viewing/editing data
+- **Auth**: For managing users
+- **Logs**: For debugging
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Overview" icon="circle-info" href="/projects/slicingpie/overview">
+    Project overview
+  </Card>
+  <Card title="Supabase Docs" icon="database" href="https://supabase.com/docs">
+    Backend documentation
+  </Card>
+</CardGroup>

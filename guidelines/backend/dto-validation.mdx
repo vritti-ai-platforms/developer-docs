@@ -1,0 +1,558 @@
+---
+title: DTO Validation
+description: Data Transfer Object patterns with class-validator and Swagger documentation
+---
+
+# DTO Validation
+
+Vritti uses class-validator for request validation and class-transformer for data transformation. This guide covers DTO patterns, validation rules, and Swagger documentation.
+
+## Basic DTO Structure
+
+### Create DTO
+
+```typescript
+// dto/create-tenant.dto.ts
+import { ApiProperty } from '@nestjs/swagger';
+import {
+  IsString,
+  IsOptional,
+  IsEnum,
+  IsInt,
+  Min,
+  Max,
+  MinLength,
+  MaxLength,
+  Matches,
+} from 'class-validator';
+
+export class CreateTenantDto {
+  @ApiProperty({
+    description: 'Unique subdomain identifier for the tenant',
+    example: 'acme-corp',
+    minLength: 2,
+    maxLength: 50,
+    pattern: '^[a-z0-9-]+$',
+  })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(50)
+  @Matches(/^[a-z0-9-]+$/, {
+    message: 'Subdomain must contain only lowercase letters, numbers, and hyphens',
+  })
+  subdomain: string;
+
+  @ApiProperty({
+    description: 'Display name of the tenant organization',
+    example: 'Acme Corporation',
+    minLength: 2,
+    maxLength: 100,
+  })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(100)
+  name: string;
+
+  @ApiProperty({
+    description: 'Tenant status',
+    enum: ['active', 'inactive', 'suspended'],
+    default: 'active',
+    required: false,
+  })
+  @IsOptional()
+  @IsEnum(['active', 'inactive', 'suspended'])
+  status?: 'active' | 'inactive' | 'suspended';
+
+  @ApiProperty({
+    description: 'Maximum number of users allowed',
+    example: 100,
+    minimum: 1,
+    maximum: 10000,
+    required: false,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(10000)
+  maxUsers?: number;
+}
+```
+
+### Update DTO
+
+```typescript
+// dto/update-tenant.dto.ts
+import { PartialType, OmitType } from '@nestjs/swagger';
+import { CreateTenantDto } from './create-tenant.dto';
+
+// All fields optional except subdomain (can't change)
+export class UpdateTenantDto extends PartialType(
+  OmitType(CreateTenantDto, ['subdomain'] as const)
+) {}
+```
+
+## Response DTOs
+
+### Basic Response DTO
+
+```typescript
+// dto/tenant-response.dto.ts
+import { ApiProperty } from '@nestjs/swagger';
+
+export class TenantResponseDto {
+  @ApiProperty({ description: 'Tenant unique identifier' })
+  id: string;
+
+  @ApiProperty({ description: 'Tenant subdomain' })
+  subdomain: string;
+
+  @ApiProperty({ description: 'Tenant display name' })
+  name: string;
+
+  @ApiProperty({ description: 'Tenant status' })
+  status: string;
+
+  @ApiProperty({ description: 'Creation timestamp' })
+  createdAt: Date;
+
+  @ApiProperty({ description: 'Last update timestamp' })
+  updatedAt: Date;
+
+  @ApiProperty({
+    description: 'Database configuration',
+    required: false,
+    type: () => TenantDatabaseConfigResponseDto,
+  })
+  databaseConfig: TenantDatabaseConfigResponseDto | null;
+
+  constructor(partial: Partial<TenantResponseDto>) {
+    Object.assign(this, partial);
+  }
+
+  // Static factory method
+  static from(tenant: TenantWithConfig): TenantResponseDto {
+    return new TenantResponseDto({
+      id: tenant.id,
+      subdomain: tenant.subdomain,
+      name: tenant.name,
+      status: tenant.status,
+      createdAt: tenant.createdAt,
+      updatedAt: tenant.updatedAt,
+      databaseConfig: tenant.databaseConfig
+        ? TenantDatabaseConfigResponseDto.from(tenant.databaseConfig)
+        : null,
+    });
+  }
+}
+```
+
+### Paginated Response DTO
+
+```typescript
+// dto/paginated-response.dto.ts
+import { ApiProperty } from '@nestjs/swagger';
+
+export class PaginationMetaDto {
+  @ApiProperty({ description: 'Current page number' })
+  page: number;
+
+  @ApiProperty({ description: 'Items per page' })
+  limit: number;
+
+  @ApiProperty({ description: 'Total number of items' })
+  total: number;
+
+  @ApiProperty({ description: 'Total number of pages' })
+  totalPages: number;
+}
+
+export class PaginatedResponseDto<T> {
+  @ApiProperty({ description: 'Array of items' })
+  data: T[];
+
+  @ApiProperty({ description: 'Pagination metadata', type: PaginationMetaDto })
+  meta: PaginationMetaDto;
+}
+```
+
+## Validation Decorators
+
+### String Validation
+
+```typescript
+import {
+  IsString,
+  IsEmail,
+  IsUrl,
+  IsUUID,
+  MinLength,
+  MaxLength,
+  Matches,
+  Contains,
+  IsNotEmpty,
+} from 'class-validator';
+
+export class UserDto {
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(1)
+  @MaxLength(100)
+  firstName: string;
+
+  @IsEmail({}, { message: 'Please enter a valid email address' })
+  email: string;
+
+  @IsUrl({ protocols: ['https'], require_protocol: true })
+  website: string;
+
+  @IsUUID('4')
+  referralId: string;
+
+  @Matches(/^[A-Z]{2}\d{6}$/, {
+    message: 'Invalid license format. Expected: XX000000',
+  })
+  licenseNumber: string;
+}
+```
+
+### Number Validation
+
+```typescript
+import {
+  IsNumber,
+  IsInt,
+  IsPositive,
+  IsNegative,
+  Min,
+  Max,
+  IsDecimal,
+} from 'class-validator';
+
+export class ProductDto {
+  @IsNumber()
+  @IsPositive()
+  @Max(999999.99)
+  price: number;
+
+  @IsInt()
+  @Min(0)
+  @Max(10000)
+  quantity: number;
+
+  @IsDecimal({ decimal_digits: '2' })
+  discount: string;
+}
+```
+
+### Password Validation
+
+```typescript
+// dto/signup.dto.ts
+export class SignupDto {
+  @ApiProperty({
+    description: 'User password',
+    example: 'SecureP@ss123',
+    minLength: 8,
+  })
+  @IsString()
+  @MinLength(8, { message: 'Password must be at least 8 characters' })
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9])/, {
+    message:
+      'Password must contain at least one lowercase letter, uppercase letter, number, and special character',
+  })
+  password: string;
+}
+```
+
+### Array Validation
+
+```typescript
+import {
+  IsArray,
+  ArrayMinSize,
+  ArrayMaxSize,
+  ArrayUnique,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class CreateOrderDto {
+  @IsArray()
+  @ArrayMinSize(1, { message: 'Order must have at least one item' })
+  @ArrayMaxSize(50, { message: 'Order cannot exceed 50 items' })
+  @ValidateNested({ each: true })
+  @Type(() => OrderItemDto)
+  items: OrderItemDto[];
+
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  tags: string[];
+}
+
+export class OrderItemDto {
+  @IsUUID()
+  productId: string;
+
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  quantity: number;
+}
+```
+
+### Conditional Validation
+
+```typescript
+import { ValidateIf, IsNotEmpty, IsEnum } from 'class-validator';
+
+export class PaymentDto {
+  @IsEnum(['card', 'bank', 'crypto'])
+  paymentMethod: 'card' | 'bank' | 'crypto';
+
+  @ValidateIf((o) => o.paymentMethod === 'card')
+  @IsNotEmpty()
+  @Matches(/^\d{16}$/)
+  cardNumber?: string;
+
+  @ValidateIf((o) => o.paymentMethod === 'bank')
+  @IsNotEmpty()
+  accountNumber?: string;
+
+  @ValidateIf((o) => o.paymentMethod === 'crypto')
+  @IsNotEmpty()
+  walletAddress?: string;
+}
+```
+
+## Transformation
+
+### Using class-transformer
+
+```typescript
+import { Transform, Type, Exclude, Expose } from 'class-transformer';
+
+export class UserDto {
+  // Transform to lowercase
+  @Transform(({ value }) => value?.toLowerCase())
+  @IsEmail()
+  email: string;
+
+  // Trim whitespace
+  @Transform(({ value }) => value?.trim())
+  @IsString()
+  name: string;
+
+  // Parse string to number
+  @Type(() => Number)
+  @IsInt()
+  age: number;
+
+  // Parse string to date
+  @Type(() => Date)
+  @IsDate()
+  birthDate: Date;
+
+  // Parse string to boolean
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isActive: boolean;
+}
+```
+
+### Response Transformation
+
+```typescript
+import { Exclude, Expose, Transform } from 'class-transformer';
+
+export class UserResponseDto {
+  @Expose()
+  id: string;
+
+  @Expose()
+  email: string;
+
+  @Exclude()  // Never include in response
+  passwordHash: string;
+
+  @Expose()
+  @Transform(({ obj }) => `${obj.firstName} ${obj.lastName}`)
+  fullName: string;
+
+  @Expose()
+  @Transform(({ value }) => value?.toISOString())
+  createdAt: string;
+}
+```
+
+## Query DTOs
+
+### Pagination Query
+
+```typescript
+// dto/pagination-query.dto.ts
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { IsInt, IsOptional, Min, Max } from 'class-validator';
+
+export class PaginationQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 10, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number = 10;
+}
+```
+
+### Filter Query
+
+```typescript
+// dto/user-query.dto.ts
+export class UserQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ description: 'Filter by status' })
+  @IsOptional()
+  @IsEnum(['active', 'inactive', 'deleted'])
+  status?: string;
+
+  @ApiPropertyOptional({ description: 'Search by name or email' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
+
+  @ApiPropertyOptional({ description: 'Sort field' })
+  @IsOptional()
+  @IsEnum(['createdAt', 'email', 'name'])
+  sortBy?: string = 'createdAt';
+
+  @ApiPropertyOptional({ description: 'Sort direction' })
+  @IsOptional()
+  @IsEnum(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc' = 'desc';
+}
+```
+
+## Swagger Documentation
+
+### API Property Options
+
+```typescript
+@ApiProperty({
+  description: 'Field description for documentation',
+  example: 'example-value',
+  required: true,  // Default: true
+  nullable: false,
+  deprecated: false,
+  // Type hints
+  type: String,
+  isArray: false,
+  enum: ['a', 'b', 'c'],
+  // Constraints
+  minimum: 0,
+  maximum: 100,
+  minLength: 1,
+  maxLength: 255,
+  pattern: '^[a-z]+$',
+  // Nested types
+  type: () => NestedDto,
+})
+```
+
+### Response Documentation
+
+```typescript
+// In controller
+@ApiOperation({ summary: 'Create a new tenant' })
+@ApiResponse({
+  status: 201,
+  description: 'Tenant created successfully',
+  type: TenantResponseDto,
+})
+@ApiResponse({
+  status: 400,
+  description: 'Invalid input data',
+})
+@ApiResponse({
+  status: 409,
+  description: 'Tenant subdomain already exists',
+})
+@Post()
+create(@Body() dto: CreateTenantDto): Promise<TenantResponseDto> {
+  return this.tenantService.create(dto);
+}
+```
+
+## Best Practices
+
+<Accordion title="Provide Clear Error Messages">
+```typescript
+// ✅ Good - helpful messages
+@MinLength(8, { message: 'Password must be at least 8 characters' })
+@Matches(/[A-Z]/, { message: 'Password must contain at least one uppercase letter' })
+
+// ❌ Avoid - generic messages
+@MinLength(8)
+@Matches(/[A-Z]/)
+```
+</Accordion>
+
+<Accordion title="Use PartialType for Updates">
+```typescript
+// ✅ Good - reuse create DTO
+export class UpdateUserDto extends PartialType(CreateUserDto) {}
+
+// ❌ Avoid - duplicating validation
+export class UpdateUserDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+  // ... duplicate all fields
+}
+```
+</Accordion>
+
+<Accordion title="Document All Properties">
+```typescript
+// ✅ Good - full documentation
+@ApiProperty({
+  description: 'User email address',
+  example: 'user@example.com',
+  format: 'email',
+})
+@IsEmail()
+email: string;
+
+// ❌ Avoid - missing documentation
+@IsEmail()
+email: string;
+```
+</Accordion>
+
+<Accordion title="Use Static Factory Methods">
+```typescript
+// ✅ Good - transformation in DTO
+static from(entity: User): UserResponseDto {
+  return new UserResponseDto({
+    id: entity.id,
+    email: entity.email,
+    fullName: `${entity.firstName} ${entity.lastName}`,
+  });
+}
+
+// ❌ Avoid - transformation in service
+return {
+  id: user.id,
+  email: user.email,
+  fullName: `${user.firstName} ${user.lastName}`,
+};
+```
+</Accordion>

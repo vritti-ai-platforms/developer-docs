@@ -1,0 +1,1628 @@
+---
+title: 'Debugging Techniques'
+description: 'Comprehensive debugging guide for backend and frontend development'
+icon: 'bug'
+---
+
+## Overview
+
+This guide covers debugging techniques for the Vritti platform, including backend NestJS applications, React 19 frontend, database queries, and production debugging strategies.
+
+<CardGroup cols={2}>
+  <Card title="Backend Debugging" icon="server" href="#backend-debugging-with-vs-code">
+    VS Code debugger for NestJS applications
+  </Card>
+  <Card title="Frontend Debugging" icon="browser" href="#frontend-debugging-in-browser-devtools">
+    Browser DevTools and React DevTools
+  </Card>
+  <Card title="Database Debugging" icon="database" href="#database-query-debugging">
+    Drizzle ORM query logging and analysis
+  </Card>
+  <Card title="Remote Debugging" icon="cloud" href="#remote-debugging">
+    Debug deployed applications
+  </Card>
+</CardGroup>
+
+---
+
+## Backend Debugging with VS Code
+
+VS Code provides powerful debugging capabilities for NestJS applications through the built-in Node.js debugger.
+
+### Setting Up the Debugger
+
+<Steps>
+  <Step title="Open Debug Panel">
+    Press `Cmd+Shift+D` (macOS) or `Ctrl+Shift+D` (Windows/Linux) to open the Debug panel
+  </Step>
+  <Step title="Create Launch Configuration">
+    Click "create a launch.json file" and select "Node.js" environment
+  </Step>
+  <Step title="Configure Debug Settings">
+    Add the NestJS-specific configuration shown below
+  </Step>
+</Steps>
+
+### Basic Debugging Commands
+
+| Shortcut | Action |
+|----------|--------|
+| `F5` | Start/Continue debugging |
+| `F9` | Toggle breakpoint |
+| `F10` | Step over |
+| `F11` | Step into |
+| `Shift+F11` | Step out |
+| `Shift+F5` | Stop debugging |
+| `Cmd+Shift+F5` | Restart debugging |
+
+---
+
+## NestJS Debugging Configuration
+
+Create or update `.vscode/launch.json` with the following configurations:
+
+### Complete Launch Configuration
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug NestJS",
+      "type": "node",
+      "request": "launch",
+      "runtimeArgs": [
+        "--nolazy",
+        "-r",
+        "ts-node/register",
+        "-r",
+        "tsconfig-paths/register"
+      ],
+      "args": ["${workspaceFolder}/apps/api/src/main.ts"],
+      "sourceMaps": true,
+      "envFile": "${workspaceFolder}/.env",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "protocol": "inspector",
+      "restart": true,
+      "autoAttachChildProcesses": true
+    },
+    {
+      "name": "Debug NestJS (Attach)",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "restart": true,
+      "sourceMaps": true,
+      "localRoot": "${workspaceFolder}",
+      "remoteRoot": "${workspaceFolder}",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Debug Jest Tests",
+      "type": "node",
+      "request": "launch",
+      "runtimeArgs": [
+        "--inspect-brk",
+        "${workspaceFolder}/node_modules/.bin/jest",
+        "--runInBand",
+        "--config",
+        "${workspaceFolder}/apps/api/jest.config.js"
+      ],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "sourceMaps": true,
+      "windows": {
+        "runtimeArgs": [
+          "--inspect-brk",
+          "${workspaceFolder}/node_modules/jest/bin/jest.js",
+          "--runInBand",
+          "--config",
+          "${workspaceFolder}/apps/api/jest.config.js"
+        ]
+      }
+    },
+    {
+      "name": "Debug Current Test File",
+      "type": "node",
+      "request": "launch",
+      "runtimeArgs": [
+        "--inspect-brk",
+        "${workspaceFolder}/node_modules/.bin/jest",
+        "--runInBand",
+        "--testPathPattern",
+        "${fileBasename}"
+      ],
+      "console": "integratedTerminal",
+      "sourceMaps": true
+    },
+    {
+      "name": "Debug E2E Tests",
+      "type": "node",
+      "request": "launch",
+      "runtimeArgs": [
+        "--inspect-brk",
+        "${workspaceFolder}/node_modules/.bin/jest",
+        "--runInBand",
+        "--config",
+        "${workspaceFolder}/apps/api/test/jest-e2e.json"
+      ],
+      "console": "integratedTerminal",
+      "sourceMaps": true
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack Debug",
+      "configurations": ["Debug NestJS", "Debug Frontend"],
+      "stopAll": true
+    }
+  ]
+}
+```
+
+### Running NestJS in Debug Mode
+
+To start the application with debugging enabled:
+
+```bash
+# Start with inspector (allows attaching debugger)
+node --inspect-brk -r ts-node/register -r tsconfig-paths/register src/main.ts
+
+# Or use npm script
+npm run start:debug
+
+# Attach to running process
+node --inspect=0.0.0.0:9229 -r ts-node/register src/main.ts
+```
+
+### Package.json Debug Scripts
+
+Add these scripts to your `package.json`:
+
+```json
+{
+  "scripts": {
+    "start:debug": "nest start --debug --watch",
+    "start:debug:brk": "nest start --debug=0.0.0.0:9229 --watch",
+    "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand"
+  }
+}
+```
+
+### Debugging NestJS Services
+
+<CodeGroup>
+```typescript service.ts
+import { Injectable, Logger } from '@nestjs/common';
+
+@Injectable()
+export class UserService {
+  private readonly logger = new Logger(UserService.name);
+
+  async findUser(id: string) {
+    // Set breakpoint on this line
+    this.logger.debug(`Finding user with id: ${id}`);
+
+    debugger; // Programmatic breakpoint (requires --inspect flag)
+
+    const user = await this.userRepository.findOne({ where: { id } });
+
+    if (!user) {
+      this.logger.warn(`User not found: ${id}`);
+      throw new NotFoundException(`User ${id} not found`);
+    }
+
+    return user;
+  }
+}
+```
+
+```typescript controller.ts
+import { Controller, Get, Param } from '@nestjs/common';
+
+@Controller('users')
+export class UserController {
+  constructor(private readonly userService: UserService) {}
+
+  @Get(':id')
+  async getUser(@Param('id') id: string) {
+    // Set breakpoint here to inspect incoming requests
+    console.log('Request received for user:', id);
+    return this.userService.findUser(id);
+  }
+}
+```
+</CodeGroup>
+
+---
+
+## Frontend Debugging in Browser DevTools
+
+### Chrome DevTools Overview
+
+<Tabs>
+  <Tab title="Elements Panel">
+    Inspect and modify DOM elements, CSS styles, and computed properties.
+
+    ```javascript
+    // Select element in console after inspecting
+    $0 // Currently selected element
+    $1 // Previously selected element
+
+    // Query elements
+    $$('button') // All buttons (querySelectorAll)
+    $('input')   // First input (querySelector)
+    ```
+  </Tab>
+
+  <Tab title="Console Panel">
+    Execute JavaScript, view logs, and interact with the page.
+
+    ```javascript
+    // Useful console methods
+    console.log('Basic logging');
+    console.table(arrayOfObjects);
+    console.group('Group Name');
+    console.time('Timer');
+    console.trace('Stack trace');
+    console.assert(condition, 'Assertion failed');
+
+    // Styled console output
+    console.log('%c Styled Text', 'color: blue; font-size: 20px');
+    ```
+  </Tab>
+
+  <Tab title="Sources Panel">
+    Debug JavaScript with breakpoints, watch expressions, and call stack inspection.
+
+    **Breakpoint Types:**
+    - Line breakpoints
+    - Conditional breakpoints
+    - Logpoints
+    - DOM breakpoints
+    - XHR/Fetch breakpoints
+    - Event listener breakpoints
+  </Tab>
+
+  <Tab title="Network Panel">
+    Monitor all network requests, responses, timing, and headers.
+
+    **Useful Filters:**
+    - `XHR` - API calls only
+    - `JS` - JavaScript files
+    - `status-code:404` - Failed requests
+    - `domain:api.example.com` - Specific domain
+  </Tab>
+</Tabs>
+
+### Setting Breakpoints in React Code
+
+```typescript
+// src/components/UserProfile.tsx
+import { useState, useEffect } from 'react';
+
+export function UserProfile({ userId }: { userId: string }) {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Set breakpoint here to debug data fetching
+    debugger; // Programmatic breakpoint
+
+    async function fetchUser() {
+      try {
+        const response = await fetch(`/api/users/${userId}`);
+        const data = await response.json();
+
+        // Inspect data before setting state
+        console.log('User data:', data);
+
+        setUser(data);
+      } catch (error) {
+        console.error('Failed to fetch user:', error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchUser();
+  }, [userId]);
+
+  // Set conditional breakpoint: user?.role === 'admin'
+  if (loading) return <div>Loading...</div>;
+
+  return <div>{user?.name}</div>;
+}
+```
+
+### Source Maps Configuration
+
+Ensure source maps are enabled in your RSBuild configuration:
+
+```typescript
+// rsbuild.config.ts
+import { defineConfig } from '@rsbuild/core';
+
+export default defineConfig({
+  source: {
+    // Enable source maps for development
+    sourceMap: {
+      js: process.env.NODE_ENV === 'development'
+        ? 'cheap-module-source-map'
+        : false,
+      css: true,
+    },
+  },
+  dev: {
+    // Enable source maps in development server
+    writeToDisk: false,
+  },
+});
+```
+
+---
+
+## React DevTools Usage
+
+### Installation and Setup
+
+<Steps>
+  <Step title="Install Browser Extension">
+    Install React DevTools from [Chrome Web Store](https://chrome.google.com/webstore/detail/react-developer-tools/fmkadmapgofadopljbjfkapdkoienihi) or [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/react-devtools/)
+  </Step>
+  <Step title="Open DevTools">
+    Open browser DevTools and navigate to the "Components" or "Profiler" tab
+  </Step>
+  <Step title="Configure Settings">
+    Click the gear icon to configure component filters and display options
+  </Step>
+</Steps>
+
+### Components Tab
+
+```typescript
+// Debugging component state and props
+function OrderList({ orders }: { orders: Order[] }) {
+  const [filter, setFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('date');
+
+  // Use React DevTools to:
+  // 1. Inspect 'orders' prop values
+  // 2. Modify 'filter' state in real-time
+  // 3. View component hierarchy
+  // 4. Check render count
+
+  const filteredOrders = useMemo(() => {
+    return orders.filter(order => {
+      if (filter === 'all') return true;
+      return order.status === filter;
+    });
+  }, [orders, filter]);
+
+  return (
+    <div>
+      {filteredOrders.map(order => (
+        <OrderItem key={order.id} order={order} />
+      ))}
+    </div>
+  );
+}
+```
+
+### Profiler Tab
+
+The Profiler helps identify performance bottlenecks:
+
+```typescript
+// Component that might have performance issues
+import { Profiler, ProfilerOnRenderCallback } from 'react';
+
+const onRenderCallback: ProfilerOnRenderCallback = (
+  id,
+  phase,
+  actualDuration,
+  baseDuration,
+  startTime,
+  commitTime
+) => {
+  console.table({
+    id,
+    phase,
+    actualDuration: `${actualDuration.toFixed(2)}ms`,
+    baseDuration: `${baseDuration.toFixed(2)}ms`,
+    startTime,
+    commitTime,
+  });
+};
+
+function App() {
+  return (
+    <Profiler id="Dashboard" onRender={onRenderCallback}>
+      <Dashboard />
+    </Profiler>
+  );
+}
+```
+
+### Debugging Hooks
+
+```typescript
+// Custom hook with debugging
+function useDebugValue<T>(value: T, formatter?: (value: T) => string) {
+  // Shows in React DevTools when inspecting component
+  React.useDebugValue(value, formatter);
+}
+
+function useUser(userId: string) {
+  const [user, setUser] = useState<User | null>(null);
+
+  // Display formatted value in DevTools
+  useDebugValue(user, u => u ? `User: ${u.name}` : 'Loading...');
+
+  useEffect(() => {
+    fetchUser(userId).then(setUser);
+  }, [userId]);
+
+  return user;
+}
+```
+
+---
+
+## Network Request Debugging
+
+### Browser Network Panel
+
+<Tabs>
+  <Tab title="Request Analysis">
+    ```javascript
+    // Add request interceptor for debugging
+    const originalFetch = window.fetch;
+
+    window.fetch = async (...args) => {
+      const [url, options] = args;
+
+      console.group(`Fetch: ${options?.method || 'GET'} ${url}`);
+      console.log('Options:', options);
+      console.time('Request Duration');
+
+      try {
+        const response = await originalFetch(...args);
+        console.log('Status:', response.status);
+        console.timeEnd('Request Duration');
+        console.groupEnd();
+        return response;
+      } catch (error) {
+        console.error('Request failed:', error);
+        console.timeEnd('Request Duration');
+        console.groupEnd();
+        throw error;
+      }
+    };
+    ```
+  </Tab>
+
+  <Tab title="Axios Interceptors">
+    ```typescript
+    // src/lib/axios.ts
+    import axios from 'axios';
+
+    const api = axios.create({
+      baseURL: process.env.NEXT_PUBLIC_API_URL,
+    });
+
+    // Request interceptor
+    api.interceptors.request.use(
+      (config) => {
+        console.log(`[API Request] ${config.method?.toUpperCase()} ${config.url}`);
+        console.log('Headers:', config.headers);
+        console.log('Data:', config.data);
+
+        // Add timing
+        config.metadata = { startTime: Date.now() };
+        return config;
+      },
+      (error) => {
+        console.error('[API Request Error]', error);
+        return Promise.reject(error);
+      }
+    );
+
+    // Response interceptor
+    api.interceptors.response.use(
+      (response) => {
+        const duration = Date.now() - response.config.metadata.startTime;
+        console.log(`[API Response] ${response.status} in ${duration}ms`);
+        console.log('Data:', response.data);
+        return response;
+      },
+      (error) => {
+        const duration = Date.now() - error.config?.metadata?.startTime;
+        console.error(`[API Error] ${error.response?.status} in ${duration}ms`);
+        console.error('Error:', error.response?.data);
+        return Promise.reject(error);
+      }
+    );
+
+    export default api;
+    ```
+  </Tab>
+
+  <Tab title="TanStack Query DevTools">
+    ```typescript
+    // src/providers/QueryProvider.tsx
+    import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+    import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          // Log all query errors in development
+          onError: (error) => {
+            if (process.env.NODE_ENV === 'development') {
+              console.error('Query error:', error);
+            }
+          },
+        },
+      },
+      // Enable query logging
+      logger: {
+        log: console.log,
+        warn: console.warn,
+        error: console.error,
+      },
+    });
+
+    export function QueryProvider({ children }: { children: React.ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          {children}
+          {process.env.NODE_ENV === 'development' && (
+            <ReactQueryDevtools
+              initialIsOpen={false}
+              position="bottom-right"
+            />
+          )}
+        </QueryClientProvider>
+      );
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### NestJS HTTP Debugging
+
+```typescript
+// src/interceptors/logging.interceptor.ts
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+  Logger,
+} from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  private readonly logger = new Logger('HTTP');
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const request = context.switchToHttp().getRequest();
+    const { method, url, body, headers } = request;
+    const userAgent = headers['user-agent'] || '';
+    const startTime = Date.now();
+
+    this.logger.log(`[Request] ${method} ${url}`);
+    this.logger.debug(`Body: ${JSON.stringify(body)}`);
+    this.logger.debug(`User-Agent: ${userAgent}`);
+
+    return next.handle().pipe(
+      tap({
+        next: (data) => {
+          const response = context.switchToHttp().getResponse();
+          const duration = Date.now() - startTime;
+          this.logger.log(
+            `[Response] ${method} ${url} ${response.statusCode} - ${duration}ms`
+          );
+          this.logger.debug(`Response: ${JSON.stringify(data)}`);
+        },
+        error: (error) => {
+          const duration = Date.now() - startTime;
+          this.logger.error(
+            `[Error] ${method} ${url} ${error.status || 500} - ${duration}ms`
+          );
+          this.logger.error(`Error: ${error.message}`);
+        },
+      })
+    );
+  }
+}
+```
+
+---
+
+## Database Query Debugging
+
+### Drizzle ORM Logging
+
+<Tabs>
+  <Tab title="Basic Logging">
+    ```typescript
+    // src/database/drizzle.config.ts
+    import { drizzle } from 'drizzle-orm/node-postgres';
+    import { Pool } from 'pg';
+
+    const pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+    });
+
+    export const db = drizzle(pool, {
+      logger: true, // Enable basic query logging
+    });
+    ```
+  </Tab>
+
+  <Tab title="Custom Logger">
+    ```typescript
+    // src/database/logger.ts
+    import { Logger as DrizzleLogger } from 'drizzle-orm';
+    import { Logger } from '@nestjs/common';
+
+    export class CustomDrizzleLogger implements DrizzleLogger {
+      private readonly logger = new Logger('Drizzle');
+      private queryCount = 0;
+
+      logQuery(query: string, params: unknown[]): void {
+        this.queryCount++;
+
+        // Format query for readability
+        const formattedQuery = query
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        this.logger.debug(`[Query #${this.queryCount}]`);
+        this.logger.debug(`SQL: ${formattedQuery}`);
+        this.logger.debug(`Params: ${JSON.stringify(params)}`);
+      }
+
+      getQueryCount(): number {
+        return this.queryCount;
+      }
+
+      resetQueryCount(): void {
+        this.queryCount = 0;
+      }
+    }
+
+    // Usage
+    const customLogger = new CustomDrizzleLogger();
+
+    export const db = drizzle(pool, {
+      logger: customLogger,
+    });
+    ```
+  </Tab>
+
+  <Tab title="Query Timing">
+    ```typescript
+    // src/database/timed-logger.ts
+    import { Logger as DrizzleLogger } from 'drizzle-orm';
+    import { Logger } from '@nestjs/common';
+
+    interface QueryLog {
+      query: string;
+      params: unknown[];
+      duration: number;
+      timestamp: Date;
+    }
+
+    export class TimedDrizzleLogger implements DrizzleLogger {
+      private readonly logger = new Logger('Drizzle');
+      private queryLogs: QueryLog[] = [];
+      private startTime: number = 0;
+
+      logQuery(query: string, params: unknown[]): void {
+        const duration = this.startTime
+          ? Date.now() - this.startTime
+          : 0;
+
+        const log: QueryLog = {
+          query,
+          params,
+          duration,
+          timestamp: new Date(),
+        };
+
+        this.queryLogs.push(log);
+
+        // Warn on slow queries (> 100ms)
+        if (duration > 100) {
+          this.logger.warn(`Slow query (${duration}ms): ${query}`);
+        } else {
+          this.logger.debug(`Query (${duration}ms): ${query}`);
+        }
+
+        this.startTime = Date.now();
+      }
+
+      getSlowQueries(thresholdMs: number = 100): QueryLog[] {
+        return this.queryLogs.filter(log => log.duration > thresholdMs);
+      }
+
+      getQueryStats() {
+        const total = this.queryLogs.length;
+        const totalTime = this.queryLogs.reduce((sum, log) => sum + log.duration, 0);
+        const avgTime = total > 0 ? totalTime / total : 0;
+        const slowQueries = this.getSlowQueries().length;
+
+        return {
+          totalQueries: total,
+          totalTimeMs: totalTime,
+          avgTimeMs: avgTime.toFixed(2),
+          slowQueries,
+        };
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Debugging Complex Queries
+
+```typescript
+// src/services/order.service.ts
+import { db } from '../database/drizzle.config';
+import { orders, orderItems, products, users } from '../database/schema';
+import { eq, and, gte, desc, sql } from 'drizzle-orm';
+
+export class OrderService {
+  async getOrdersWithDetails(userId: string, startDate: Date) {
+    // Log the query plan for debugging
+    const queryPlan = await db.execute(sql`
+      EXPLAIN ANALYZE
+      SELECT o.*, u.name as user_name
+      FROM orders o
+      JOIN users u ON o.user_id = u.id
+      WHERE o.user_id = ${userId}
+      AND o.created_at >= ${startDate}
+    `);
+
+    console.log('Query Plan:', queryPlan);
+
+    // Execute the actual query
+    const result = await db
+      .select({
+        order: orders,
+        user: users,
+        items: sql<string>`
+          json_agg(
+            json_build_object(
+              'id', ${orderItems.id},
+              'quantity', ${orderItems.quantity},
+              'product', ${products.name}
+            )
+          )
+        `.as('items'),
+      })
+      .from(orders)
+      .innerJoin(users, eq(orders.userId, users.id))
+      .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
+      .leftJoin(products, eq(orderItems.productId, products.id))
+      .where(
+        and(
+          eq(orders.userId, userId),
+          gte(orders.createdAt, startDate)
+        )
+      )
+      .groupBy(orders.id, users.id)
+      .orderBy(desc(orders.createdAt));
+
+    return result;
+  }
+}
+```
+
+### Database Debug Middleware
+
+```typescript
+// src/middleware/database-debug.middleware.ts
+import { Injectable, NestMiddleware, Logger } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+import { customLogger } from '../database/logger';
+
+@Injectable()
+export class DatabaseDebugMiddleware implements NestMiddleware {
+  private readonly logger = new Logger('DatabaseDebug');
+
+  use(req: Request, res: Response, next: NextFunction) {
+    // Reset query counter at start of request
+    customLogger.resetQueryCount();
+
+    const startTime = Date.now();
+
+    res.on('finish', () => {
+      const duration = Date.now() - startTime;
+      const queryCount = customLogger.getQueryCount();
+
+      // Log query count per request
+      this.logger.log(
+        `${req.method} ${req.path} - ${queryCount} queries in ${duration}ms`
+      );
+
+      // Warn on N+1 query patterns (too many queries)
+      if (queryCount > 10) {
+        this.logger.warn(
+          `Potential N+1 query issue: ${queryCount} queries for ${req.path}`
+        );
+      }
+    });
+
+    next();
+  }
+}
+```
+
+---
+
+## Remote Debugging
+
+### Debugging Deployed Applications
+
+<Tabs>
+  <Tab title="SSH Tunnel">
+    ```bash
+    # Create SSH tunnel to remote debugger
+    ssh -L 9229:localhost:9229 user@production-server
+
+    # On the server, start Node with inspect
+    NODE_OPTIONS='--inspect=127.0.0.1:9229' node dist/main.js
+
+    # In VS Code, attach to localhost:9229
+    ```
+  </Tab>
+
+  <Tab title="Docker Debug">
+    ```dockerfile
+    # Dockerfile.debug
+    FROM node:20-alpine
+
+    WORKDIR /app
+
+    # Install debugging tools
+    RUN npm install -g ts-node typescript
+
+    COPY package*.json ./
+    RUN npm ci
+
+    COPY . .
+
+    # Expose debug port
+    EXPOSE 3000 9229
+
+    # Start with debugging enabled
+    CMD ["node", "--inspect=0.0.0.0:9229", "-r", "ts-node/register", "src/main.ts"]
+    ```
+
+    ```yaml
+    # docker-compose.debug.yml
+    version: '3.8'
+    services:
+      api:
+        build:
+          context: .
+          dockerfile: Dockerfile.debug
+        ports:
+          - "3000:3000"
+          - "9229:9229"
+        volumes:
+          - ./src:/app/src
+        environment:
+          - NODE_ENV=development
+    ```
+  </Tab>
+
+  <Tab title="Kubernetes Debug">
+    ```yaml
+    # k8s/debug-deployment.yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: api-debug
+    spec:
+      replicas: 1
+      template:
+        spec:
+          containers:
+            - name: api
+              image: vritti/api:debug
+              ports:
+                - containerPort: 3000
+                - containerPort: 9229
+              command: ["node"]
+              args: ["--inspect=0.0.0.0:9229", "dist/main.js"]
+              env:
+                - name: NODE_ENV
+                  value: "development"
+    ```
+
+    ```bash
+    # Port forward to local machine
+    kubectl port-forward deployment/api-debug 9229:9229
+
+    # Then attach VS Code debugger to localhost:9229
+    ```
+  </Tab>
+</Tabs>
+
+### Remote VS Code Configuration
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach to Remote",
+      "type": "node",
+      "request": "attach",
+      "address": "localhost",
+      "port": 9229,
+      "localRoot": "${workspaceFolder}",
+      "remoteRoot": "/app",
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Attach to Docker",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "address": "localhost",
+      "localRoot": "${workspaceFolder}",
+      "remoteRoot": "/app",
+      "restart": true,
+      "sourceMaps": true
+    }
+  ]
+}
+```
+
+---
+
+## Log-Based Debugging
+
+### Structured Logging
+
+```typescript
+// src/common/logger/structured.logger.ts
+import { LoggerService, Injectable, Scope } from '@nestjs/common';
+import * as winston from 'winston';
+
+@Injectable({ scope: Scope.TRANSIENT })
+export class StructuredLogger implements LoggerService {
+  private context?: string;
+  private logger: winston.Logger;
+
+  constructor() {
+    this.logger = winston.createLogger({
+      level: process.env.LOG_LEVEL || 'info',
+      format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.errors({ stack: true }),
+        winston.format.json()
+      ),
+      defaultMeta: { service: 'vritti-api' },
+      transports: [
+        new winston.transports.Console({
+          format: winston.format.combine(
+            winston.format.colorize(),
+            winston.format.printf(({ level, message, timestamp, context, ...meta }) => {
+              return `${timestamp} [${context || 'App'}] ${level}: ${message} ${
+                Object.keys(meta).length ? JSON.stringify(meta, null, 2) : ''
+              }`;
+            })
+          ),
+        }),
+      ],
+    });
+  }
+
+  setContext(context: string) {
+    this.context = context;
+  }
+
+  log(message: string, meta?: Record<string, any>) {
+    this.logger.info(message, { context: this.context, ...meta });
+  }
+
+  error(message: string, trace?: string, meta?: Record<string, any>) {
+    this.logger.error(message, {
+      context: this.context,
+      trace,
+      ...meta
+    });
+  }
+
+  warn(message: string, meta?: Record<string, any>) {
+    this.logger.warn(message, { context: this.context, ...meta });
+  }
+
+  debug(message: string, meta?: Record<string, any>) {
+    this.logger.debug(message, { context: this.context, ...meta });
+  }
+
+  verbose(message: string, meta?: Record<string, any>) {
+    this.logger.verbose(message, { context: this.context, ...meta });
+  }
+}
+```
+
+### Request Context Logging
+
+```typescript
+// src/common/middleware/request-context.middleware.ts
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+import { v4 as uuidv4 } from 'uuid';
+import { AsyncLocalStorage } from 'async_hooks';
+
+export interface RequestContext {
+  requestId: string;
+  userId?: string;
+  path: string;
+  method: string;
+  startTime: number;
+}
+
+export const requestContext = new AsyncLocalStorage<RequestContext>();
+
+@Injectable()
+export class RequestContextMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    const context: RequestContext = {
+      requestId: req.headers['x-request-id'] as string || uuidv4(),
+      userId: req.user?.id,
+      path: req.path,
+      method: req.method,
+      startTime: Date.now(),
+    };
+
+    // Add request ID to response headers
+    res.setHeader('X-Request-ID', context.requestId);
+
+    requestContext.run(context, () => {
+      next();
+    });
+  }
+}
+
+// Usage in services
+export function getRequestContext(): RequestContext | undefined {
+  return requestContext.getStore();
+}
+
+// Example service using context
+@Injectable()
+export class PaymentService {
+  private readonly logger = new Logger(PaymentService.name);
+
+  async processPayment(amount: number) {
+    const ctx = getRequestContext();
+
+    this.logger.log('Processing payment', {
+      requestId: ctx?.requestId,
+      userId: ctx?.userId,
+      amount,
+    });
+
+    // ... payment logic
+  }
+}
+```
+
+### Log Levels and Filtering
+
+```typescript
+// src/config/logger.config.ts
+export const loggerConfig = {
+  development: {
+    level: 'debug',
+    prettyPrint: true,
+    colorize: true,
+  },
+  staging: {
+    level: 'debug',
+    prettyPrint: false,
+    colorize: false,
+  },
+  production: {
+    level: 'info',
+    prettyPrint: false,
+    colorize: false,
+  },
+};
+
+// Environment-aware logging
+const env = process.env.NODE_ENV || 'development';
+const config = loggerConfig[env];
+
+// Conditional debug logging
+export function debugLog(message: string, data?: any) {
+  if (config.level === 'debug') {
+    console.log(`[DEBUG] ${message}`, data);
+  }
+}
+```
+
+---
+
+## Error Tracking Integration
+
+### Sentry Integration
+
+<Tabs>
+  <Tab title="Backend Setup">
+    ```typescript
+    // src/common/sentry/sentry.module.ts
+    import { Module, Global } from '@nestjs/common';
+    import * as Sentry from '@sentry/node';
+    import { ProfilingIntegration } from '@sentry/profiling-node';
+
+    @Global()
+    @Module({})
+    export class SentryModule {
+      static forRoot() {
+        Sentry.init({
+          dsn: process.env.SENTRY_DSN,
+          environment: process.env.NODE_ENV,
+          release: process.env.APP_VERSION,
+          integrations: [
+            new ProfilingIntegration(),
+          ],
+          tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+          profilesSampleRate: 0.1,
+
+          beforeSend(event, hint) {
+            // Filter out specific errors
+            if (event.exception?.values?.[0]?.type === 'NotFoundException') {
+              return null;
+            }
+            return event;
+          },
+        });
+
+        return {
+          module: SentryModule,
+        };
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Error Filter">
+    ```typescript
+    // src/common/filters/sentry-exception.filter.ts
+    import {
+      ExceptionFilter,
+      Catch,
+      ArgumentsHost,
+      HttpException,
+      HttpStatus,
+    } from '@nestjs/common';
+    import * as Sentry from '@sentry/node';
+    import { Request, Response } from 'express';
+
+    @Catch()
+    export class SentryExceptionFilter implements ExceptionFilter {
+      catch(exception: unknown, host: ArgumentsHost) {
+        const ctx = host.switchToHttp();
+        const response = ctx.getResponse<Response>();
+        const request = ctx.getRequest<Request>();
+
+        const status =
+          exception instanceof HttpException
+            ? exception.getStatus()
+            : HttpStatus.INTERNAL_SERVER_ERROR;
+
+        // Only report server errors to Sentry
+        if (status >= 500) {
+          Sentry.withScope((scope) => {
+            scope.setExtra('url', request.url);
+            scope.setExtra('method', request.method);
+            scope.setExtra('body', request.body);
+            scope.setExtra('query', request.query);
+            scope.setExtra('headers', request.headers);
+            scope.setUser({
+              id: request.user?.id,
+              email: request.user?.email,
+            });
+            scope.setTag('endpoint', `${request.method} ${request.path}`);
+
+            Sentry.captureException(exception);
+          });
+        }
+
+        const message =
+          exception instanceof HttpException
+            ? exception.message
+            : 'Internal server error';
+
+        response.status(status).json({
+          statusCode: status,
+          message,
+          timestamp: new Date().toISOString(),
+          path: request.url,
+        });
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Frontend Setup">
+    ```typescript
+    // src/lib/sentry.ts
+    import * as Sentry from '@sentry/react';
+
+    Sentry.init({
+      dsn: import.meta.env.VITE_SENTRY_DSN,
+      environment: import.meta.env.MODE,
+      release: import.meta.env.VITE_APP_VERSION,
+      integrations: [
+        Sentry.browserTracingIntegration(),
+        Sentry.replayIntegration({
+          maskAllText: true,
+          blockAllMedia: true,
+        }),
+      ],
+      tracesSampleRate: import.meta.env.PROD ? 0.1 : 1.0,
+      replaysSessionSampleRate: 0.1,
+      replaysOnErrorSampleRate: 1.0,
+    });
+
+    // Error boundary component
+    export const SentryErrorBoundary = Sentry.ErrorBoundary;
+
+    // Manual error reporting
+    export function reportError(error: Error, context?: Record<string, any>) {
+      Sentry.withScope((scope) => {
+        if (context) {
+          Object.entries(context).forEach(([key, value]) => {
+            scope.setExtra(key, value);
+          });
+        }
+        Sentry.captureException(error);
+      });
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Custom Error Context
+
+```typescript
+// src/common/errors/custom-error.ts
+import * as Sentry from '@sentry/node';
+
+export class BusinessError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+    public readonly context?: Record<string, any>
+  ) {
+    super(message);
+    this.name = 'BusinessError';
+
+    // Report to Sentry with context
+    Sentry.withScope((scope) => {
+      scope.setTag('error_type', 'business');
+      scope.setTag('error_code', code);
+      scope.setExtras(context || {});
+      Sentry.captureMessage(message, 'warning');
+    });
+  }
+}
+
+// Usage
+throw new BusinessError(
+  'Payment declined',
+  'PAYMENT_DECLINED',
+  {
+    userId: user.id,
+    amount: payment.amount,
+    paymentMethod: payment.method,
+  }
+);
+```
+
+---
+
+## Performance Profiling
+
+### Backend Profiling
+
+<Tabs>
+  <Tab title="Node.js Profiler">
+    ```bash
+    # Generate CPU profile
+    node --cpu-prof --cpu-prof-dir=./profiles dist/main.js
+
+    # Generate heap snapshot
+    node --heap-prof --heap-prof-dir=./profiles dist/main.js
+
+    # Analyze with Chrome DevTools
+    # Open chrome://inspect and load the .cpuprofile or .heapprofile file
+    ```
+  </Tab>
+
+  <Tab title="Clinic.js">
+    ```bash
+    # Install clinic
+    npm install -g clinic
+
+    # Run doctor for general analysis
+    clinic doctor -- node dist/main.js
+
+    # Run flame for CPU profiling
+    clinic flame -- node dist/main.js
+
+    # Run bubbleprof for async analysis
+    clinic bubbleprof -- node dist/main.js
+    ```
+  </Tab>
+
+  <Tab title="Custom Profiling">
+    ```typescript
+    // src/common/profiling/profiler.service.ts
+    import { Injectable, Logger } from '@nestjs/common';
+    import { performance, PerformanceObserver } from 'perf_hooks';
+
+    @Injectable()
+    export class ProfilerService {
+      private readonly logger = new Logger(ProfilerService.name);
+      private measurements: Map<string, number[]> = new Map();
+
+      constructor() {
+        // Set up performance observer
+        const obs = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            this.logger.debug(`${entry.name}: ${entry.duration.toFixed(2)}ms`);
+          }
+        });
+        obs.observe({ entryTypes: ['measure'] });
+      }
+
+      startMeasure(name: string): string {
+        const markName = `${name}-${Date.now()}`;
+        performance.mark(`${markName}-start`);
+        return markName;
+      }
+
+      endMeasure(markName: string): number {
+        performance.mark(`${markName}-end`);
+        performance.measure(
+          markName,
+          `${markName}-start`,
+          `${markName}-end`
+        );
+
+        const entries = performance.getEntriesByName(markName);
+        const duration = entries[0]?.duration || 0;
+
+        // Store for aggregation
+        const baseName = markName.split('-')[0];
+        const measurements = this.measurements.get(baseName) || [];
+        measurements.push(duration);
+        this.measurements.set(baseName, measurements);
+
+        // Cleanup
+        performance.clearMarks(`${markName}-start`);
+        performance.clearMarks(`${markName}-end`);
+        performance.clearMeasures(markName);
+
+        return duration;
+      }
+
+      getStats(name: string) {
+        const measurements = this.measurements.get(name) || [];
+        if (measurements.length === 0) return null;
+
+        const sorted = [...measurements].sort((a, b) => a - b);
+        return {
+          count: measurements.length,
+          min: sorted[0],
+          max: sorted[sorted.length - 1],
+          avg: measurements.reduce((a, b) => a + b, 0) / measurements.length,
+          p50: sorted[Math.floor(sorted.length * 0.5)],
+          p95: sorted[Math.floor(sorted.length * 0.95)],
+          p99: sorted[Math.floor(sorted.length * 0.99)],
+        };
+      }
+    }
+
+    // Usage with decorator
+    export function Profile(name?: string) {
+      return function (
+        target: any,
+        propertyKey: string,
+        descriptor: PropertyDescriptor
+      ) {
+        const originalMethod = descriptor.value;
+        const measureName = name || `${target.constructor.name}.${propertyKey}`;
+
+        descriptor.value = async function (...args: any[]) {
+          const profiler = this.profiler as ProfilerService;
+          const mark = profiler?.startMeasure(measureName);
+
+          try {
+            return await originalMethod.apply(this, args);
+          } finally {
+            if (mark) profiler.endMeasure(mark);
+          }
+        };
+
+        return descriptor;
+      };
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Frontend Performance
+
+```typescript
+// src/lib/performance.ts
+export class PerformanceMonitor {
+  private static marks: Map<string, number> = new Map();
+
+  static startMeasure(name: string) {
+    this.marks.set(name, performance.now());
+    performance.mark(`${name}-start`);
+  }
+
+  static endMeasure(name: string): number {
+    const startTime = this.marks.get(name);
+    if (!startTime) return 0;
+
+    const duration = performance.now() - startTime;
+    performance.mark(`${name}-end`);
+    performance.measure(name, `${name}-start`, `${name}-end`);
+
+    this.marks.delete(name);
+
+    // Log slow operations
+    if (duration > 100) {
+      console.warn(`Slow operation: ${name} took ${duration.toFixed(2)}ms`);
+    }
+
+    return duration;
+  }
+
+  static measureAsync<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    this.startMeasure(name);
+    return fn().finally(() => this.endMeasure(name));
+  }
+
+  static getWebVitals() {
+    return {
+      LCP: performance.getEntriesByType('largest-contentful-paint')[0],
+      FID: performance.getEntriesByType('first-input')[0],
+      CLS: performance.getEntriesByType('layout-shift'),
+      FCP: performance.getEntriesByType('paint').find(
+        entry => entry.name === 'first-contentful-paint'
+      ),
+      TTFB: performance.getEntriesByType('navigation')[0],
+    };
+  }
+}
+
+// React hook for component render profiling
+export function useRenderCount(componentName: string) {
+  const renderCount = useRef(0);
+
+  useEffect(() => {
+    renderCount.current++;
+    console.log(`${componentName} rendered ${renderCount.current} times`);
+  });
+}
+```
+
+### Memory Leak Detection
+
+```typescript
+// src/utils/memory-debug.ts
+export function trackMemory(label: string) {
+  if (typeof window !== 'undefined' && 'memory' in performance) {
+    const memory = (performance as any).memory;
+    console.log(`[Memory - ${label}]`, {
+      usedJSHeapSize: `${(memory.usedJSHeapSize / 1048576).toFixed(2)} MB`,
+      totalJSHeapSize: `${(memory.totalJSHeapSize / 1048576).toFixed(2)} MB`,
+      jsHeapSizeLimit: `${(memory.jsHeapSizeLimit / 1048576).toFixed(2)} MB`,
+    });
+  }
+}
+
+// React hook for detecting memory leaks
+export function useMemoryLeakDetector(componentName: string) {
+  useEffect(() => {
+    const interval = setInterval(() => {
+      trackMemory(componentName);
+    }, 5000);
+
+    return () => {
+      clearInterval(interval);
+      console.log(`${componentName} unmounted - checking for leaks`);
+
+      // Force garbage collection if available (dev tools)
+      if (typeof (window as any).gc === 'function') {
+        (window as any).gc();
+        setTimeout(() => trackMemory(`${componentName} after GC`), 100);
+      }
+    };
+  }, [componentName]);
+}
+```
+
+---
+
+## Quick Reference
+
+### Common Debugging Scenarios
+
+<AccordionGroup>
+  <Accordion title="API Returns Wrong Data">
+    1. Check request payload in Network tab
+    2. Add logging interceptor to backend
+    3. Set breakpoint in controller
+    4. Verify database query results
+    5. Check response transformation
+  </Accordion>
+
+  <Accordion title="Component Not Re-rendering">
+    1. Open React DevTools Components tab
+    2. Check if props/state are changing
+    3. Verify dependency arrays in hooks
+    4. Look for memoization issues
+    5. Check for stale closures
+  </Accordion>
+
+  <Accordion title="Slow Database Queries">
+    1. Enable Drizzle query logging
+    2. Run EXPLAIN ANALYZE on query
+    3. Check for missing indexes
+    4. Look for N+1 query patterns
+    5. Review query complexity
+  </Accordion>
+
+  <Accordion title="Memory Leaks">
+    1. Take heap snapshots over time
+    2. Compare retained objects
+    3. Check for event listener cleanup
+    4. Review subscription handling
+    5. Verify component unmount cleanup
+  </Accordion>
+</AccordionGroup>
+
+### Debugging Checklist
+
+<Steps>
+  <Step title="Reproduce the Issue">
+    Document exact steps to reproduce the problem
+  </Step>
+  <Step title="Isolate the Problem">
+    Narrow down to specific component/service/query
+  </Step>
+  <Step title="Check Logs">
+    Review application and system logs for errors
+  </Step>
+  <Step title="Set Breakpoints">
+    Add strategic breakpoints to inspect state
+  </Step>
+  <Step title="Verify Assumptions">
+    Check that data is what you expect at each step
+  </Step>
+  <Step title="Test the Fix">
+    Verify the fix works and doesn't break other things
+  </Step>
+</Steps>

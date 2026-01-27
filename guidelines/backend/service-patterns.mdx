@@ -1,0 +1,477 @@
+---
+title: Service Patterns
+description: NestJS service design patterns and dependency injection best practices
+---
+
+# Service Patterns
+
+Services contain business logic in the Vritti API. This guide covers service design patterns, dependency injection, and best practices.
+
+## Basic Service Structure
+
+```typescript
+// tenant/tenant.service.ts
+import { Injectable, Logger } from '@nestjs/common';
+import { TenantRepository } from './tenant.repository';
+import { CreateTenantDto } from './dto/create-tenant.dto';
+import { TenantResponseDto } from './dto/tenant-response.dto';
+import { ConflictException, NotFoundException } from '@vritti/api-sdk';
+
+@Injectable()
+export class TenantService {
+  private readonly logger = new Logger(TenantService.name);
+
+  constructor(
+    private readonly tenantRepository: TenantRepository,
+    private readonly configService: TenantDatabaseConfigService,
+  ) {}
+
+  async create(dto: CreateTenantDto): Promise<TenantResponseDto> {
+    this.logger.log(`Creating tenant with subdomain: ${dto.subdomain}`);
+
+    try {
+      const tenant = await this.tenantRepository.create({
+        subdomain: dto.subdomain,
+        name: dto.name,
+        settings: dto.settings,
+      });
+
+      this.logger.log(`Tenant created: ${tenant.id}`);
+      return TenantResponseDto.from(tenant);
+
+    } catch (error) {
+      this.handleUniqueConstraintError(error, 'subdomain', dto.subdomain);
+      throw error;
+    }
+  }
+
+  async findById(id: string): Promise<TenantResponseDto> {
+    const tenant = await this.tenantRepository.findById(id);
+
+    if (!tenant) {
+      throw new NotFoundException('tenant', `Tenant with ID '${id}' not found`);
+    }
+
+    return TenantResponseDto.from(tenant);
+  }
+
+  async findAll(options: { page: number; limit: number }): Promise<PaginatedResponse<TenantResponseDto>> {
+    const { data, total } = await this.tenantRepository.findMany({
+      offset: (options.page - 1) * options.limit,
+      limit: options.limit,
+    });
+
+    return {
+      data: data.map(TenantResponseDto.from),
+      meta: {
+        page: options.page,
+        limit: options.limit,
+        total,
+        totalPages: Math.ceil(total / options.limit),
+      },
+    };
+  }
+
+  private handleUniqueConstraintError(error: unknown, field: string, value: string): void {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      (error as Error & { code: string }).code === '23505'
+    ) {
+      throw new ConflictException(
+        field,
+        `Tenant with ${field} '${value}' already exists`,
+        `This ${field} is already taken. Please choose a different ${field}.`,
+      );
+    }
+  }
+}
+```
+
+## Dependency Injection
+
+### Constructor Injection
+
+```typescript
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly userService: UserService,
+    private readonly encryptionService: EncryptionService,
+    private readonly sessionService: SessionService,
+    private readonly jwtService: JwtAuthService,
+  ) {}
+}
+```
+
+### Forward Reference Injection
+
+```typescript
+import { forwardRef, Inject, Injectable } from '@nestjs/common';
+
+@Injectable()
+export class AuthService {
+  constructor(
+    @Inject(forwardRef(() => MfaVerificationService))
+    private readonly mfaService: MfaVerificationService,
+  ) {}
+}
+```
+
+### Token Injection
+
+```typescript
+@Injectable()
+export class EmailService {
+  constructor(
+    @Inject('MAIL_CONFIG')
+    private readonly mailConfig: MailConfig,
+  ) {}
+}
+```
+
+## Logging Pattern
+
+### Using NestJS Logger
+
+```typescript
+import { Injectable, Logger } from '@nestjs/common';
+
+@Injectable()
+export class UserService {
+  private readonly logger = new Logger(UserService.name);
+
+  async createUser(dto: CreateUserDto): Promise<User> {
+    this.logger.log(`Creating user with email: ${dto.email}`);
+
+    try {
+      const user = await this.userRepository.create(dto);
+      this.logger.log(`User created successfully: ${user.id}`);
+      return user;
+
+    } catch (error) {
+      this.logger.error(`Failed to create user: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    this.logger.warn(`Deleting user: ${id}`);
+    await this.userRepository.delete(id);
+    this.logger.debug(`User deleted: ${id}`);
+  }
+}
+```
+
+### Log Levels
+
+| Level | Method | Usage |
+|-------|--------|-------|
+| `log` | `logger.log()` | Normal operations |
+| `error` | `logger.error()` | Errors with stack trace |
+| `warn` | `logger.warn()` | Important alerts |
+| `debug` | `logger.debug()` | Development details |
+| `verbose` | `logger.verbose()` | Extra verbose info |
+
+## Error Handling
+
+### Using Custom Exceptions
+
+```typescript
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@vritti/api-sdk';
+
+@Injectable()
+export class UserService {
+  async findByEmail(email: string): Promise<User> {
+    const user = await this.userRepository.findByEmail(email);
+
+    if (!user) {
+      throw new NotFoundException(
+        'email',
+        'User not found',
+        `No user found with email '${email}'`,
+      );
+    }
+
+    return user;
+  }
+
+  async updateEmail(userId: string, newEmail: string): Promise<User> {
+    // Check if email is already taken
+    const existing = await this.userRepository.findByEmail(newEmail);
+    if (existing && existing.id !== userId) {
+      throw new ConflictException(
+        'email',
+        'Email already in use',
+        'This email address is registered to another account',
+      );
+    }
+
+    return this.userRepository.update(userId, { email: newEmail });
+  }
+
+  async validatePassword(userId: string, password: string): Promise<void> {
+    const user = await this.userRepository.findById(userId);
+    const isValid = await this.encryptionService.compare(password, user.passwordHash);
+
+    if (!isValid) {
+      throw new UnauthorizedException(
+        'password',
+        'Invalid password',
+        'The password you entered is incorrect',
+      );
+    }
+  }
+}
+```
+
+### Exception Signature Options
+
+```typescript
+// General message only
+throw new BadRequestException('Invalid request');
+
+// Field-specific error
+throw new BadRequestException('email', 'Invalid email format');
+
+// Field, message, and detail
+throw new BadRequestException(
+  'email',
+  'Invalid email format',
+  'Please enter a valid email address like user@example.com',
+);
+
+// Multiple field errors
+throw new BadRequestException([
+  { field: 'email', message: 'Invalid email' },
+  { field: 'password', message: 'Password required' },
+]);
+```
+
+## Transaction Handling
+
+### Service-Level Transactions
+
+```typescript
+@Injectable()
+export class OrderService {
+  constructor(
+    private readonly database: PrimaryDatabaseService,
+    private readonly orderRepository: OrderRepository,
+    private readonly inventoryService: InventoryService,
+  ) {}
+
+  async createOrder(dto: CreateOrderDto): Promise<Order> {
+    return this.database.transaction(async (tx) => {
+      // Create order
+      const order = await this.orderRepository.create(dto, { tx });
+
+      // Update inventory
+      for (const item of dto.items) {
+        await this.inventoryService.decrementStock(item.productId, item.quantity, { tx });
+      }
+
+      // Create payment record
+      await this.paymentService.createPending(order.id, order.total, { tx });
+
+      return order;
+    });
+  }
+}
+```
+
+## Service Composition
+
+### Delegating to Specialized Services
+
+```typescript
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly userService: UserService,
+    private readonly sessionService: SessionService,
+    private readonly mfaService: MfaVerificationService,
+  ) {}
+
+  async login(dto: LoginDto): Promise<LoginResponse> {
+    // Delegate user lookup
+    const user = await this.userService.findByEmailWithPassword(dto.email);
+
+    // Delegate password verification
+    await this.userService.validatePassword(user.id, dto.password);
+
+    // Check MFA requirement
+    if (user.mfaEnabled) {
+      const challenge = await this.mfaService.createChallenge(user.id);
+      return {
+        requiresMfa: true,
+        mfaChallenge: challenge,
+      };
+    }
+
+    // Create session
+    const session = await this.sessionService.create(user.id);
+
+    return {
+      accessToken: session.accessToken,
+      expiresIn: session.expiresIn,
+      user: UserResponseDto.from(user),
+    };
+  }
+}
+```
+
+## Async Operations
+
+### Event Emission
+
+```typescript
+import { EventEmitter2 } from '@nestjs/event-emitter';
+
+@Injectable()
+export class UserService {
+  constructor(
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
+
+  async createUser(dto: CreateUserDto): Promise<User> {
+    const user = await this.userRepository.create(dto);
+
+    // Emit event for async processing
+    this.eventEmitter.emit('user.created', {
+      userId: user.id,
+      email: user.email,
+    });
+
+    return user;
+  }
+}
+
+// Event handler
+@Injectable()
+export class UserEventHandler {
+  @OnEvent('user.created')
+  async handleUserCreated(payload: { userId: string; email: string }) {
+    // Send welcome email
+    await this.emailService.sendWelcome(payload.email);
+  }
+}
+```
+
+## Testing Services
+
+### Mock Dependencies
+
+```typescript
+// user.service.spec.ts
+describe('UserService', () => {
+  let service: UserService;
+  let repository: jest.Mocked<UserRepository>;
+
+  beforeEach(async () => {
+    const module = await Test.createTestingModule({
+      providers: [
+        UserService,
+        {
+          provide: UserRepository,
+          useValue: {
+            create: jest.fn(),
+            findById: jest.fn(),
+            findByEmail: jest.fn(),
+          },
+        },
+      ],
+    }).compile();
+
+    service = module.get(UserService);
+    repository = module.get(UserRepository);
+  });
+
+  describe('findById', () => {
+    it('should return user when found', async () => {
+      const mockUser = { id: '1', email: 'test@example.com' };
+      repository.findById.mockResolvedValue(mockUser);
+
+      const result = await service.findById('1');
+
+      expect(result).toEqual(mockUser);
+      expect(repository.findById).toHaveBeenCalledWith('1');
+    });
+
+    it('should throw NotFoundException when not found', async () => {
+      repository.findById.mockResolvedValue(null);
+
+      await expect(service.findById('1')).rejects.toThrow(NotFoundException);
+    });
+  });
+});
+```
+
+## Best Practices
+
+<Accordion title="Single Responsibility">
+Each service should focus on one domain:
+
+```typescript
+// ✅ Good - focused services
+UserService       // User CRUD
+AuthService       // Authentication
+SessionService    // Session management
+
+// ❌ Avoid - mixed concerns
+UserService that also handles auth and sessions
+```
+</Accordion>
+
+<Accordion title="Thin Controllers, Fat Services">
+Business logic belongs in services:
+
+```typescript
+// ✅ Good - logic in service
+@Post()
+create(@Body() dto: CreateUserDto) {
+  return this.userService.create(dto);
+}
+
+// ❌ Avoid - logic in controller
+@Post()
+async create(@Body() dto: CreateUserDto) {
+  const exists = await this.userRepo.findByEmail(dto.email);
+  if (exists) throw new ConflictException();
+  const hashed = await bcrypt.hash(dto.password, 10);
+  // ... more logic
+}
+```
+</Accordion>
+
+<Accordion title="Always Log Important Operations">
+```typescript
+async createUser(dto: CreateUserDto): Promise<User> {
+  this.logger.log(`Creating user: ${dto.email}`);
+
+  const user = await this.userRepository.create(dto);
+
+  this.logger.log(`User created: ${user.id}`);
+  return user;
+}
+```
+</Accordion>
+
+<Accordion title="Use Descriptive Exception Messages">
+```typescript
+// ✅ Good - helpful messages
+throw new NotFoundException(
+  'user',
+  'User not found',
+  `No user exists with ID '${id}'. Please verify the ID and try again.`,
+);
+
+// ❌ Avoid - generic messages
+throw new NotFoundException('Not found');
+```
+</Accordion>

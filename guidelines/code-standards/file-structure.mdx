@@ -1,0 +1,367 @@
+---
+title: File Structure
+description: Directory organization patterns for Vritti frontend and backend projects
+---
+
+# File Structure
+
+Consistent file organization makes it easier to navigate and maintain the codebase. This guide covers the directory structures used across Vritti projects.
+
+## Frontend Applications
+
+### React Application (vritti-web-nexus, vritti-auth)
+
+```
+src/
+├── components/           # Reusable UI components
+│   ├── auth/            # Feature-specific components
+│   │   ├── LoginForm.tsx
+│   │   └── SocialAuthButtons.tsx
+│   ├── layout/          # Layout components
+│   │   ├── Header.tsx
+│   │   └── Sidebar.tsx
+│   └── common/          # Shared components
+│       ├── LoadingSpinner.tsx
+│       └── ErrorBoundary.tsx
+├── pages/               # Route page components
+│   ├── auth/
+│   │   ├── LoginPage.tsx
+│   │   └── SignupPage.tsx
+│   └── dashboard/
+│       └── DashboardPage.tsx
+├── hooks/               # Custom React hooks
+│   ├── useLogin.ts
+│   ├── useUser.ts
+│   └── useMFAVerification.ts
+├── services/            # API service functions
+│   ├── auth.service.ts
+│   └── user.service.ts
+├── schemas/             # Zod validation schemas
+│   ├── auth.ts
+│   └── user.ts
+├── context/             # React context providers
+│   ├── OnboardingContext.tsx
+│   └── OnboardingProvider.tsx
+├── utils/               # Utility functions
+│   ├── axios.ts
+│   └── formatters.ts
+├── types/               # TypeScript type definitions
+│   └── api.types.ts
+├── App.tsx              # Root component
+├── main.tsx             # Entry point
+└── routes.tsx           # Route definitions
+```
+
+### Component Library (quantum-ui)
+
+```
+lib/
+├── components/          # Public component exports
+│   ├── Button/
+│   │   ├── Button.tsx
+│   │   ├── Button.stories.tsx
+│   │   └── index.ts
+│   ├── TextField/
+│   │   ├── TextField.tsx
+│   │   ├── TextField.stories.tsx
+│   │   └── index.ts
+│   ├── Form/
+│   │   ├── Form.tsx
+│   │   ├── Field.tsx
+│   │   ├── FieldLabel.tsx
+│   │   ├── FieldError.tsx
+│   │   └── index.ts
+│   └── index.ts         # Barrel export
+├── hooks/               # Custom hooks
+│   └── index.ts
+├── utils/               # Utilities
+│   ├── cn.ts            # Class name merger
+│   ├── axios.ts         # Configured axios instance
+│   └── formHelpers.ts   # Form utilities
+├── context/             # Context providers
+│   └── ConfigProvider.tsx
+└── index.ts             # Main entry point
+
+shadcn/                  # Base shadcn/ui components
+├── button.tsx
+├── input.tsx
+├── card.tsx
+└── ...
+```
+
+### Next.js Application (vritti-landing)
+
+```
+src/
+├── app/                 # App Router pages
+│   ├── layout.tsx       # Root layout
+│   ├── page.tsx         # Home page
+│   ├── about/
+│   │   └── page.tsx
+│   └── contact/
+│       └── page.tsx
+├── components/          # React components
+│   ├── home/
+│   │   ├── Hero.tsx
+│   │   ├── Features.tsx
+│   │   └── CTA.tsx
+│   └── layout/
+│       ├── Header.tsx
+│       └── Footer.tsx
+├── lib/                 # Utility libraries
+│   └── utils.ts
+└── content/             # Static content
+    └── content.ts
+```
+
+## Backend Application
+
+### NestJS Application (vritti-api-nexus)
+
+```
+src/
+├── modules/             # Feature modules
+│   ├── cloud-api/       # API module group
+│   │   ├── auth/
+│   │   │   ├── auth.module.ts
+│   │   │   ├── auth.controller.ts
+│   │   │   ├── services/
+│   │   │   │   ├── auth.service.ts
+│   │   │   │   ├── jwt-auth.service.ts
+│   │   │   │   └── session.service.ts
+│   │   │   ├── dto/
+│   │   │   │   ├── login.dto.ts
+│   │   │   │   ├── signup.dto.ts
+│   │   │   │   └── login-response.dto.ts
+│   │   │   └── guards/
+│   │   │       └── jwt.guard.ts
+│   │   ├── user/
+│   │   │   ├── user.module.ts
+│   │   │   ├── user.controller.ts
+│   │   │   ├── user.service.ts
+│   │   │   ├── user.repository.ts
+│   │   │   └── dto/
+│   │   │       ├── create-user.dto.ts
+│   │   │       └── user-response.dto.ts
+│   │   └── tenant/
+│   │       ├── tenant.module.ts
+│   │       ├── tenant.controller.ts
+│   │       ├── tenant.service.ts
+│   │       ├── tenant.repository.ts
+│   │       └── dto/
+│   │           ├── create-tenant.dto.ts
+│   │           └── tenant-response.dto.ts
+│   └── index.ts
+├── db/                  # Database layer
+│   ├── schema/          # Drizzle schema definitions
+│   │   ├── users.ts
+│   │   ├── tenants.ts
+│   │   └── index.ts
+│   ├── migrations/      # Database migrations
+│   └── seed/            # Seed data
+├── common/              # Shared utilities
+│   ├── decorators/
+│   │   └── public.decorator.ts
+│   ├── guards/
+│   │   └── auth.guard.ts
+│   ├── interceptors/
+│   │   └── logging.interceptor.ts
+│   └── filters/
+│       └── http-exception.filter.ts
+├── config/              # Configuration
+│   └── configuration.ts
+├── app.module.ts        # Root module
+├── app.controller.ts    # Root controller
+├── app.service.ts       # Root service
+└── main.ts              # Application entry
+```
+
+### SDK Package (api-sdk)
+
+```
+src/
+├── database/            # Database module
+│   ├── database.module.ts
+│   ├── services/
+│   │   ├── primary-database.service.ts
+│   │   └── tenant-database.service.ts
+│   ├── repositories/
+│   │   ├── primary-base.repository.ts
+│   │   └── tenant-base.repository.ts
+│   └── interceptors/
+│       └── tenant-context.interceptor.ts
+├── exceptions/          # Exception classes
+│   ├── base-field.exception.ts
+│   ├── bad-request.exception.ts
+│   ├── not-found.exception.ts
+│   └── index.ts
+├── filters/             # Exception filters
+│   └── http-exception.filter.ts
+├── types/               # Type definitions
+│   └── error-response.types.ts
+└── index.ts             # Package entry
+```
+
+## Module Structure (NestJS)
+
+### Standard Module Organization
+
+```
+feature/
+├── feature.module.ts    # Module definition
+├── feature.controller.ts # HTTP routes
+├── feature.service.ts   # Business logic
+├── feature.repository.ts # Data access
+├── dto/                 # Data transfer objects
+│   ├── create-feature.dto.ts
+│   ├── update-feature.dto.ts
+│   └── feature-response.dto.ts
+├── entities/            # Drizzle entities (if separate)
+│   └── feature.entity.ts
+└── guards/              # Feature-specific guards
+    └── feature.guard.ts
+```
+
+### Complex Module Example (Auth)
+
+```
+auth/
+├── auth.module.ts
+├── auth.controller.ts
+├── services/
+│   ├── auth.service.ts
+│   ├── jwt-auth.service.ts
+│   ├── session.service.ts
+│   ├── mfa-verification.service.ts
+│   └── encryption.service.ts
+├── dto/
+│   ├── login.dto.ts
+│   ├── signup.dto.ts
+│   ├── verify-otp.dto.ts
+│   └── login-response.dto.ts
+├── guards/
+│   ├── jwt.guard.ts
+│   └── refresh-token.guard.ts
+├── strategies/
+│   ├── jwt.strategy.ts
+│   └── local.strategy.ts
+└── oauth/
+    ├── oauth.module.ts
+    ├── providers/
+    │   ├── google.provider.ts
+    │   ├── microsoft.provider.ts
+    │   └── apple.provider.ts
+    └── dto/
+        └── oauth-callback.dto.ts
+```
+
+## Component Organization (React)
+
+### Simple Component
+
+```
+Button/
+├── Button.tsx           # Component implementation
+├── Button.stories.tsx   # Storybook stories
+└── index.ts            # Export
+```
+
+### Complex Component
+
+```
+Form/
+├── Form.tsx            # Main component
+├── FormContext.tsx     # Context provider
+├── Field.tsx           # Sub-component
+├── FieldLabel.tsx      # Sub-component
+├── FieldError.tsx      # Sub-component
+├── FieldDescription.tsx # Sub-component
+├── FieldGroup.tsx      # Sub-component
+├── Form.stories.tsx    # Storybook stories
+├── Form.test.tsx       # Tests
+└── index.ts            # Barrel export
+```
+
+### Index File Pattern
+
+```typescript
+// index.ts - Barrel export
+export { Form, type FormProps } from './Form';
+export { Field, type FieldProps } from './Field';
+export { FieldLabel } from './FieldLabel';
+export { FieldError } from './FieldError';
+export { FieldDescription } from './FieldDescription';
+export { FieldGroup } from './FieldGroup';
+```
+
+## Configuration Files
+
+### Root Level
+
+```
+project/
+├── package.json         # Dependencies and scripts
+├── tsconfig.json        # TypeScript config
+├── biome.json           # Linting and formatting
+├── .gitignore           # Git ignore patterns
+├── .env.example         # Environment template
+├── pnpm-workspace.yaml  # Workspace config
+└── README.md            # Documentation
+```
+
+### Build Configuration
+
+```
+# Frontend (Rsbuild)
+├── rsbuild.config.ts
+
+# Component Library (Vite)
+├── vite.config.ts
+
+# Next.js
+├── next.config.js
+
+# NestJS
+├── nest-cli.json
+└── drizzle.config.ts
+```
+
+## Best Practices
+
+<Accordion title="Keep Related Files Together">
+Group files by feature, not by type. A user feature should have its module, controller, service, and DTOs in one folder.
+
+```
+# Good
+user/
+├── user.module.ts
+├── user.service.ts
+└── dto/create-user.dto.ts
+
+# Avoid
+modules/user.module.ts
+services/user.service.ts
+dto/create-user.dto.ts
+```
+</Accordion>
+
+<Accordion title="Use Barrel Exports">
+Create index.ts files to simplify imports:
+
+```typescript
+// components/Button/index.ts
+export { Button, type ButtonProps } from './Button';
+
+// Usage
+import { Button } from '@/components/Button';
+```
+</Accordion>
+
+<Accordion title="Separate Public and Private Components">
+In quantum-ui, shadcn components are internal, wrapped components are public:
+
+```
+lib/components/     # Public API
+shadcn/            # Internal implementation
+```
+</Accordion>

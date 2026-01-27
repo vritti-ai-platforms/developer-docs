@@ -1,0 +1,1313 @@
+---
+title: "Logging"
+description: "Comprehensive logging strategy for multi-tenant SaaS applications with NestJS and Winston"
+---
+
+## Overview
+
+Effective logging is critical for debugging, monitoring, and auditing multi-tenant SaaS applications. Our logging architecture provides structured, contextual logs that include tenant information, request tracing, and sensitive data filtering.
+
+<Card title="Key Features" icon="list-check">
+  - Structured JSON logging format
+  - Automatic tenant context injection
+  - Request correlation IDs for distributed tracing
+  - Sensitive data masking
+  - Multiple transport support (console, file, cloud services)
+</Card>
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Application Layer                          │
+├─────────────────────────────────────────────────────────────────┤
+│  NestJS Logger  │  Custom Logger  │  Winston Logger             │
+├─────────────────────────────────────────────────────────────────┤
+│                     Log Processing Layer                        │
+├─────────────────────────────────────────────────────────────────┤
+│  Context Enrichment  │  Sensitive Data Filter  │  Formatters   │
+├─────────────────────────────────────────────────────────────────┤
+│                      Transport Layer                            │
+├─────────────────────────────────────────────────────────────────┤
+│  Console  │  File  │  CloudWatch  │  Datadog  │  ELK Stack     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Log Levels
+
+Understanding log levels is essential for effective debugging and monitoring.
+
+| Level | Priority | Description | Use Case |
+|-------|----------|-------------|----------|
+| `error` | 0 | Critical failures | Unhandled exceptions, service failures |
+| `warn` | 1 | Warning conditions | Deprecations, retry attempts, near-limit conditions |
+| `info` | 2 | Informational | Request completion, business events, state changes |
+| `debug` | 3 | Debug information | Variable values, flow control, detailed processing |
+| `verbose` | 4 | Verbose output | Detailed tracing, all method calls |
+
+<Warning>
+  In production, set log level to `info` or `warn`. Using `debug` or `verbose` in production can impact performance and generate excessive log volume.
+</Warning>
+
+## NestJS Logger Usage
+
+### Basic Logger Setup
+
+NestJS provides a built-in Logger class that integrates seamlessly with the framework.
+
+```typescript
+// src/common/logger/app-logger.service.ts
+import { Injectable, LoggerService, Scope } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
+
+@Injectable({ scope: Scope.TRANSIENT })
+export class AppLoggerService implements LoggerService {
+  private logger: Logger;
+  private context: string;
+
+  setContext(context: string): void {
+    this.context = context;
+    this.logger = new Logger(context);
+  }
+
+  log(message: string, ...optionalParams: any[]): void {
+    this.logger.log(message, ...optionalParams);
+  }
+
+  error(message: string, trace?: string, ...optionalParams: any[]): void {
+    this.logger.error(message, trace, ...optionalParams);
+  }
+
+  warn(message: string, ...optionalParams: any[]): void {
+    this.logger.warn(message, ...optionalParams);
+  }
+
+  debug(message: string, ...optionalParams: any[]): void {
+    this.logger.debug(message, ...optionalParams);
+  }
+
+  verbose(message: string, ...optionalParams: any[]): void {
+    this.logger.verbose(message, ...optionalParams);
+  }
+}
+```
+
+### Using Logger in Services
+
+```typescript
+// src/modules/orders/orders.service.ts
+import { Injectable, Logger } from '@nestjs/common';
+import { Order } from './entities/order.entity';
+
+@Injectable()
+export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
+  async createOrder(createOrderDto: CreateOrderDto): Promise<Order> {
+    this.logger.log(`Creating order for customer: ${createOrderDto.customerId}`);
+
+    try {
+      const order = await this.orderRepository.save(createOrderDto);
+
+      this.logger.log(`Order created successfully`, {
+        orderId: order.id,
+        customerId: order.customerId,
+        total: order.total,
+      });
+
+      return order;
+    } catch (error) {
+      this.logger.error(
+        `Failed to create order for customer: ${createOrderDto.customerId}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
+  async processPayment(orderId: string): Promise<void> {
+    this.logger.debug(`Processing payment for order: ${orderId}`);
+
+    // Payment processing logic...
+
+    this.logger.verbose(`Payment gateway response received`, {
+      orderId,
+      responseTime: 245,
+      gateway: 'stripe',
+    });
+  }
+}
+```
+
+### Logger Module Configuration
+
+```typescript
+// src/common/logger/logger.module.ts
+import { Module, Global } from '@nestjs/common';
+import { AppLoggerService } from './app-logger.service';
+
+@Global()
+@Module({
+  providers: [AppLoggerService],
+  exports: [AppLoggerService],
+})
+export class LoggerModule {}
+```
+
+## Winston Configuration
+
+Winston provides advanced logging capabilities including multiple transports, custom formatters, and log rotation.
+
+### Winston Logger Setup
+
+```typescript
+// src/common/logger/winston-logger.service.ts
+import { Injectable, LoggerService } from '@nestjs/common';
+import * as winston from 'winston';
+import 'winston-daily-rotate-file';
+
+@Injectable()
+export class WinstonLoggerService implements LoggerService {
+  private logger: winston.Logger;
+
+  constructor() {
+    this.logger = winston.createLogger({
+      level: process.env.LOG_LEVEL || 'info',
+      format: winston.format.combine(
+        winston.format.timestamp({
+          format: 'YYYY-MM-DD HH:mm:ss.SSS',
+        }),
+        winston.format.errors({ stack: true }),
+        winston.format.json(),
+      ),
+      defaultMeta: {
+        service: process.env.SERVICE_NAME || 'api-service',
+        environment: process.env.NODE_ENV || 'development',
+        version: process.env.APP_VERSION || '1.0.0',
+      },
+      transports: this.createTransports(),
+    });
+  }
+
+  private createTransports(): winston.transport[] {
+    const transports: winston.transport[] = [];
+
+    // Console transport for development
+    if (process.env.NODE_ENV !== 'production') {
+      transports.push(
+        new winston.transports.Console({
+          format: winston.format.combine(
+            winston.format.colorize(),
+            winston.format.printf(({ timestamp, level, message, context, ...meta }) => {
+              const metaStr = Object.keys(meta).length ? JSON.stringify(meta) : '';
+              return `${timestamp} [${level}] [${context || 'Application'}] ${message} ${metaStr}`;
+            }),
+          ),
+        }),
+      );
+    } else {
+      // JSON format for production
+      transports.push(
+        new winston.transports.Console({
+          format: winston.format.json(),
+        }),
+      );
+    }
+
+    // Daily rotate file transport
+    transports.push(
+      new winston.transports.DailyRotateFile({
+        filename: 'logs/application-%DATE%.log',
+        datePattern: 'YYYY-MM-DD',
+        zippedArchive: true,
+        maxSize: '20m',
+        maxFiles: '14d',
+        format: winston.format.json(),
+      }),
+    );
+
+    // Error-specific log file
+    transports.push(
+      new winston.transports.DailyRotateFile({
+        filename: 'logs/error-%DATE%.log',
+        datePattern: 'YYYY-MM-DD',
+        zippedArchive: true,
+        maxSize: '20m',
+        maxFiles: '30d',
+        level: 'error',
+        format: winston.format.json(),
+      }),
+    );
+
+    return transports;
+  }
+
+  log(message: string, context?: string): void {
+    this.logger.info(message, { context });
+  }
+
+  error(message: string, trace?: string, context?: string): void {
+    this.logger.error(message, { trace, context });
+  }
+
+  warn(message: string, context?: string): void {
+    this.logger.warn(message, { context });
+  }
+
+  debug(message: string, context?: string): void {
+    this.logger.debug(message, { context });
+  }
+
+  verbose(message: string, context?: string): void {
+    this.logger.verbose(message, { context });
+  }
+
+  // Extended method for structured logging
+  logWithMeta(level: string, message: string, meta: Record<string, any>): void {
+    this.logger.log(level, message, meta);
+  }
+}
+```
+
+### Winston Module Integration
+
+```typescript
+// src/common/logger/winston-logger.module.ts
+import { Module, Global } from '@nestjs/common';
+import { WinstonLoggerService } from './winston-logger.service';
+
+@Global()
+@Module({
+  providers: [
+    {
+      provide: 'LOGGER',
+      useClass: WinstonLoggerService,
+    },
+    WinstonLoggerService,
+  ],
+  exports: ['LOGGER', WinstonLoggerService],
+})
+export class WinstonLoggerModule {}
+```
+
+### Replacing NestJS Default Logger
+
+```typescript
+// src/main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { WinstonLoggerService } from './common/logger/winston-logger.service';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true,
+  });
+
+  const logger = app.get(WinstonLoggerService);
+  app.useLogger(logger);
+
+  await app.listen(3000);
+  logger.log('Application started on port 3000', 'Bootstrap');
+}
+bootstrap();
+```
+
+## Structured Logging Format
+
+Structured logging ensures logs are machine-parseable while remaining human-readable.
+
+### Log Entry Schema
+
+```typescript
+// src/common/logger/interfaces/log-entry.interface.ts
+export interface LogEntry {
+  // Required fields
+  timestamp: string;
+  level: 'error' | 'warn' | 'info' | 'debug' | 'verbose';
+  message: string;
+
+  // Context fields
+  service: string;
+  environment: string;
+  version: string;
+
+  // Request context (when applicable)
+  correlationId?: string;
+  requestId?: string;
+
+  // Tenant context (for multi-tenant)
+  tenantId?: string;
+  tenantName?: string;
+
+  // User context (when authenticated)
+  userId?: string;
+  userEmail?: string;
+
+  // Error context (for error logs)
+  error?: {
+    name: string;
+    message: string;
+    stack?: string;
+    code?: string;
+  };
+
+  // Performance metrics
+  duration?: number;
+
+  // Additional metadata
+  [key: string]: any;
+}
+```
+
+### Structured Logger Implementation
+
+```typescript
+// src/common/logger/structured-logger.service.ts
+import { Injectable, Inject } from '@nestjs/common';
+import { REQUEST } from '@nestjs/core';
+import { Request } from 'express';
+import { WinstonLoggerService } from './winston-logger.service';
+import { LogEntry } from './interfaces/log-entry.interface';
+
+@Injectable()
+export class StructuredLoggerService {
+  constructor(
+    private readonly winstonLogger: WinstonLoggerService,
+    @Inject(REQUEST) private readonly request: Request,
+  ) {}
+
+  private buildLogEntry(
+    level: string,
+    message: string,
+    meta?: Partial<LogEntry>,
+  ): LogEntry {
+    const tenantContext = this.request['tenantContext'];
+    const user = this.request['user'];
+
+    return {
+      timestamp: new Date().toISOString(),
+      level: level as LogEntry['level'],
+      message,
+      service: process.env.SERVICE_NAME || 'api-service',
+      environment: process.env.NODE_ENV || 'development',
+      version: process.env.APP_VERSION || '1.0.0',
+      correlationId: this.request.headers['x-correlation-id'] as string,
+      requestId: this.request.headers['x-request-id'] as string,
+      tenantId: tenantContext?.tenantId,
+      tenantName: tenantContext?.tenantName,
+      userId: user?.id,
+      userEmail: user?.email,
+      ...meta,
+    };
+  }
+
+  info(message: string, meta?: Partial<LogEntry>): void {
+    const entry = this.buildLogEntry('info', message, meta);
+    this.winstonLogger.logWithMeta('info', message, entry);
+  }
+
+  error(message: string, error?: Error, meta?: Partial<LogEntry>): void {
+    const entry = this.buildLogEntry('error', message, {
+      ...meta,
+      error: error ? {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+        code: (error as any).code,
+      } : undefined,
+    });
+    this.winstonLogger.logWithMeta('error', message, entry);
+  }
+
+  warn(message: string, meta?: Partial<LogEntry>): void {
+    const entry = this.buildLogEntry('warn', message, meta);
+    this.winstonLogger.logWithMeta('warn', message, entry);
+  }
+
+  debug(message: string, meta?: Partial<LogEntry>): void {
+    const entry = this.buildLogEntry('debug', message, meta);
+    this.winstonLogger.logWithMeta('debug', message, entry);
+  }
+
+  verbose(message: string, meta?: Partial<LogEntry>): void {
+    const entry = this.buildLogEntry('verbose', message, meta);
+    this.winstonLogger.logWithMeta('verbose', message, entry);
+  }
+}
+```
+
+### Example Log Output
+
+```json
+{
+  "timestamp": "2024-01-15T10:30:45.123Z",
+  "level": "info",
+  "message": "Order created successfully",
+  "service": "api-service",
+  "environment": "production",
+  "version": "2.1.0",
+  "correlationId": "abc-123-def-456",
+  "requestId": "req-789",
+  "tenantId": "tenant-001",
+  "tenantName": "Acme Corp",
+  "userId": "user-123",
+  "userEmail": "john@acme.com",
+  "orderId": "order-456",
+  "total": 299.99,
+  "duration": 145
+}
+```
+
+## Tenant Context in Logs
+
+For multi-tenant applications, including tenant context in every log entry is essential for debugging and auditing.
+
+### Tenant Context Middleware
+
+```typescript
+// src/common/middleware/tenant-context.middleware.ts
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+import { TenantService } from '../../modules/tenant/tenant.service';
+
+export interface TenantContext {
+  tenantId: string;
+  tenantName: string;
+  tenantSlug: string;
+  plan: string;
+  settings: Record<string, any>;
+}
+
+@Injectable()
+export class TenantContextMiddleware implements NestMiddleware {
+  constructor(private readonly tenantService: TenantService) {}
+
+  async use(req: Request, res: Response, next: NextFunction): Promise<void> {
+    // Extract tenant from header, subdomain, or JWT
+    const tenantId = this.extractTenantId(req);
+
+    if (tenantId) {
+      const tenant = await this.tenantService.findById(tenantId);
+
+      if (tenant) {
+        req['tenantContext'] = {
+          tenantId: tenant.id,
+          tenantName: tenant.name,
+          tenantSlug: tenant.slug,
+          plan: tenant.plan,
+          settings: tenant.settings,
+        } as TenantContext;
+      }
+    }
+
+    next();
+  }
+
+  private extractTenantId(req: Request): string | null {
+    // From header
+    if (req.headers['x-tenant-id']) {
+      return req.headers['x-tenant-id'] as string;
+    }
+
+    // From subdomain
+    const host = req.headers.host || '';
+    const subdomain = host.split('.')[0];
+    if (subdomain && subdomain !== 'www' && subdomain !== 'api') {
+      return subdomain;
+    }
+
+    // From JWT claims
+    if (req['user']?.tenantId) {
+      return req['user'].tenantId;
+    }
+
+    return null;
+  }
+}
+```
+
+### Tenant-Aware Logger Decorator
+
+```typescript
+// src/common/decorators/log-tenant.decorator.ts
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+
+export const TenantLog = createParamDecorator(
+  (data: unknown, ctx: ExecutionContext) => {
+    const request = ctx.switchToHttp().getRequest();
+    const tenantContext = request['tenantContext'];
+
+    return {
+      tenantId: tenantContext?.tenantId || 'unknown',
+      tenantName: tenantContext?.tenantName || 'unknown',
+    };
+  },
+);
+```
+
+### Using Tenant Context in Services
+
+```typescript
+// src/modules/billing/billing.service.ts
+import { Injectable, Logger, Inject } from '@nestjs/common';
+import { REQUEST } from '@nestjs/core';
+import { Request } from 'express';
+
+@Injectable()
+export class BillingService {
+  private readonly logger = new Logger(BillingService.name);
+
+  constructor(@Inject(REQUEST) private readonly request: Request) {}
+
+  private get tenantContext() {
+    return this.request['tenantContext'];
+  }
+
+  async processInvoice(invoiceId: string): Promise<void> {
+    const { tenantId, tenantName } = this.tenantContext;
+
+    this.logger.log(
+      JSON.stringify({
+        message: 'Processing invoice',
+        tenantId,
+        tenantName,
+        invoiceId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+
+    try {
+      // Invoice processing logic...
+
+      this.logger.log(
+        JSON.stringify({
+          message: 'Invoice processed successfully',
+          tenantId,
+          tenantName,
+          invoiceId,
+          amount: 599.99,
+          currency: 'USD',
+        }),
+      );
+    } catch (error) {
+      this.logger.error(
+        JSON.stringify({
+          message: 'Invoice processing failed',
+          tenantId,
+          tenantName,
+          invoiceId,
+          error: error.message,
+          stack: error.stack,
+        }),
+      );
+      throw error;
+    }
+  }
+}
+```
+
+## Request Tracing with Correlation IDs
+
+Correlation IDs enable tracking requests across distributed services and microservices.
+
+### Correlation ID Middleware
+
+```typescript
+// src/common/middleware/correlation-id.middleware.ts
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+import { v4 as uuidv4 } from 'uuid';
+
+@Injectable()
+export class CorrelationIdMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction): void {
+    // Use existing correlation ID or generate new one
+    const correlationId = req.headers['x-correlation-id'] as string || uuidv4();
+    const requestId = uuidv4();
+
+    // Set on request for downstream access
+    req.headers['x-correlation-id'] = correlationId;
+    req.headers['x-request-id'] = requestId;
+
+    // Set on response headers
+    res.setHeader('x-correlation-id', correlationId);
+    res.setHeader('x-request-id', requestId);
+
+    next();
+  }
+}
+```
+
+### Async Local Storage for Context Propagation
+
+```typescript
+// src/common/context/async-context.service.ts
+import { Injectable } from '@nestjs/common';
+import { AsyncLocalStorage } from 'async_hooks';
+
+export interface RequestContext {
+  correlationId: string;
+  requestId: string;
+  tenantId?: string;
+  userId?: string;
+  startTime: number;
+}
+
+@Injectable()
+export class AsyncContextService {
+  private readonly asyncLocalStorage = new AsyncLocalStorage<RequestContext>();
+
+  run<T>(context: RequestContext, fn: () => T): T {
+    return this.asyncLocalStorage.run(context, fn);
+  }
+
+  getContext(): RequestContext | undefined {
+    return this.asyncLocalStorage.getStore();
+  }
+
+  get correlationId(): string | undefined {
+    return this.getContext()?.correlationId;
+  }
+
+  get requestId(): string | undefined {
+    return this.getContext()?.requestId;
+  }
+
+  get tenantId(): string | undefined {
+    return this.getContext()?.tenantId;
+  }
+
+  get userId(): string | undefined {
+    return this.getContext()?.userId;
+  }
+}
+```
+
+### Context-Aware HTTP Interceptor
+
+```typescript
+// src/common/interceptors/logging.interceptor.ts
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+  Logger,
+} from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { tap, catchError } from 'rxjs/operators';
+import { Request, Response } from 'express';
+
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  private readonly logger = new Logger('HTTP');
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const ctx = context.switchToHttp();
+    const request = ctx.getRequest<Request>();
+    const response = ctx.getResponse<Response>();
+    const startTime = Date.now();
+
+    const correlationId = request.headers['x-correlation-id'];
+    const requestId = request.headers['x-request-id'];
+    const tenantId = request['tenantContext']?.tenantId;
+    const userId = request['user']?.id;
+
+    const requestLog = {
+      type: 'REQUEST',
+      correlationId,
+      requestId,
+      tenantId,
+      userId,
+      method: request.method,
+      path: request.path,
+      query: request.query,
+      userAgent: request.headers['user-agent'],
+      ip: request.ip,
+    };
+
+    this.logger.log(JSON.stringify(requestLog));
+
+    return next.handle().pipe(
+      tap((data) => {
+        const duration = Date.now() - startTime;
+        const responseLog = {
+          type: 'RESPONSE',
+          correlationId,
+          requestId,
+          tenantId,
+          userId,
+          method: request.method,
+          path: request.path,
+          statusCode: response.statusCode,
+          duration,
+          contentLength: response.get('content-length'),
+        };
+
+        this.logger.log(JSON.stringify(responseLog));
+      }),
+      catchError((error) => {
+        const duration = Date.now() - startTime;
+        const errorLog = {
+          type: 'ERROR',
+          correlationId,
+          requestId,
+          tenantId,
+          userId,
+          method: request.method,
+          path: request.path,
+          statusCode: error.status || 500,
+          duration,
+          error: {
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+          },
+        };
+
+        this.logger.error(JSON.stringify(errorLog));
+        throw error;
+      }),
+    );
+  }
+}
+```
+
+### Propagating Correlation ID to External Services
+
+```typescript
+// src/common/http/http-client.service.ts
+import { Injectable, HttpService } from '@nestjs/common';
+import { AsyncContextService } from '../context/async-context.service';
+import { AxiosRequestConfig, AxiosResponse } from 'axios';
+
+@Injectable()
+export class HttpClientService {
+  constructor(
+    private readonly httpService: HttpService,
+    private readonly asyncContext: AsyncContextService,
+  ) {}
+
+  async request<T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+    const correlationId = this.asyncContext.correlationId;
+    const requestId = this.asyncContext.requestId;
+
+    const enhancedConfig: AxiosRequestConfig = {
+      ...config,
+      headers: {
+        ...config.headers,
+        'x-correlation-id': correlationId,
+        'x-request-id': requestId,
+      },
+    };
+
+    return this.httpService.axiosRef.request<T>(enhancedConfig);
+  }
+
+  async get<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
+    const response = await this.request<T>({ ...config, method: 'GET', url });
+    return response.data;
+  }
+
+  async post<T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
+    const response = await this.request<T>({ ...config, method: 'POST', url, data });
+    return response.data;
+  }
+}
+```
+
+## Log Aggregation
+
+### ELK Stack (Elasticsearch, Logstash, Kibana)
+
+```typescript
+// src/common/logger/transports/elasticsearch.transport.ts
+import * as winston from 'winston';
+import { ElasticsearchTransport } from 'winston-elasticsearch';
+import { Client } from '@elastic/elasticsearch';
+
+export function createElasticsearchTransport(): winston.transport {
+  const esClient = new Client({
+    node: process.env.ELASTICSEARCH_URL || 'http://localhost:9200',
+    auth: {
+      username: process.env.ELASTICSEARCH_USERNAME,
+      password: process.env.ELASTICSEARCH_PASSWORD,
+    },
+  });
+
+  return new ElasticsearchTransport({
+    client: esClient,
+    level: 'info',
+    indexPrefix: 'logs',
+    indexSuffixPattern: 'YYYY-MM-DD',
+    transformer: (logData) => {
+      return {
+        '@timestamp': logData.timestamp || new Date().toISOString(),
+        severity: logData.level,
+        message: logData.message,
+        service: logData.meta?.service,
+        environment: logData.meta?.environment,
+        correlationId: logData.meta?.correlationId,
+        tenantId: logData.meta?.tenantId,
+        userId: logData.meta?.userId,
+        fields: logData.meta,
+      };
+    },
+  });
+}
+```
+
+### AWS CloudWatch
+
+```typescript
+// src/common/logger/transports/cloudwatch.transport.ts
+import * as winston from 'winston';
+import WinstonCloudWatch from 'winston-cloudwatch';
+
+export function createCloudWatchTransport(): winston.transport {
+  return new WinstonCloudWatch({
+    logGroupName: process.env.CLOUDWATCH_LOG_GROUP || '/app/api-service',
+    logStreamName: () => {
+      const date = new Date().toISOString().split('T')[0];
+      return `${process.env.NODE_ENV}-${date}`;
+    },
+    awsRegion: process.env.AWS_REGION || 'us-east-1',
+    awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    awsSecretKey: process.env.AWS_SECRET_ACCESS_KEY,
+    messageFormatter: (log) => {
+      return JSON.stringify({
+        timestamp: log.timestamp || new Date().toISOString(),
+        level: log.level,
+        message: log.message,
+        ...log,
+      });
+    },
+    jsonMessage: true,
+    retentionInDays: 30,
+  });
+}
+```
+
+### Datadog Integration
+
+```typescript
+// src/common/logger/transports/datadog.transport.ts
+import * as winston from 'winston';
+import { createLogger } from 'winston';
+
+// Using HTTP transport to send logs to Datadog
+export function createDatadogTransport(): winston.transport {
+  const datadogApiKey = process.env.DATADOG_API_KEY;
+  const datadogSite = process.env.DATADOG_SITE || 'datadoghq.com';
+
+  return new winston.transports.Http({
+    host: `http-intake.logs.${datadogSite}`,
+    path: `/api/v2/logs?dd-api-key=${datadogApiKey}&ddsource=nodejs&service=${process.env.SERVICE_NAME}`,
+    ssl: true,
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      winston.format.json(),
+    ),
+  });
+}
+
+// Alternative: Using dd-trace for automatic log injection
+// src/common/logger/datadog-logger.service.ts
+import tracer from 'dd-trace';
+
+tracer.init({
+  logInjection: true,
+  service: process.env.SERVICE_NAME,
+  env: process.env.NODE_ENV,
+  version: process.env.APP_VERSION,
+});
+
+export const datadogTracer = tracer;
+```
+
+### Combined Logger Configuration
+
+```typescript
+// src/common/logger/winston-logger.config.ts
+import * as winston from 'winston';
+import { createElasticsearchTransport } from './transports/elasticsearch.transport';
+import { createCloudWatchTransport } from './transports/cloudwatch.transport';
+import { createDatadogTransport } from './transports/datadog.transport';
+
+export function createProductionLogger(): winston.Logger {
+  const transports: winston.transport[] = [
+    // Always include console for container logs
+    new winston.transports.Console({
+      format: winston.format.json(),
+    }),
+  ];
+
+  // Add cloud transports based on configuration
+  if (process.env.ELASTICSEARCH_URL) {
+    transports.push(createElasticsearchTransport());
+  }
+
+  if (process.env.CLOUDWATCH_LOG_GROUP) {
+    transports.push(createCloudWatchTransport());
+  }
+
+  if (process.env.DATADOG_API_KEY) {
+    transports.push(createDatadogTransport());
+  }
+
+  return winston.createLogger({
+    level: process.env.LOG_LEVEL || 'info',
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      winston.format.errors({ stack: true }),
+      winston.format.json(),
+    ),
+    defaultMeta: {
+      service: process.env.SERVICE_NAME,
+      environment: process.env.NODE_ENV,
+      version: process.env.APP_VERSION,
+    },
+    transports,
+  });
+}
+```
+
+## Log Retention Policies
+
+### Retention Configuration
+
+```typescript
+// src/common/logger/retention.config.ts
+export interface RetentionPolicy {
+  level: string;
+  retentionDays: number;
+  archiveAfterDays?: number;
+  compressionEnabled: boolean;
+}
+
+export const retentionPolicies: Record<string, RetentionPolicy> = {
+  error: {
+    level: 'error',
+    retentionDays: 90,
+    archiveAfterDays: 30,
+    compressionEnabled: true,
+  },
+  warn: {
+    level: 'warn',
+    retentionDays: 60,
+    archiveAfterDays: 14,
+    compressionEnabled: true,
+  },
+  info: {
+    level: 'info',
+    retentionDays: 30,
+    archiveAfterDays: 7,
+    compressionEnabled: true,
+  },
+  debug: {
+    level: 'debug',
+    retentionDays: 7,
+    compressionEnabled: false,
+  },
+  verbose: {
+    level: 'verbose',
+    retentionDays: 3,
+    compressionEnabled: false,
+  },
+};
+```
+
+### Log Cleanup Service
+
+```typescript
+// src/common/logger/log-cleanup.service.ts
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import { retentionPolicies } from './retention.config';
+
+@Injectable()
+export class LogCleanupService {
+  private readonly logger = new Logger(LogCleanupService.name);
+  private readonly logsDirectory = process.env.LOGS_DIR || './logs';
+
+  @Cron(CronExpression.EVERY_DAY_AT_2AM)
+  async cleanupOldLogs(): Promise<void> {
+    this.logger.log('Starting log cleanup job');
+
+    try {
+      const files = await fs.readdir(this.logsDirectory);
+      const now = Date.now();
+      let deletedCount = 0;
+
+      for (const file of files) {
+        const filePath = path.join(this.logsDirectory, file);
+        const stats = await fs.stat(filePath);
+        const fileAgeDays = (now - stats.mtime.getTime()) / (1000 * 60 * 60 * 24);
+
+        // Determine retention policy based on filename
+        const policy = this.getRetentionPolicy(file);
+
+        if (fileAgeDays > policy.retentionDays) {
+          await fs.unlink(filePath);
+          deletedCount++;
+          this.logger.debug(`Deleted old log file: ${file}`);
+        }
+      }
+
+      this.logger.log(`Log cleanup completed. Deleted ${deletedCount} files.`);
+    } catch (error) {
+      this.logger.error('Log cleanup failed', error.stack);
+    }
+  }
+
+  private getRetentionPolicy(filename: string): typeof retentionPolicies[string] {
+    if (filename.includes('error')) return retentionPolicies.error;
+    if (filename.includes('warn')) return retentionPolicies.warn;
+    if (filename.includes('debug')) return retentionPolicies.debug;
+    if (filename.includes('verbose')) return retentionPolicies.verbose;
+    return retentionPolicies.info;
+  }
+}
+```
+
+## Sensitive Data Filtering
+
+Protecting sensitive data in logs is critical for security and compliance.
+
+### Sensitive Data Filter
+
+```typescript
+// src/common/logger/filters/sensitive-data.filter.ts
+export interface SensitiveFieldConfig {
+  field: string;
+  replacement: string;
+  pattern?: RegExp;
+}
+
+const sensitiveFields: SensitiveFieldConfig[] = [
+  { field: 'password', replacement: '[REDACTED]' },
+  { field: 'token', replacement: '[REDACTED]' },
+  { field: 'accessToken', replacement: '[REDACTED]' },
+  { field: 'refreshToken', replacement: '[REDACTED]' },
+  { field: 'apiKey', replacement: '[REDACTED]' },
+  { field: 'secret', replacement: '[REDACTED]' },
+  { field: 'authorization', replacement: '[REDACTED]' },
+  { field: 'creditCard', replacement: '[REDACTED]' },
+  { field: 'cardNumber', replacement: '[REDACTED]' },
+  { field: 'cvv', replacement: '[REDACTED]' },
+  { field: 'ssn', replacement: '[REDACTED]' },
+  { field: 'socialSecurityNumber', replacement: '[REDACTED]' },
+];
+
+const sensitivePatterns = [
+  {
+    name: 'email',
+    pattern: /([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g,
+    replacement: (match: string) => {
+      const [localPart, domain] = match.split('@');
+      return `${localPart.substring(0, 2)}***@${domain}`;
+    },
+  },
+  {
+    name: 'creditCard',
+    pattern: /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g,
+    replacement: '****-****-****-****',
+  },
+  {
+    name: 'phone',
+    pattern: /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g,
+    replacement: '***-***-****',
+  },
+  {
+    name: 'ssn',
+    pattern: /\b\d{3}[-]?\d{2}[-]?\d{4}\b/g,
+    replacement: '***-**-****',
+  },
+];
+
+export function filterSensitiveData<T extends Record<string, any>>(data: T): T {
+  if (!data || typeof data !== 'object') {
+    return data;
+  }
+
+  const filtered = { ...data };
+
+  for (const key of Object.keys(filtered)) {
+    const lowerKey = key.toLowerCase();
+
+    // Check if field name matches sensitive fields
+    const sensitiveField = sensitiveFields.find(
+      (sf) => lowerKey.includes(sf.field.toLowerCase()),
+    );
+
+    if (sensitiveField) {
+      filtered[key] = sensitiveField.replacement;
+      continue;
+    }
+
+    // Recursively filter nested objects
+    if (typeof filtered[key] === 'object' && filtered[key] !== null) {
+      filtered[key] = filterSensitiveData(filtered[key]);
+      continue;
+    }
+
+    // Apply pattern-based filtering for string values
+    if (typeof filtered[key] === 'string') {
+      let value = filtered[key] as string;
+      for (const pattern of sensitivePatterns) {
+        if (typeof pattern.replacement === 'function') {
+          value = value.replace(pattern.pattern, pattern.replacement);
+        } else {
+          value = value.replace(pattern.pattern, pattern.replacement);
+        }
+      }
+      filtered[key] = value;
+    }
+  }
+
+  return filtered;
+}
+```
+
+### Applying Sensitive Data Filter to Winston
+
+```typescript
+// src/common/logger/formats/sensitive-data.format.ts
+import * as winston from 'winston';
+import { filterSensitiveData } from '../filters/sensitive-data.filter';
+
+export const sensitiveDataFormat = winston.format((info) => {
+  // Filter the message if it's an object
+  if (typeof info.message === 'object') {
+    info.message = filterSensitiveData(info.message);
+  }
+
+  // Filter all metadata
+  const filteredInfo = filterSensitiveData(info);
+
+  return filteredInfo;
+});
+
+// Usage in Winston configuration
+export function createSecureLogger(): winston.Logger {
+  return winston.createLogger({
+    level: process.env.LOG_LEVEL || 'info',
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      sensitiveDataFormat(),
+      winston.format.errors({ stack: true }),
+      winston.format.json(),
+    ),
+    transports: [
+      new winston.transports.Console(),
+    ],
+  });
+}
+```
+
+### Request Body Sanitization
+
+```typescript
+// src/common/interceptors/request-sanitizer.interceptor.ts
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+} from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { filterSensitiveData } from '../logger/filters/sensitive-data.filter';
+
+@Injectable()
+export class RequestSanitizerInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const request = context.switchToHttp().getRequest();
+
+    // Store original body for processing
+    request.originalBody = request.body;
+
+    // Store sanitized body for logging
+    request.sanitizedBody = filterSensitiveData(request.body);
+
+    return next.handle();
+  }
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Log Appropriate Information">
+    - Always include correlation IDs for request tracing
+    - Log business events, not just technical events
+    - Include relevant context (tenant, user, resource IDs)
+    - Log at appropriate levels based on severity
+  </Accordion>
+
+  <Accordion title="Performance Considerations">
+    - Use async logging to avoid blocking the event loop
+    - Buffer logs and flush periodically in high-throughput scenarios
+    - Use sampling for verbose/debug logs in production
+    - Consider log level based on environment
+  </Accordion>
+
+  <Accordion title="Security Guidelines">
+    - Never log passwords, tokens, or API keys
+    - Mask or hash PII (emails, phone numbers, SSNs)
+    - Comply with GDPR and other data regulations
+    - Implement log access controls
+  </Accordion>
+
+  <Accordion title="Operational Excellence">
+    - Establish consistent log formatting across services
+    - Set up alerts for error rate thresholds
+    - Create dashboards for log metrics
+    - Document log retention policies
+  </Accordion>
+</AccordionGroup>
+
+## Environment Configuration
+
+```bash
+# .env.example
+
+# Logging Configuration
+LOG_LEVEL=info
+LOGS_DIR=./logs
+SERVICE_NAME=api-service
+APP_VERSION=1.0.0
+
+# Elasticsearch (ELK Stack)
+ELASTICSEARCH_URL=http://localhost:9200
+ELASTICSEARCH_USERNAME=elastic
+ELASTICSEARCH_PASSWORD=changeme
+
+# AWS CloudWatch
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+CLOUDWATCH_LOG_GROUP=/app/api-service
+
+# Datadog
+DATADOG_API_KEY=your-datadog-api-key
+DATADOG_SITE=datadoghq.com
+```
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Metrics & Monitoring" icon="chart-line" href="/operations/monitoring/metrics">
+    Application metrics and monitoring setup
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/backend/error-handling">
+    Error handling patterns and exception filters
+  </Card>
+  <Card title="Health Checks" icon="heart-pulse" href="/operations/monitoring/health-checks">
+    Application health monitoring
+  </Card>
+  <Card title="Alerting" icon="bell" href="/operations/monitoring/alerting">
+    Alert configuration and notification setup
+  </Card>
+</CardGroup>

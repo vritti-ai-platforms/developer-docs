@@ -1,0 +1,1612 @@
+---
+title: "Kubernetes Deployment"
+description: "Complete guide to deploying Vritti on Kubernetes with production-ready configurations"
+---
+
+# Kubernetes Deployment Guide
+
+This guide covers deploying Vritti's multi-tenant SaaS platform on Kubernetes, including the NestJS backend, Nginx-served frontend, and integration with managed PostgreSQL services.
+
+## Architecture Overview
+
+Vritti's Kubernetes architecture follows cloud-native best practices with clear separation of concerns:
+
+```
+                                    ┌─────────────────────────────────────────────────────────┐
+                                    │                    Kubernetes Cluster                    │
+                                    │                                                          │
+┌──────────────┐                    │  ┌─────────────────────────────────────────────────┐    │
+│   Internet   │                    │  │              vritti-production namespace         │    │
+│              │                    │  │                                                  │    │
+│  ┌────────┐  │    ┌──────────┐   │  │  ┌──────────┐    ┌──────────┐    ┌──────────┐  │    │
+│  │ Users  │──┼───▶│  Ingress │───┼──┼─▶│ Frontend │    │ Backend  │    │  Worker  │  │    │
+│  └────────┘  │    │  (TLS)   │   │  │  │  (Nginx) │    │ (NestJS) │    │  (Jobs)  │  │    │
+└──────────────┘    └──────────┘   │  │  └────┬─────┘    └────┬─────┘    └────┬─────┘  │    │
+                                    │  │       │              │               │         │    │
+                                    │  │       └──────────────┼───────────────┘         │    │
+                                    │  │                      ▼                          │    │
+                                    │  │              ┌──────────────┐                   │    │
+                                    │  │              │   Services   │                   │    │
+                                    │  │              └──────┬───────┘                   │    │
+                                    │  └───────────────────────┼──────────────────────────┘    │
+                                    │                          │                               │
+                                    └──────────────────────────┼───────────────────────────────┘
+                                                               │
+                                                               ▼
+                                              ┌─────────────────────────────────┐
+                                              │    External Managed Services     │
+                                              │  ┌───────────┐  ┌────────────┐  │
+                                              │  │PostgreSQL │  │   Redis    │  │
+                                              │  │  (RDS/    │  │(ElastiCache│  │
+                                              │  │Cloud SQL) │  │  /etc)     │  │
+                                              │  └───────────┘  └────────────┘  │
+                                              └─────────────────────────────────┘
+```
+
+## Namespace Organization
+
+Organize resources using namespaces for environment isolation and resource management.
+
+### Namespace Manifest
+
+```yaml
+# namespaces.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/instance: production
+    environment: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vritti-staging
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/instance: staging
+    environment: staging
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vritti-development
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/instance: development
+    environment: development
+```
+
+### Resource Quotas
+
+```yaml
+# resource-quota.yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: vritti-quota
+  namespace: vritti-production
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    persistentvolumeclaims: "10"
+    services.loadbalancers: "2"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: vritti-limits
+  namespace: vritti-production
+spec:
+  limits:
+    - default:
+        cpu: "500m"
+        memory: "512Mi"
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+      type: Container
+```
+
+## ConfigMaps and Secrets
+
+### Application ConfigMap
+
+```yaml
+# configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vritti-config
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: config
+data:
+  # Application Settings
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+
+  # Server Configuration
+  API_PORT: "3000"
+  API_HOST: "0.0.0.0"
+
+  # CORS Settings
+  CORS_ORIGINS: "https://app.vritti.io,https://www.vritti.io"
+
+  # Rate Limiting
+  RATE_LIMIT_TTL: "60"
+  RATE_LIMIT_MAX: "100"
+
+  # Multi-tenant Settings
+  TENANT_ISOLATION_MODE: "schema"
+  DEFAULT_TENANT_QUOTA: "1000"
+
+  # Cache Configuration
+  CACHE_TTL: "3600"
+  CACHE_MAX_ITEMS: "10000"
+
+  # Feature Flags
+  FEATURE_ANALYTICS_ENABLED: "true"
+  FEATURE_NOTIFICATIONS_ENABLED: "true"
+```
+
+### Frontend ConfigMap
+
+```yaml
+# frontend-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vritti-frontend-config
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: frontend
+data:
+  # Nginx configuration
+  nginx.conf: |
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid /tmp/nginx.pid;
+
+    events {
+        worker_connections 1024;
+        use epoll;
+        multi_accept on;
+    }
+
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        log_format json_combined escape=json
+        '{'
+            '"time_local":"$time_local",'
+            '"remote_addr":"$remote_addr",'
+            '"remote_user":"$remote_user",'
+            '"request":"$request",'
+            '"status": "$status",'
+            '"body_bytes_sent":"$body_bytes_sent",'
+            '"request_time":"$request_time",'
+            '"http_referrer":"$http_referer",'
+            '"http_user_agent":"$http_user_agent"'
+        '}';
+
+        access_log /var/log/nginx/access.log json_combined;
+
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+
+        # Gzip compression
+        gzip on;
+        gzip_vary on;
+        gzip_proxied any;
+        gzip_comp_level 6;
+        gzip_types text/plain text/css text/xml application/json application/javascript
+                   application/xml application/xml+rss text/javascript application/x-javascript;
+
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+        server {
+            listen 8080;
+            server_name _;
+            root /usr/share/nginx/html;
+            index index.html;
+
+            # Health check endpoint
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+            }
+
+            # Static assets with caching
+            location /assets/ {
+                expires 1y;
+                add_header Cache-Control "public, immutable";
+            }
+
+            # SPA routing - serve index.html for all routes
+            location / {
+                try_files $uri $uri/ /index.html;
+                add_header Cache-Control "no-cache";
+            }
+
+            # API proxy (if needed)
+            location /api/ {
+                proxy_pass http://vritti-backend:3000/;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection 'upgrade';
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_cache_bypass $http_upgrade;
+            }
+        }
+    }
+
+  # Runtime environment configuration
+  env-config.js: |
+    window.__VRITTI_CONFIG__ = {
+      API_URL: '${API_URL}',
+      ENVIRONMENT: '${ENVIRONMENT}',
+      SENTRY_DSN: '${SENTRY_DSN}',
+      ANALYTICS_ID: '${ANALYTICS_ID}'
+    };
+```
+
+### Secrets
+
+```yaml
+# secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vritti-secrets
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: secrets
+type: Opaque
+stringData:
+  # Database credentials (use external secrets in production)
+  DATABASE_URL: "postgresql://vritti_user:CHANGE_ME@postgres.example.com:5432/vritti_production?schema=public"
+
+  # Redis credentials
+  REDIS_URL: "redis://:CHANGE_ME@redis.example.com:6379/0"
+
+  # JWT secrets
+  JWT_SECRET: "your-super-secure-jwt-secret-key-min-32-chars"
+  JWT_REFRESH_SECRET: "your-super-secure-refresh-secret-key-min-32-chars"
+
+  # Encryption keys
+  ENCRYPTION_KEY: "32-character-encryption-key-here"
+
+  # External service API keys
+  STRIPE_SECRET_KEY: "sk_live_xxxxx"
+  SENDGRID_API_KEY: "SG.xxxxx"
+  AWS_ACCESS_KEY_ID: "AKIAXXXXX"
+  AWS_SECRET_ACCESS_KEY: "xxxxx"
+```
+
+<Warning>
+Never commit secrets to version control. Use a secrets management solution like:
+- **AWS Secrets Manager** with External Secrets Operator
+- **HashiCorp Vault** with Vault Agent Injector
+- **Azure Key Vault** with CSI driver
+- **Google Secret Manager** with Workload Identity
+</Warning>
+
+### External Secrets (Recommended)
+
+```yaml
+# external-secret.yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: vritti-external-secrets
+  namespace: vritti-production
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: vritti-secrets
+    creationPolicy: Owner
+  data:
+    - secretKey: DATABASE_URL
+      remoteRef:
+        key: vritti/production/database
+        property: url
+    - secretKey: JWT_SECRET
+      remoteRef:
+        key: vritti/production/jwt
+        property: secret
+    - secretKey: REDIS_URL
+      remoteRef:
+        key: vritti/production/redis
+        property: url
+```
+
+## Backend Deployment
+
+### NestJS Backend Deployment
+
+```yaml
+# backend-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vritti-backend
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vritti
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vritti
+        app.kubernetes.io/component: backend
+        app.kubernetes.io/version: "1.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: vritti-backend
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+      # Pod anti-affinity for high availability
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/component
+                      operator: In
+                      values:
+                        - backend
+                topologyKey: kubernetes.io/hostname
+
+      # Topology spread for zone distribution
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+
+      containers:
+        - name: backend
+          image: your-registry.io/vritti/backend:1.0.0
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+
+          # Environment variables from ConfigMap
+          envFrom:
+            - configMapRef:
+                name: vritti-config
+            - secretRef:
+                name: vritti-secrets
+
+          # Additional environment variables
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+
+          # Resource limits and requests
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+
+          # Security context
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          # Health probes
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+            successThreshold: 1
+
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+
+          # Volume mounts
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /app/.cache
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+
+      # Image pull secrets
+      imagePullSecrets:
+        - name: registry-credentials
+
+      # Termination grace period
+      terminationGracePeriodSeconds: 30
+```
+
+### Backend Service
+
+```yaml
+# backend-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: vritti-backend
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: backend
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3000"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: backend
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      protocol: TCP
+  sessionAffinity: None
+```
+
+### Backend ServiceAccount
+
+```yaml
+# backend-serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vritti-backend
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: backend
+  annotations:
+    # For AWS IRSA
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/vritti-backend-role
+    # For GCP Workload Identity
+    # iam.gke.io/gcp-service-account: vritti-backend@project.iam.gserviceaccount.com
+```
+
+## Frontend Deployment
+
+### Nginx Frontend Deployment
+
+```yaml
+# frontend-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vritti-frontend
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vritti
+      app.kubernetes.io/component: frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vritti
+        app.kubernetes.io/component: frontend
+        app.kubernetes.io/version: "1.0.0"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101  # nginx user
+        runAsGroup: 101
+        fsGroup: 101
+
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/component
+                      operator: In
+                      values:
+                        - frontend
+                topologyKey: kubernetes.io/hostname
+
+      containers:
+        - name: frontend
+          image: your-registry.io/vritti/frontend:1.0.0
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          env:
+            - name: API_URL
+              value: "https://api.vritti.io"
+            - name: ENVIRONMENT
+              value: "production"
+
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: var-cache-nginx
+              mountPath: /var/cache/nginx
+            - name: var-run
+              mountPath: /var/run
+
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: vritti-frontend-config
+        - name: tmp
+          emptyDir: {}
+        - name: var-cache-nginx
+          emptyDir: {}
+        - name: var-run
+          emptyDir: {}
+
+      imagePullSecrets:
+        - name: registry-credentials
+
+      terminationGracePeriodSeconds: 30
+```
+
+### Frontend Service
+
+```yaml
+# frontend-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: vritti-frontend
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+```
+
+## Ingress Configuration
+
+### Ingress with TLS
+
+```yaml
+# ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vritti-ingress
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: ingress
+  annotations:
+    # Nginx Ingress Controller
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+
+    # Rate limiting
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+
+    # CORS
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://app.vritti.io"
+
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # cert-manager for automatic TLS
+    cert-manager.io/cluster-issuer: letsencrypt-production
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - app.vritti.io
+        - api.vritti.io
+      secretName: vritti-tls-secret
+  rules:
+    # Frontend routes
+    - host: app.vritti.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vritti-frontend
+                port:
+                  name: http
+
+    # API routes
+    - host: api.vritti.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vritti-backend
+                port:
+                  name: http
+```
+
+### Certificate Issuer
+
+```yaml
+# certificate-issuer.yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-production
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@vritti.io
+    privateKeySecretRef:
+      name: letsencrypt-production-key
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: vritti-tls
+  namespace: vritti-production
+spec:
+  secretName: vritti-tls-secret
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - app.vritti.io
+    - api.vritti.io
+  privateKey:
+    algorithm: RSA
+    size: 2048
+```
+
+### AWS ALB Ingress (Alternative)
+
+```yaml
+# alb-ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vritti-alb-ingress
+  namespace: vritti-production
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:123456789012:certificate/xxxxx
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "5"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=30
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=60
+spec:
+  ingressClassName: alb
+  rules:
+    - host: app.vritti.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vritti-frontend
+                port:
+                  name: http
+    - host: api.vritti.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vritti-backend
+                port:
+                  name: http
+```
+
+## Horizontal Pod Autoscaler
+
+### Backend HPA
+
+```yaml
+# backend-hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vritti-backend-hpa
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vritti-backend
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    # CPU-based scaling
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+    # Memory-based scaling
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+    # Custom metrics (requests per second)
+    - type: Pods
+      pods:
+        metric:
+          name: http_requests_per_second
+        target:
+          type: AverageValue
+          averageValue: "1000"
+
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      selectPolicy: Max
+```
+
+### Frontend HPA
+
+```yaml
+# frontend-hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vritti-frontend-hpa
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: frontend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vritti-frontend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+```
+
+## Pod Disruption Budget
+
+```yaml
+# pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vritti-backend-pdb
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: backend
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vritti
+      app.kubernetes.io/component: backend
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vritti-frontend-pdb
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: frontend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vritti
+      app.kubernetes.io/component: frontend
+```
+
+## Network Policies
+
+```yaml
+# network-policies.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vritti-backend-network-policy
+  namespace: vritti-production
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: backend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+    # Allow from frontend
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: frontend
+      ports:
+        - protocol: TCP
+          port: 3000
+    # Allow Prometheus scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+    # Allow external database (adjust CIDR as needed)
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Allow external Redis
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Allow HTTPS egress for external APIs
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vritti-frontend-network-policy
+  namespace: vritti-production
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+    # Allow backend communication
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+      ports:
+        - protocol: TCP
+          port: 3000
+```
+
+## Health Probes Configuration
+
+### NestJS Health Module Setup
+
+For the backend health endpoints to work correctly, ensure your NestJS application includes proper health checks:
+
+```typescript
+// health.controller.ts (reference implementation)
+@Controller('health')
+export class HealthController {
+  constructor(
+    private health: HealthCheckService,
+    private db: TypeOrmHealthIndicator,
+    private redis: RedisHealthIndicator,
+  ) {}
+
+  @Get('live')
+  @HealthCheck()
+  liveness() {
+    // Simple liveness - is the process running?
+    return { status: 'ok' };
+  }
+
+  @Get('ready')
+  @HealthCheck()
+  readiness() {
+    // Readiness - can we handle traffic?
+    return this.health.check([
+      () => this.db.pingCheck('database'),
+      () => this.redis.pingCheck('redis'),
+    ]);
+  }
+}
+```
+
+### Probe Best Practices
+
+<Info>
+**Liveness Probe**: Checks if the application is running. Failure triggers pod restart.
+- Use simple endpoint that doesn't check dependencies
+- Set appropriate `failureThreshold` to avoid unnecessary restarts
+
+**Readiness Probe**: Checks if the application can handle traffic. Failure removes pod from service.
+- Should verify database and cache connectivity
+- Use shorter intervals for faster traffic routing
+
+**Startup Probe**: Allows slow-starting containers. Disables liveness/readiness until success.
+- Essential for applications with long initialization
+- Prevents liveness probe from killing pods during startup
+</Info>
+
+## Helm Chart Structure
+
+For production deployments, we recommend using Helm for templating and release management.
+
+### Chart Directory Structure
+
+```
+vritti-chart/
+├── Chart.yaml
+├── values.yaml
+├── values-production.yaml
+├── values-staging.yaml
+├── templates/
+│   ├── _helpers.tpl
+│   ├── namespace.yaml
+│   ├── configmap.yaml
+│   ├── secret.yaml
+│   ├── backend/
+│   │   ├── deployment.yaml
+│   │   ├── service.yaml
+│   │   ├── hpa.yaml
+│   │   ├── pdb.yaml
+│   │   └── serviceaccount.yaml
+│   ├── frontend/
+│   │   ├── deployment.yaml
+│   │   ├── service.yaml
+│   │   ├── hpa.yaml
+│   │   └── configmap.yaml
+│   ├── ingress.yaml
+│   ├── networkpolicy.yaml
+│   └── tests/
+│       └── test-connection.yaml
+└── README.md
+```
+
+### Chart.yaml
+
+```yaml
+# Chart.yaml
+apiVersion: v2
+name: vritti
+description: Vritti Multi-tenant SaaS Platform Helm Chart
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - vritti
+  - saas
+  - multi-tenant
+maintainers:
+  - name: Vritti Team
+    email: devops@vritti.io
+dependencies:
+  - name: redis
+    version: "17.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+```
+
+### values.yaml
+
+```yaml
+# values.yaml
+global:
+  environment: production
+  imagePullSecrets:
+    - name: registry-credentials
+
+namespace:
+  create: true
+  name: vritti-production
+
+backend:
+  replicaCount: 3
+  image:
+    repository: your-registry.io/vritti/backend
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 3000
+
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  probes:
+    liveness:
+      path: /health/live
+      initialDelaySeconds: 30
+      periodSeconds: 10
+    readiness:
+      path: /health/ready
+      initialDelaySeconds: 10
+      periodSeconds: 5
+    startup:
+      path: /health/live
+      failureThreshold: 30
+      periodSeconds: 5
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+frontend:
+  replicaCount: 2
+  image:
+    repository: your-registry.io/vritti/frontend
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "200m"
+      memory: "256Mi"
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-production
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: app.vritti.io
+      paths:
+        - path: /
+          pathType: Prefix
+          service: frontend
+    - host: api.vritti.io
+      paths:
+        - path: /
+          pathType: Prefix
+          service: backend
+  tls:
+    - secretName: vritti-tls-secret
+      hosts:
+        - app.vritti.io
+        - api.vritti.io
+
+config:
+  nodeEnv: production
+  logLevel: info
+  corsOrigins: "https://app.vritti.io"
+  rateLimitTtl: "60"
+  rateLimitMax: "100"
+
+secrets:
+  # Reference to external secret or create from values
+  externalSecret:
+    enabled: true
+    secretStoreRef:
+      name: aws-secrets-manager
+      kind: ClusterSecretStore
+    remoteRefs:
+      databaseUrl: vritti/production/database
+      redisUrl: vritti/production/redis
+      jwtSecret: vritti/production/jwt
+
+redis:
+  enabled: false  # Use managed Redis service
+
+networkPolicies:
+  enabled: true
+
+podDisruptionBudget:
+  backend:
+    minAvailable: 2
+  frontend:
+    minAvailable: 1
+```
+
+### Deployment Commands
+
+```bash
+# Install the chart
+helm install vritti ./vritti-chart \
+  --namespace vritti-production \
+  --values values-production.yaml \
+  --create-namespace
+
+# Upgrade existing release
+helm upgrade vritti ./vritti-chart \
+  --namespace vritti-production \
+  --values values-production.yaml \
+  --wait
+
+# Rollback to previous version
+helm rollback vritti 1 --namespace vritti-production
+
+# View release history
+helm history vritti --namespace vritti-production
+
+# Uninstall
+helm uninstall vritti --namespace vritti-production
+```
+
+## Deployment Strategies
+
+### Blue-Green Deployment
+
+```yaml
+# blue-green-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: vritti-backend
+  namespace: vritti-production
+spec:
+  selector:
+    app.kubernetes.io/name: vritti
+    app.kubernetes.io/component: backend
+    version: blue  # Switch between blue/green
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+```
+
+### Canary Deployment with Nginx
+
+```yaml
+# canary-ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vritti-backend-canary
+  namespace: vritti-production
+  annotations:
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "10"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.vritti.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vritti-backend-canary
+                port:
+                  name: http
+```
+
+## Monitoring and Observability
+
+### ServiceMonitor for Prometheus
+
+```yaml
+# servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vritti-backend-monitor
+  namespace: vritti-production
+  labels:
+    app.kubernetes.io/name: vritti
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vritti
+      app.kubernetes.io/component: backend
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - vritti-production
+```
+
+### PrometheusRule for Alerts
+
+```yaml
+# prometheus-rules.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: vritti-alerts
+  namespace: vritti-production
+spec:
+  groups:
+    - name: vritti.rules
+      rules:
+        - alert: VrittiBackendHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{job="vritti-backend",status=~"5.."}[5m]))
+            / sum(rate(http_requests_total{job="vritti-backend"}[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "High error rate on Vritti backend"
+            description: "Error rate is {{ $value | humanizePercentage }} (> 5%)"
+
+        - alert: VrittiBackendHighLatency
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_request_duration_seconds_bucket{job="vritti-backend"}[5m])) by (le)
+            ) > 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High latency on Vritti backend"
+            description: "95th percentile latency is {{ $value }}s (> 1s)"
+
+        - alert: VrittiPodCrashLooping
+          expr: |
+            increase(kube_pod_container_status_restarts_total{
+              namespace="vritti-production"
+            }[1h]) > 5
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod is crash looping"
+            description: "Pod {{ $labels.pod }} has restarted {{ $value }} times"
+```
+
+## Quick Reference
+
+### Apply All Manifests
+
+```bash
+# Create namespace first
+kubectl apply -f namespaces.yaml
+
+# Apply configurations
+kubectl apply -f configmap.yaml
+kubectl apply -f frontend-configmap.yaml
+kubectl apply -f secrets.yaml  # Or use external secrets
+
+# Deploy applications
+kubectl apply -f backend-deployment.yaml
+kubectl apply -f backend-service.yaml
+kubectl apply -f frontend-deployment.yaml
+kubectl apply -f frontend-service.yaml
+
+# Configure networking
+kubectl apply -f ingress.yaml
+kubectl apply -f network-policies.yaml
+
+# Set up autoscaling and availability
+kubectl apply -f backend-hpa.yaml
+kubectl apply -f frontend-hpa.yaml
+kubectl apply -f pdb.yaml
+```
+
+### Useful kubectl Commands
+
+```bash
+# View deployment status
+kubectl get deployments -n vritti-production
+
+# Check pod status
+kubectl get pods -n vritti-production -o wide
+
+# View pod logs
+kubectl logs -f deployment/vritti-backend -n vritti-production
+
+# Describe pod for troubleshooting
+kubectl describe pod <pod-name> -n vritti-production
+
+# Execute into a pod
+kubectl exec -it <pod-name> -n vritti-production -- /bin/sh
+
+# View HPA status
+kubectl get hpa -n vritti-production
+
+# Check ingress status
+kubectl get ingress -n vritti-production
+
+# View events
+kubectl get events -n vritti-production --sort-by='.lastTimestamp'
+
+# Rolling restart
+kubectl rollout restart deployment/vritti-backend -n vritti-production
+
+# View rollout status
+kubectl rollout status deployment/vritti-backend -n vritti-production
+
+# Rollback deployment
+kubectl rollout undo deployment/vritti-backend -n vritti-production
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CI/CD Pipeline" icon="circle-play" href="/operations/deployment/cicd">
+    Set up automated deployments with GitHub Actions
+  </Card>
+  <Card title="Monitoring Setup" icon="chart-line" href="/operations/monitoring/setup">
+    Configure Prometheus and Grafana for observability
+  </Card>
+  <Card title="Backup Strategy" icon="database" href="/operations/backup/database">
+    Implement database backup and recovery procedures
+  </Card>
+  <Card title="Security Hardening" icon="shield" href="/operations/security/kubernetes">
+    Apply security best practices for Kubernetes
+  </Card>
+</CardGroup>

@@ -1,0 +1,464 @@
+---
+title: Module Patterns
+description: NestJS module organization and dependency injection patterns
+---
+
+# Module Patterns
+
+Vritti API uses NestJS with a modular architecture. This guide covers module organization, dependency injection, and best practices.
+
+## Module Structure
+
+### Basic Module
+
+```typescript
+// tenant/tenant.module.ts
+import { Module } from '@nestjs/common';
+import { TenantController } from './tenant.controller';
+import { TenantService } from './tenant.service';
+import { TenantRepository } from './tenant.repository';
+
+@Module({
+  controllers: [TenantController],
+  providers: [TenantService, TenantRepository],
+  exports: [TenantService, TenantRepository],
+})
+export class TenantModule {}
+```
+
+### File Organization
+
+```
+tenant/
+├── tenant.module.ts         # Module definition
+├── tenant.controller.ts     # HTTP routes
+├── tenant.service.ts        # Business logic
+├── tenant.repository.ts     # Data access
+└── dto/
+    ├── create-tenant.dto.ts
+    ├── update-tenant.dto.ts
+    └── tenant-response.dto.ts
+```
+
+## Root Module
+
+### App Module Configuration
+
+```typescript
+// app.module.ts
+@Module({
+  imports: [
+    // Configuration
+    ConfigModule.forRoot({
+      isGlobal: true,
+      load: [configuration],
+    }),
+
+    // Logger
+    LoggerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        provider: config.get('log.provider'),
+        toFile: config.get('log.toFile'),
+      }),
+    }),
+
+    // Database
+    DatabaseModule.forServer(),
+
+    // Route modules
+    RouterModule.register([
+      {
+        path: 'cloud-api',
+        children: [
+          { path: 'auth', module: AuthModule },
+          { path: 'users', module: UserModule },
+          { path: 'tenants', module: TenantModule },
+        ],
+      },
+    ]),
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+```
+
+## Dynamic Modules
+
+### forRoot / forRootAsync Pattern
+
+```typescript
+// database.module.ts
+@Module({})
+export class DatabaseModule {
+  static forServer(): DynamicModule {
+    return {
+      module: DatabaseModule,
+      global: true,
+      providers: [
+        PrimaryDatabaseService,
+        TenantDatabaseService,
+        {
+          provide: APP_INTERCEPTOR,
+          useClass: TenantContextInterceptor,
+        },
+      ],
+      exports: [PrimaryDatabaseService, TenantDatabaseService],
+    };
+  }
+
+  static forMicroservice(): DynamicModule {
+    return {
+      module: DatabaseModule,
+      global: true,
+      providers: [
+        PrimaryDatabaseService,
+        TenantDatabaseService,
+        // Different interceptor for message-based context
+        {
+          provide: APP_INTERCEPTOR,
+          useClass: MessageTenantContextInterceptor,
+        },
+      ],
+      exports: [PrimaryDatabaseService, TenantDatabaseService],
+    };
+  }
+}
+```
+
+### Async Configuration
+
+```typescript
+// logger.module.ts
+@Module({})
+export class LoggerModule {
+  static forRootAsync(options: LoggerAsyncOptions): DynamicModule {
+    return {
+      module: LoggerModule,
+      global: true,
+      imports: options.imports || [],
+      providers: [
+        {
+          provide: LOGGER_OPTIONS,
+          useFactory: options.useFactory,
+          inject: options.inject || [],
+        },
+        {
+          provide: Logger,
+          useFactory: (opts: LoggerOptions) => new LoggerService(opts),
+          inject: [LOGGER_OPTIONS],
+        },
+      ],
+      exports: [Logger],
+    };
+  }
+}
+```
+
+## Forward References
+
+### Handling Circular Dependencies
+
+```typescript
+// auth.module.ts
+import { forwardRef, Module } from '@nestjs/common';
+import { UserModule } from '../user/user.module';
+
+@Module({
+  imports: [
+    forwardRef(() => UserModule),  // Circular reference
+  ],
+  providers: [AuthService],
+  exports: [AuthService],
+})
+export class AuthModule {}
+
+// user.module.ts
+@Module({
+  imports: [
+    forwardRef(() => AuthModule),  // Circular reference
+  ],
+  providers: [UserService],
+  exports: [UserService],
+})
+export class UserModule {}
+```
+
+### In Services
+
+```typescript
+// auth.service.ts
+import { forwardRef, Inject, Injectable } from '@nestjs/common';
+
+@Injectable()
+export class AuthService {
+  constructor(
+    @Inject(forwardRef(() => MfaVerificationService))
+    private readonly mfaService: MfaVerificationService,
+  ) {}
+}
+```
+
+## Module Imports/Exports
+
+### Exporting Providers
+
+```typescript
+// user.module.ts
+@Module({
+  providers: [UserService, UserRepository],
+  exports: [UserService, UserRepository],  // Available to importing modules
+})
+export class UserModule {}
+
+// tenant.module.ts
+@Module({
+  imports: [UserModule],  // Can now use UserService, UserRepository
+  providers: [TenantService],
+})
+export class TenantModule {}
+```
+
+### Re-exporting Modules
+
+```typescript
+// common.module.ts
+@Module({
+  imports: [LoggerModule, ConfigModule],
+  exports: [LoggerModule, ConfigModule],  // Re-export for convenience
+})
+export class CommonModule {}
+
+// feature.module.ts
+@Module({
+  imports: [CommonModule],  // Gets Logger and Config
+})
+export class FeatureModule {}
+```
+
+## Global Modules
+
+### Making a Module Global
+
+```typescript
+// database.module.ts
+@Global()  // Available everywhere without importing
+@Module({
+  providers: [DatabaseService],
+  exports: [DatabaseService],
+})
+export class DatabaseModule {}
+```
+
+### Global via Dynamic Module
+
+```typescript
+static forRoot(): DynamicModule {
+  return {
+    module: ConfigModule,
+    global: true,  // Global via DynamicModule
+    providers: [ConfigService],
+    exports: [ConfigService],
+  };
+}
+```
+
+## Provider Patterns
+
+### Value Providers
+
+```typescript
+@Module({
+  providers: [
+    {
+      provide: 'API_KEY',
+      useValue: process.env.API_KEY,
+    },
+  ],
+})
+export class AppModule {}
+
+// Usage
+constructor(@Inject('API_KEY') private apiKey: string) {}
+```
+
+### Factory Providers
+
+```typescript
+@Module({
+  providers: [
+    {
+      provide: 'DATABASE_CONNECTION',
+      useFactory: async (config: ConfigService) => {
+        const options = config.get('database');
+        return createConnection(options);
+      },
+      inject: [ConfigService],
+    },
+  ],
+})
+export class DatabaseModule {}
+```
+
+### Class Providers
+
+```typescript
+@Module({
+  providers: [
+    {
+      provide: LoggerService,
+      useClass: process.env.NODE_ENV === 'test'
+        ? MockLoggerService
+        : WinstonLoggerService,
+    },
+  ],
+})
+export class AppModule {}
+```
+
+## Route Modules
+
+### Using RouterModule
+
+```typescript
+// app.module.ts
+import { RouterModule } from '@nestjs/core';
+
+@Module({
+  imports: [
+    AuthModule,
+    UserModule,
+    TenantModule,
+
+    RouterModule.register([
+      {
+        path: 'cloud-api',  // Prefix: /cloud-api
+        children: [
+          { path: 'auth', module: AuthModule },      // /cloud-api/auth/*
+          { path: 'users', module: UserModule },     // /cloud-api/users/*
+          { path: 'tenants', module: TenantModule }, // /cloud-api/tenants/*
+        ],
+      },
+      {
+        path: 'admin-api',  // Prefix: /admin-api
+        children: [
+          { path: 'users', module: AdminUserModule },
+        ],
+      },
+    ]),
+  ],
+})
+export class AppModule {}
+```
+
+## Complex Module Example
+
+### Auth Module with Multiple Services
+
+```typescript
+// auth/auth.module.ts
+@Module({
+  imports: [
+    forwardRef(() => UserModule),
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get('jwt.secret'),
+        signOptions: { expiresIn: config.get('jwt.expiresIn') },
+      }),
+    }),
+  ],
+  controllers: [AuthController],
+  providers: [
+    // Core services
+    AuthService,
+    JwtAuthService,
+    SessionService,
+    EncryptionService,
+
+    // MFA services
+    MfaVerificationService,
+    TotpService,
+    SmsService,
+    PasskeyService,
+
+    // OAuth providers
+    GoogleOAuthProvider,
+    MicrosoftOAuthProvider,
+    AppleOAuthProvider,
+    FacebookOAuthProvider,
+    TwitterOAuthProvider,
+
+    // Repositories
+    SessionRepository,
+    MfaConfigRepository,
+  ],
+  exports: [
+    AuthService,
+    JwtAuthService,
+    SessionService,
+  ],
+})
+export class AuthModule {}
+```
+
+## Best Practices
+
+<Accordion title="Keep Modules Focused">
+Each module should handle one feature or domain:
+
+```typescript
+// ✅ Good - focused modules
+UserModule      // User management
+AuthModule      // Authentication
+TenantModule    // Multi-tenancy
+
+// ❌ Avoid - kitchen sink module
+AppModule with everything in providers[]
+```
+</Accordion>
+
+<Accordion title="Export Only What's Needed">
+Only export providers that other modules need:
+
+```typescript
+// ✅ Good - minimal exports
+@Module({
+  providers: [UserService, UserRepository, InternalHelper],
+  exports: [UserService],  // Only public API
+})
+
+// ❌ Avoid - exporting everything
+exports: [UserService, UserRepository, InternalHelper]
+```
+</Accordion>
+
+<Accordion title="Use forwardRef Sparingly">
+Circular dependencies often indicate design issues:
+
+```typescript
+// Consider restructuring to avoid circulars
+// Extract shared logic to a new module:
+SharedModule → AuthModule
+SharedModule → UserModule
+```
+</Accordion>
+
+<Accordion title="Prefer Explicit Imports Over Global">
+Global modules hide dependencies:
+
+```typescript
+// ✅ Good - explicit import
+@Module({
+  imports: [DatabaseModule],
+})
+
+// ❌ Use sparingly
+@Global()
+@Module({})
+export class EverythingModule {}
+```
+</Accordion>

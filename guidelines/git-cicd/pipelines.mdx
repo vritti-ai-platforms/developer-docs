@@ -1,0 +1,1257 @@
+---
+title: "CI/CD Pipelines"
+description: "Comprehensive guide to continuous integration and deployment pipelines in the Vritti monorepo"
+---
+
+# CI/CD Pipelines
+
+This document covers the current CI/CD infrastructure in the Vritti monorepo and provides recommendations for implementing robust pipelines across all projects.
+
+## Current State
+
+<Info>
+The Vritti monorepo currently has **limited CI/CD coverage**. Only the Storybook deployment workflow exists, with no automated testing or validation pipelines for the main applications.
+</Info>
+
+### Existing Workflow: Storybook Deployment
+
+The only GitHub Actions workflow currently in place is for deploying the Quantum UI component library's Storybook documentation.
+
+**Location:** `quantum-ui/.github/workflows/deploy-storybook.yml`
+
+```yaml
+name: Deploy Storybook
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build Storybook
+        run: pnpm build-storybook
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './storybook-static'
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+```
+
+**Key characteristics:**
+- Triggers on push to `main` branch or manual dispatch
+- Uses Node.js 20 with pnpm v9
+- Deploys to GitHub Pages
+- Includes concurrency control to prevent overlapping deployments
+
+---
+
+## Recommended Pipeline Structure
+
+### Project Types Overview
+
+| Project | Type | Lint | Test | Build | Deploy |
+|---------|------|------|------|-------|--------|
+| `vritti-api-nexus` | Backend | Biome | Jest | TypeScript | Staging/Production |
+| `vritti-web-nexus` | Frontend | Biome | - | Next.js | Preview/Production |
+| `vritti-auth` | Frontend | Biome | - | Next.js | Preview/Production |
+| `quantum-ui` | Library | Biome | - | TypeScript | npm/Storybook |
+| `api-sdk` | Library | Biome | - | TypeScript | npm |
+
+### Backend Pipeline (vritti-api-nexus)
+
+```yaml
+name: Backend CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'vritti-api-nexus/**'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'vritti-api-nexus/**'
+
+defaults:
+  run:
+    working-directory: vritti-api-nexus
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: vritti-api-nexus/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Biome lint
+        run: pnpm lint
+
+      - name: Run Biome format check
+        run: pnpm format:check
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: lint
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: vritti_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: vritti-api-nexus/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm test
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/vritti_test
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          directory: vritti-api-nexus/coverage
+          flags: backend
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: vritti-api-nexus/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-build
+          path: vritti-api-nexus/dist
+          retention-days: 7
+```
+
+### Frontend Pipeline (vritti-web-nexus, vritti-auth)
+
+```yaml
+name: Frontend CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'vritti-web-nexus/**'
+      - 'vritti-auth/**'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'vritti-web-nexus/**'
+      - 'vritti-auth/**'
+
+jobs:
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      web: ${{ steps.filter.outputs.web }}
+      auth: ${{ steps.filter.outputs.auth }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            web:
+              - 'vritti-web-nexus/**'
+            auth:
+              - 'vritti-auth/**'
+
+  lint-web:
+    name: Lint Web
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.web == 'true'
+    defaults:
+      run:
+        working-directory: vritti-web-nexus
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: vritti-web-nexus/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Biome lint
+        run: pnpm lint
+
+  build-web:
+    name: Build Web
+    runs-on: ubuntu-latest
+    needs: lint-web
+    defaults:
+      run:
+        working-directory: vritti-web-nexus
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: vritti-web-nexus/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+
+  lint-auth:
+    name: Lint Auth
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.auth == 'true'
+    defaults:
+      run:
+        working-directory: vritti-auth
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: vritti-auth/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Biome lint
+        run: pnpm lint
+
+  build-auth:
+    name: Build Auth
+    runs-on: ubuntu-latest
+    needs: lint-auth
+    defaults:
+      run:
+        working-directory: vritti-auth
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: vritti-auth/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+```
+
+### Library Pipeline (quantum-ui, api-sdk)
+
+```yaml
+name: Library CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'quantum-ui/**'
+      - 'api-sdk/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'quantum-ui/**'
+      - 'api-sdk/**'
+
+jobs:
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      quantum-ui: ${{ steps.filter.outputs.quantum-ui }}
+      api-sdk: ${{ steps.filter.outputs.api-sdk }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            quantum-ui:
+              - 'quantum-ui/**'
+            api-sdk:
+              - 'api-sdk/**'
+
+  quantum-ui:
+    name: Quantum UI
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.quantum-ui == 'true'
+    defaults:
+      run:
+        working-directory: quantum-ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: quantum-ui/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+
+      - name: Build Storybook
+        run: pnpm build-storybook
+
+  api-sdk:
+    name: API SDK
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.api-sdk == 'true'
+    defaults:
+      run:
+        working-directory: api-sdk
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: api-sdk/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+```
+
+---
+
+## PR Validation Workflow
+
+A unified workflow that runs on all pull requests to validate code quality.
+
+```yaml
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      libraries: ${{ steps.filter.outputs.libraries }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'vritti-api-nexus/**'
+            frontend:
+              - 'vritti-web-nexus/**'
+              - 'vritti-auth/**'
+            libraries:
+              - 'quantum-ui/**'
+              - 'api-sdk/**'
+
+  backend-validation:
+    name: Backend Validation
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend == 'true'
+    defaults:
+      run:
+        working-directory: vritti-api-nexus
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: vritti_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: vritti-api-nexus/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/vritti_test
+
+  frontend-validation:
+    name: Frontend Validation
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true'
+    strategy:
+      matrix:
+        project: [vritti-web-nexus, vritti-auth]
+    defaults:
+      run:
+        working-directory: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: ${{ matrix.project }}/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+        env:
+          NEXT_PUBLIC_API_URL: https://api.vritti.dev
+
+  library-validation:
+    name: Library Validation
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.libraries == 'true'
+    strategy:
+      matrix:
+        project: [quantum-ui, api-sdk]
+    defaults:
+      run:
+        working-directory: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: ${{ matrix.project }}/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+```
+
+---
+
+## Deployment Workflow Structure
+
+### Production Deployment
+
+```yaml
+name: Production Deployment
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      project:
+        description: 'Project to deploy'
+        required: true
+        type: choice
+        options:
+          - vritti-api-nexus
+          - vritti-web-nexus
+          - vritti-auth
+          - all
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      github.event.inputs.project == 'vritti-api-nexus' ||
+      github.event.inputs.project == 'all'
+    environment:
+      name: production
+      url: https://api.vritti.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: vritti-api-nexus/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: vritti-api-nexus
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: vritti-api-nexus
+        run: pnpm build
+
+      # Add your deployment steps here
+      # Example: Docker build and push, or direct deployment to cloud provider
+      - name: Deploy to production
+        run: |
+          echo "Deploy backend to production"
+          # Add deployment commands
+
+  deploy-web:
+    name: Deploy Web App
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      github.event.inputs.project == 'vritti-web-nexus' ||
+      github.event.inputs.project == 'all'
+    environment:
+      name: production
+      url: https://app.vritti.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: vritti-web-nexus/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: vritti-web-nexus
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: vritti-web-nexus
+        run: pnpm build
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID_WEB }}
+          vercel-args: '--prod'
+          working-directory: vritti-web-nexus
+
+  deploy-auth:
+    name: Deploy Auth App
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      github.event.inputs.project == 'vritti-auth' ||
+      github.event.inputs.project == 'all'
+    environment:
+      name: production
+      url: https://auth.vritti.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: vritti-auth/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: vritti-auth
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: vritti-auth
+        run: pnpm build
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID_AUTH }}
+          vercel-args: '--prod'
+          working-directory: vritti-auth
+```
+
+### Preview Deployments
+
+```yaml
+name: Preview Deployment
+
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened]
+
+jobs:
+  preview-web:
+    name: Preview Web App
+    runs-on: ubuntu-latest
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'preview') ||
+      github.event.pull_request.draft == false
+    environment:
+      name: preview
+      url: ${{ steps.deploy.outputs.preview-url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: vritti-web-nexus/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: vritti-web-nexus
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: vritti-web-nexus
+        run: pnpm build
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL_STAGING }}
+
+      - name: Deploy Preview
+        id: deploy
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID_WEB }}
+          working-directory: vritti-web-nexus
+
+      - name: Comment PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Preview Deployment\n\nWeb App: ${{ steps.deploy.outputs.preview-url }}`
+            })
+```
+
+---
+
+## Environment Variables and Secrets
+
+### Repository Secrets
+
+Configure these secrets in your GitHub repository settings:
+
+| Secret | Description | Used By |
+|--------|-------------|---------|
+| `VERCEL_TOKEN` | Vercel API token for deployments | Frontend deployments |
+| `VERCEL_ORG_ID` | Vercel organization ID | Frontend deployments |
+| `VERCEL_PROJECT_ID_WEB` | Vercel project ID for web app | Web deployment |
+| `VERCEL_PROJECT_ID_AUTH` | Vercel project ID for auth app | Auth deployment |
+| `CODECOV_TOKEN` | Codecov upload token | Test coverage |
+| `NPM_TOKEN` | npm publish token | Library publishing |
+| `DATABASE_URL_PROD` | Production database URL | Backend deployment |
+
+### Repository Variables
+
+Configure these variables in your GitHub repository settings:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `NEXT_PUBLIC_API_URL` | Production API URL | `https://api.vritti.com` |
+| `NEXT_PUBLIC_API_URL_STAGING` | Staging API URL | `https://api.staging.vritti.com` |
+
+### Environment-Specific Configuration
+
+<Warning>
+Never commit sensitive values to the repository. Always use GitHub Secrets for credentials, API keys, and database URLs.
+</Warning>
+
+```yaml
+# Example of environment-specific variables
+jobs:
+  deploy:
+    environment:
+      name: production
+    env:
+      # Public variables (safe to expose)
+      NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+
+      # Secrets (never exposed in logs)
+      DATABASE_URL: ${{ secrets.DATABASE_URL_PROD }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+```
+
+---
+
+## Caching Strategies
+
+### pnpm Cache
+
+The built-in pnpm cache with `actions/setup-node` is the recommended approach.
+
+```yaml
+- name: Setup pnpm
+  uses: pnpm/action-setup@v2
+  with:
+    version: 9
+
+- name: Setup Node.js
+  uses: actions/setup-node@v4
+  with:
+    node-version: '20'
+    cache: 'pnpm'
+    cache-dependency-path: '**/pnpm-lock.yaml'
+```
+
+### Advanced Caching
+
+For more control over caching, use `actions/cache` directly.
+
+```yaml
+- name: Cache pnpm store
+  uses: actions/cache@v4
+  with:
+    path: |
+      ~/.pnpm-store
+      **/node_modules
+    key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+    restore-keys: |
+      ${{ runner.os }}-pnpm-
+
+- name: Cache Next.js build
+  uses: actions/cache@v4
+  with:
+    path: |
+      ${{ github.workspace }}/.next/cache
+    key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.ts', '**/*.tsx') }}
+    restore-keys: |
+      ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
+```
+
+### Turbo Cache (for monorepo builds)
+
+If using Turborepo for build orchestration:
+
+```yaml
+- name: Cache Turbo
+  uses: actions/cache@v4
+  with:
+    path: .turbo
+    key: ${{ runner.os }}-turbo-${{ github.sha }}
+    restore-keys: |
+      ${{ runner.os }}-turbo-
+```
+
+---
+
+## Matrix Builds
+
+### Multiple Node.js Versions
+
+For libraries that need to support multiple Node.js versions:
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm test
+```
+
+### Multiple Operating Systems
+
+For cross-platform compatibility testing:
+
+```yaml
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node-version: [20]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      # ... rest of steps
+```
+
+---
+
+## Workflow Triggers
+
+### Common Trigger Patterns
+
+```yaml
+on:
+  # Push to specific branches
+  push:
+    branches: [main, develop]
+
+  # Pull requests to specific branches
+  pull_request:
+    branches: [main, develop]
+
+  # Manual trigger with inputs
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+  # Scheduled runs (cron)
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight UTC
+
+  # When another workflow completes
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+```
+
+### Path Filtering
+
+Only run workflows when specific files change:
+
+```yaml
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'vritti-api-nexus/**'
+      - '.github/workflows/backend-*.yml'
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+```
+
+---
+
+## Future Recommendations
+
+<AccordionGroup>
+  <Accordion title="Implement Monorepo CI Orchestration">
+    **Priority:** High
+
+    Consider implementing a monorepo-aware CI system using:
+    - **Turborepo** for intelligent task caching and parallel execution
+    - **Nx** for affected commands (only build/test changed packages)
+
+    Benefits:
+    - Reduced CI time through intelligent caching
+    - Only run tasks for affected projects
+    - Parallel execution of independent tasks
+
+    ```yaml
+    # Example with Turborepo
+    - name: Build affected packages
+      run: pnpm turbo build --filter=...[origin/main]
+    ```
+  </Accordion>
+
+  <Accordion title="Add End-to-End Testing">
+    **Priority:** High
+
+    Implement E2E testing with Playwright or Cypress:
+
+    ```yaml
+    e2e-tests:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+
+        - name: Install Playwright
+          run: pnpm exec playwright install --with-deps
+
+        - name: Run E2E tests
+          run: pnpm test:e2e
+
+        - name: Upload test results
+          uses: actions/upload-artifact@v4
+          if: always()
+          with:
+            name: playwright-report
+            path: playwright-report/
+    ```
+  </Accordion>
+
+  <Accordion title="Implement Semantic Release">
+    **Priority:** Medium
+
+    Automate versioning and changelog generation:
+
+    ```yaml
+    release:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+          with:
+            fetch-depth: 0
+
+        - name: Semantic Release
+          uses: cycjimmy/semantic-release-action@v4
+          env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    ```
+  </Accordion>
+
+  <Accordion title="Add Security Scanning">
+    **Priority:** Medium
+
+    Integrate security scanning into CI:
+
+    ```yaml
+    security:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+
+        - name: Run Snyk vulnerability scan
+          uses: snyk/actions/node@master
+          env:
+            SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+        - name: Run CodeQL analysis
+          uses: github/codeql-action/analyze@v3
+    ```
+  </Accordion>
+
+  <Accordion title="Implement Blue-Green Deployments">
+    **Priority:** Low (future)
+
+    For zero-downtime deployments, implement blue-green or canary deployment strategies:
+
+    - Deploy to a staging environment first
+    - Run smoke tests
+    - Gradually shift traffic to new version
+    - Automatic rollback on failures
+  </Accordion>
+
+  <Accordion title="Add Performance Monitoring">
+    **Priority:** Low (future)
+
+    Track performance metrics in CI:
+
+    ```yaml
+    - name: Lighthouse CI
+      uses: treosh/lighthouse-ci-action@v11
+      with:
+        urls: |
+          https://preview-${{ github.sha }}.vritti.dev
+        uploadArtifacts: true
+        temporaryPublicStorage: true
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Quick Reference
+
+### Essential Commands
+
+```bash
+# Run all CI checks locally before pushing
+pnpm lint
+pnpm format:check
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+### Workflow File Locations
+
+```
+.github/
+  workflows/
+    pr-validation.yml      # PR checks
+    backend-ci.yml         # Backend CI/CD
+    frontend-ci.yml        # Frontend CI/CD
+    library-ci.yml         # Library CI/CD
+    deploy-production.yml  # Production deployment
+    deploy-preview.yml     # Preview deployments
+quantum-ui/
+  .github/
+    workflows/
+      deploy-storybook.yml # Storybook deployment (existing)
+```
+
+<Info>
+Start by implementing the PR Validation workflow first, as it provides immediate value by catching issues before they're merged. Then gradually add deployment workflows as needed.
+</Info>
