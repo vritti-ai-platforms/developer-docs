@@ -1,0 +1,364 @@
+---
+title: "Contributing to quantum-ui"
+description: "How to add new components and contribute to the quantum-ui library"
+---
+
+# Contributing to quantum-ui
+
+This guide explains how to add new components and contribute to quantum-ui.
+
+## Development Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/vritti-hub/quantum-ui.git
+cd quantum-ui
+
+# Install dependencies
+pnpm install
+
+# Start development server
+pnpm dev
+
+# Start Storybook (for component development)
+pnpm storybook
+```
+
+## Project Structure
+
+```
+quantum-ui/
+├── lib/                    # Published library code
+│   ├── components/         # Public component wrappers
+│   ├── config/             # Configuration system
+│   ├── utils/              # Utilities
+│   └── index.ts            # Main exports
+├── shadcn/                 # Base shadcn/ui components
+├── src/                    # Development app
+└── dist/                   # Build output
+```
+
+## Adding a New Component
+
+Follow these steps to add a new component:
+
+### Step 1: Add Base Component (shadcn)
+
+If using a shadcn/ui primitive, add it to the `shadcn/` directory:
+
+```bash
+mkdir shadcn/shadcnNewComponent
+touch shadcn/shadcnNewComponent/index.tsx
+```
+
+```tsx
+// shadcn/shadcnNewComponent/index.tsx
+import * as React from 'react';
+import { cn } from '../utils';
+
+interface NewComponentProps extends React.HTMLAttributes<HTMLDivElement> {
+  variant?: 'default' | 'outline';
+}
+
+const NewComponent = React.forwardRef<HTMLDivElement, NewComponentProps>(
+  ({ className, variant = 'default', ...props }, ref) => {
+    return (
+      <div
+        ref={ref}
+        className={cn(
+          'base-styles-here',
+          variant === 'outline' && 'outline-styles',
+          className
+        )}
+        {...props}
+      />
+    );
+  }
+);
+NewComponent.displayName = 'NewComponent';
+
+export { NewComponent, type NewComponentProps };
+```
+
+### Step 2: Create Public Wrapper
+
+Create the public component in `lib/components/`:
+
+```bash
+mkdir lib/components/NewComponent
+touch lib/components/NewComponent/index.tsx
+```
+
+```tsx
+// lib/components/NewComponent/index.tsx
+import { NewComponent as ShadcnNewComponent, type NewComponentProps } from '../../../shadcn/shadcnNewComponent';
+
+// Re-export with alias
+export const NewComponent = ShadcnNewComponent;
+export type { NewComponentProps };
+```
+
+### Step 3: Update Barrel Exports
+
+Add to `lib/components/index.ts`:
+
+```tsx
+// lib/components/index.ts
+export * from './NewComponent';
+```
+
+And to `lib/index.ts`:
+
+```tsx
+// lib/index.ts
+export * from './components/NewComponent';
+```
+
+### Step 4: Add Package Export
+
+Update `package.json` exports:
+
+```json
+{
+  "exports": {
+    "./NewComponent": {
+      "types": "./dist/lib/components/NewComponent/index.d.ts",
+      "import": "./dist/components/NewComponent.js"
+    }
+  }
+}
+```
+
+### Step 5: Add Vite Entry Point
+
+Update `vite.config.ts`:
+
+```ts
+export default defineConfig({
+  build: {
+    lib: {
+      entry: {
+        // ... existing entries
+        'components/NewComponent': 'lib/components/NewComponent/index.ts',
+      },
+    },
+  },
+});
+```
+
+### Step 6: Create Storybook Story
+
+```bash
+touch lib/components/NewComponent/NewComponent.stories.tsx
+```
+
+```tsx
+// lib/components/NewComponent/NewComponent.stories.tsx
+import type { Meta, StoryObj } from '@storybook/react';
+import { NewComponent } from './index';
+
+const meta: Meta<typeof NewComponent> = {
+  title: 'Components/NewComponent',
+  component: NewComponent,
+  parameters: {
+    layout: 'centered',
+  },
+  tags: ['autodocs'],
+};
+
+export default meta;
+type Story = StoryObj<typeof NewComponent>;
+
+export const Default: Story = {
+  args: {
+    children: 'New Component',
+  },
+};
+
+export const Outline: Story = {
+  args: {
+    variant: 'outline',
+    children: 'Outline Variant',
+  },
+};
+```
+
+### Step 7: Build and Test
+
+```bash
+# Build the library
+pnpm build
+
+# Run Storybook to verify
+pnpm storybook
+```
+
+## Checklist for New Components
+
+<Steps>
+  <Step title="Base component in shadcn/">
+    Create the core component with proper typing
+  </Step>
+  <Step title="Public wrapper in lib/components/">
+    Re-export with any additional logic
+  </Step>
+  <Step title="Update lib/components/index.ts">
+    Add barrel export
+  </Step>
+  <Step title="Update lib/index.ts">
+    Add to main exports
+  </Step>
+  <Step title="Update package.json exports">
+    Add individual import path
+  </Step>
+  <Step title="Update vite.config.ts">
+    Add build entry point
+  </Step>
+  <Step title="Create Storybook story">
+    Document component usage
+  </Step>
+  <Step title="Build and test">
+    Verify component works correctly
+  </Step>
+</Steps>
+
+## Component Guidelines
+
+### Use Design Tokens
+
+Always use design tokens, never hardcode colors:
+
+```tsx
+// CORRECT
+<div className="bg-primary text-primary-foreground" />
+<div className="bg-destructive/15 text-destructive" />
+
+// WRONG
+<div className="bg-blue-500 text-white" />
+<div style={{ backgroundColor: '#ef4444' }} />
+```
+
+### Forward Refs
+
+Components that wrap DOM elements should forward refs:
+
+```tsx
+const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, ...props }, ref) => (
+    <button ref={ref} className={className} {...props} />
+  )
+);
+Button.displayName = 'Button';
+```
+
+### Set Display Name
+
+Always set `displayName` for debugging:
+
+```tsx
+Component.displayName = 'ComponentName';
+```
+
+### Export Types
+
+Export TypeScript types alongside components:
+
+```tsx
+export { Component, type ComponentProps };
+```
+
+### Use CVA for Variants
+
+Use `class-variance-authority` for variant styling:
+
+```tsx
+import { cva, type VariantProps } from 'class-variance-authority';
+
+const buttonVariants = cva(
+  'base-classes-here',
+  {
+    variants: {
+      variant: {
+        default: 'bg-primary text-primary-foreground',
+        destructive: 'bg-destructive text-destructive-foreground',
+      },
+      size: {
+        sm: 'h-8 px-3 text-sm',
+        default: 'h-10 px-4',
+        lg: 'h-12 px-6 text-lg',
+      },
+    },
+    defaultVariants: {
+      variant: 'default',
+      size: 'default',
+    },
+  }
+);
+
+interface ButtonProps extends VariantProps<typeof buttonVariants> {
+  // additional props
+}
+```
+
+## Code Style
+
+quantum-ui uses Biome for linting and formatting:
+
+```bash
+# Lint code
+pnpm lint
+
+# Format code
+pnpm format
+
+# Check and fix
+pnpm check
+```
+
+### Naming Conventions
+
+| Type | Convention | Example |
+|------|------------|---------|
+| Component files | PascalCase | `Button.tsx` |
+| Component names | PascalCase | `Button`, `TextField` |
+| Hook files | camelCase | `useTheme.ts` |
+| Utility files | camelCase | `formHelpers.ts` |
+| CSS classes | kebab-case | `button-primary` |
+
+## Testing Changes
+
+```bash
+# Build library
+pnpm build
+
+# Run Storybook
+pnpm storybook
+
+# Preview production build
+pnpm preview
+```
+
+## Pull Request Guidelines
+
+1. **Create a feature branch** from `main`
+2. **Follow the component checklist** above
+3. **Include Storybook stories** for new components
+4. **Update documentation** if needed
+5. **Run `pnpm build`** to ensure no build errors
+6. **Write descriptive commit messages**
+
+### Commit Message Format
+
+```
+feat(component): add NewComponent with variants
+
+- Added base component with default and outline variants
+- Included Storybook documentation
+- Updated exports in package.json
+```
+
+## Questions?
+
+- Check existing components for patterns
+- Review Storybook for usage examples
+- Open a GitHub issue for questions

@@ -1,0 +1,362 @@
+---
+title: "Tech Stack"
+description: "Technologies and frameworks used across the Vritti ecosystem"
+---
+
+# Tech Stack
+
+Vritti uses modern, production-ready technologies across the entire stack.
+
+## Core Technologies
+
+### Frontend
+
+| Technology | Version | Purpose |
+|------------|---------|---------|
+| **React** | 19.x | UI framework |
+| **TypeScript** | 5.9.x | Type safety |
+| **Tailwind CSS** | v4 | Styling |
+| **Rsbuild** | 1.7.x | Build tool (web-nexus, auth) |
+| **Vite** | 7.x | Build tool (quantum-ui) |
+| **Next.js** | 15.x | SSG framework (landing) |
+
+### Backend
+
+| Technology | Version | Purpose |
+|------------|---------|---------|
+| **NestJS** | 11.x | Backend framework |
+| **Fastify** | 5.6.x | HTTP adapter |
+| **Drizzle ORM** | 1.0.0-beta | Database ORM |
+| **PostgreSQL** | 15+ | Primary database |
+| **Winston** | 3.x | Logging |
+
+### Infrastructure
+
+| Technology | Purpose |
+|------------|---------|
+| **Docker** | Containerization |
+| **pnpm** | Package management |
+| **Biome** | Linting & formatting |
+
+---
+
+## Frontend Stack Details
+
+### React 19
+
+We use React 19 with the latest features:
+
+```tsx
+// Server Components ready
+// Concurrent features
+// Automatic batching
+// Transitions API
+```
+
+**Key Libraries**:
+- `@tanstack/react-query` v5 - Server state management
+- `react-hook-form` v7 - Form handling
+- `zod` v4 - Schema validation
+- `lucide-react` - Icons
+
+### Tailwind CSS v4
+
+Using the latest Tailwind with OKLch color space:
+
+```css
+/* Design tokens */
+--primary: oklch(0.55 0.2 250);
+--destructive: oklch(0.55 0.2 25);
+--success: oklch(0.65 0.2 145);
+```
+
+**Features**:
+- CSS custom properties (design tokens)
+- Dark mode via `.dark` class
+- Container queries
+- Modern color functions
+
+### Module Federation
+
+Micro-frontend architecture using `@module-federation/enhanced`:
+
+```typescript
+// Host (vritti-web-nexus)
+remotes: {
+  'vritti-auth': 'vritti-auth@https://auth.vritti.cloud/mf-manifest.json'
+}
+
+// Remote (vritti-auth)
+exposes: {
+  './AuthRoutes': './src/routes/index.tsx'
+}
+```
+
+**Benefits**:
+- Independent deployments
+- Shared dependencies
+- Lazy loading
+- Team autonomy
+
+### Build Tools
+
+**Rsbuild** (for MF apps):
+- Rust-based, extremely fast
+- Module Federation support
+- Hot Module Replacement
+- SSL support
+
+**Vite** (for libraries):
+- Library mode
+- TypeScript declarations
+- Tree-shaking
+
+---
+
+## Backend Stack Details
+
+### NestJS 11
+
+Enterprise-grade Node.js framework:
+
+```typescript
+@Module({
+  imports: [
+    AuthConfigModule.forRootAsync(),
+    DatabaseModule.forServer({ ... }),
+    LoggerModule.forRoot({ environment: 'production' }),
+  ],
+})
+export class AppModule {}
+```
+
+**Key Features**:
+- Dependency injection
+- Modular architecture
+- Decorators for clean code
+- Built-in validation
+
+### Fastify Adapter
+
+High-performance HTTP server:
+
+```typescript
+const app = await NestFactory.create<NestFastifyApplication>(
+  AppModule,
+  new FastifyAdapter({ logger: false })
+);
+```
+
+**Benefits**:
+- 2x faster than Express
+- Built-in schema validation
+- Low memory footprint
+- Plugin ecosystem
+
+### Drizzle ORM
+
+Type-safe ORM with excellent DX:
+
+```typescript
+// Schema definition
+export const users = pgTable('users', {
+  id: text('id').primaryKey(),
+  email: text('email').notNull().unique(),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+// Type-safe queries
+const user = await db.query.users.findFirst({
+  where: eq(users.email, 'user@example.com'),
+  with: { profile: true },
+});
+```
+
+**Features**:
+- Full TypeScript inference
+- SQL-like query builder
+- Relational queries
+- Zero runtime overhead
+
+### Multi-Tenant Database
+
+Tenant isolation via database routing:
+
+```typescript
+// Primary DB (tenant registry)
+const tenant = await primaryDb.query.tenants.findFirst({
+  where: eq(tenants.subdomain, 'acme'),
+});
+
+// Tenant DB (isolated data)
+const users = await tenantDb.query.users.findMany();
+```
+
+---
+
+## Authentication Stack
+
+### JWT Authentication
+
+```typescript
+// Access token (short-lived)
+{
+  sub: 'usr_123',
+  type: 'access',
+  tenantId: 'ten_456',
+  exp: 1234567890  // 15 minutes
+}
+
+// Refresh token (long-lived, httpOnly cookie)
+{
+  sub: 'usr_123',
+  type: 'refresh',
+  jti: 'unique-token-id',
+  exp: 1234567890  // 30 days
+}
+```
+
+### Passkeys (WebAuthn)
+
+```typescript
+import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
+
+// Registration
+const credential = await startRegistration(options);
+
+// Authentication
+const assertion = await startAuthentication(options);
+```
+
+### OAuth Providers
+
+- **Google** - OAuth 2.0 with PKCE
+- **Microsoft** - Azure AD integration
+
+### MFA Methods
+
+- **TOTP** - Time-based one-time passwords
+- **SMS** - Twilio integration
+- **Passkeys** - WebAuthn as second factor
+
+---
+
+## Development Tools
+
+### Package Manager
+
+**pnpm** for all projects:
+
+```bash
+# Install dependencies
+pnpm install
+
+# Add package
+pnpm add package-name
+
+# Run script
+pnpm run dev
+```
+
+### Code Quality
+
+**Biome** for linting and formatting:
+
+```bash
+# Lint
+pnpm lint
+
+# Format
+pnpm format
+
+# Check and fix
+pnpm check
+```
+
+### Version Control
+
+- **Git** with conventional commits
+- **GitHub** for repositories
+- **GitHub Actions** for CI/CD
+
+---
+
+## Database
+
+### PostgreSQL
+
+Primary database with:
+- JSON/JSONB columns
+- Full-text search
+- Partial indexes
+- Row-level security (future)
+
+### Drizzle Kit
+
+Database migrations:
+
+```bash
+# Generate migration
+pnpm db:generate
+
+# Push to database
+pnpm db:push
+
+# Open Drizzle Studio
+pnpm db:studio
+```
+
+---
+
+## Version Matrix
+
+| Package | Minimum | Current |
+|---------|---------|---------|
+| Node.js | 22.0.0 | 22.x |
+| pnpm | 9.0.0 | 9.x |
+| React | 18.0.0 | 19.x |
+| TypeScript | 5.0.0 | 5.9.x |
+| NestJS | 11.0.0 | 11.x |
+| PostgreSQL | 15.0 | 16.x |
+
+---
+
+## Why These Choices?
+
+<AccordionGroup>
+  <Accordion title="Why React 19?">
+    - Server Components ready for future
+    - Improved concurrent rendering
+    - Better Suspense support
+    - Smaller bundle size
+  </Accordion>
+
+  <Accordion title="Why Drizzle over Prisma?">
+    - Better TypeScript inference
+    - SQL-like syntax (familiar)
+    - No runtime overhead
+    - Faster cold starts
+    - More control over queries
+  </Accordion>
+
+  <Accordion title="Why Fastify over Express?">
+    - 2x faster request handling
+    - Built-in schema validation
+    - Better TypeScript support
+    - Modern async/await design
+  </Accordion>
+
+  <Accordion title="Why Tailwind v4?">
+    - OKLch color space (perceptually uniform)
+    - CSS custom properties native
+    - Smaller output
+    - Container queries
+  </Accordion>
+
+  <Accordion title="Why Module Federation?">
+    - Independent team deployments
+    - Shared dependencies reduce bundle
+    - Runtime integration
+    - Gradual migration support
+  </Accordion>
+</AccordionGroup>

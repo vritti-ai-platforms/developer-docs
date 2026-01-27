@@ -1,0 +1,54 @@
+---
+title: "API Introduction"
+description: "Overview of the Vritti Cloud API"
+---
+
+# Vritti Cloud API
+
+The Vritti Cloud API provides programmatic access to authentication, user management, multi-tenancy, and onboarding features.
+
+## Base URL
+
+```
+Development: http://localhost:3000
+```
+
+## API Versioning
+
+All endpoints are prefixed with `/cloud-api`. The API uses URL-based versioning when breaking changes are introduced.
+
+## Request Format
+
+- All requests must include `Content-Type: application/json` header
+- Request bodies should be JSON-encoded
+- UTF-8 encoding is required
+
+## Response Format
+
+All responses follow a consistent JSON structure:
+
+### Success Response
+```json
+{
+  "data": { ... }
+}
+```
+
+### Error Response (RFC 7807)
+```json
+{
+  "type": "https://vritti.ai/errors/validation",
+  "title": "Validation Error",
+  "status": 400,
+  "errors": [
+    { "field": "email", "message": "Invalid email format" }
+  ]
+}
+```
+
+## Rate Limiting
+
+API requests are rate-limited per IP address. Check response headers for rate limit info:
+- `X-RateLimit-Limit`: Maximum requests per window
+- `X-RateLimit-Remaining`: Remaining requests
+- `X-RateLimit-Reset`: Window reset timestamp

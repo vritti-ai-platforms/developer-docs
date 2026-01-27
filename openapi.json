@@ -1,0 +1,3037 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/": {
+      "get": {
+        "operationId": "AppController_getHello",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Returns a welcome message indicating the API is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Health check endpoint",
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/csrf/token": {
+      "get": {
+        "description": "Generates and returns a CSRF token that must be included in all state-changing requests (POST, PUT, PATCH, DELETE). The token should be sent in the X-CSRF-Token header.",
+        "operationId": "CsrfController_getToken",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "CSRF token generated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "csrfToken": {
+                      "type": "string",
+                      "description": "The CSRF token to use in subsequent requests",
+                      "example": "abc123xyz789"
+                    }
+                  },
+                  "required": [
+                    "csrfToken"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get CSRF token",
+        "tags": [
+          "CSRF"
+        ]
+      }
+    },
+    "/cloud-api/tenants": {
+      "post": {
+        "operationId": "TenantController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Tenant creation data",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTenantDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tenant successfully created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input data or validation failed"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication"
+          },
+          "409": {
+            "description": "Conflict - Tenant with subdomain already exists"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a new tenant",
+        "tags": [
+          "Tenants"
+        ]
+      },
+      "get": {
+        "operationId": "TenantController_findAll",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "List of all tenants retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TenantResponseDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Retrieve all tenants",
+        "tags": [
+          "Tenants"
+        ]
+      }
+    },
+    "/cloud-api/tenants/{id}": {
+      "get": {
+        "operationId": "TenantController_findById",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "Unique identifier of the tenant",
+            "schema": {
+              "example": "550e8400-e29b-41d4-a716-446655440000",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication"
+          },
+          "404": {
+            "description": "Tenant not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Retrieve a tenant by ID",
+        "tags": [
+          "Tenants"
+        ]
+      },
+      "patch": {
+        "operationId": "TenantController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "Unique identifier of the tenant to update",
+            "schema": {
+              "example": "550e8400-e29b-41d4-a716-446655440000",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Tenant update data",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTenantDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tenant updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input data or validation failed"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication"
+          },
+          "404": {
+            "description": "Tenant not found"
+          },
+          "409": {
+            "description": "Conflict - Subdomain already in use by another tenant"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update a tenant",
+        "tags": [
+          "Tenants"
+        ]
+      },
+      "delete": {
+        "operationId": "TenantController_archive",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "Unique identifier of the tenant to archive",
+            "schema": {
+              "example": "550e8400-e29b-41d4-a716-446655440000",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant archived successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication"
+          },
+          "404": {
+            "description": "Tenant not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Archive a tenant (soft delete)",
+        "tags": [
+          "Tenants"
+        ]
+      }
+    },
+    "/cloud-api/tenants/subdomain/{subdomain}": {
+      "get": {
+        "operationId": "TenantController_findBySubdomain",
+        "parameters": [
+          {
+            "name": "subdomain",
+            "required": true,
+            "in": "path",
+            "description": "Unique subdomain identifier of the tenant",
+            "schema": {
+              "example": "acme-corp",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication"
+          },
+          "404": {
+            "description": "Tenant not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Retrieve a tenant by subdomain",
+        "tags": [
+          "Tenants"
+        ]
+      }
+    },
+    "/cloud-api/users": {
+      "get": {
+        "operationId": "UserController_findAll",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "List of all users retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UserResponseDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Retrieve all users (admin/internal use)",
+        "tags": [
+          "Users"
+        ]
+      }
+    },
+    "/cloud-api/users/{id}": {
+      "get": {
+        "operationId": "UserController_findById",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "Unique identifier of the user",
+            "schema": {
+              "example": "usr_abc123xyz",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing authentication"
+          },
+          "404": {
+            "description": "User not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Retrieve a user by ID",
+        "tags": [
+          "Users"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/verify-email": {
+      "post": {
+        "operationId": "OnboardingController_verifyEmail",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Email verification OTP payload",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Email verified successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Email verified successfully"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or expired OTP"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Verify email address using OTP",
+        "tags": [
+          "Onboarding"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/resend-email-otp": {
+      "post": {
+        "operationId": "OnboardingController_resendEmailOtp",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OTP sent successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "OTP sent successfully"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          },
+          "429": {
+            "description": "Too many requests - Rate limit exceeded"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Resend email verification OTP",
+        "tags": [
+          "Onboarding"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/status": {
+      "get": {
+        "operationId": "OnboardingController_getStatus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Returns the current onboarding status for the user"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get current onboarding status",
+        "tags": [
+          "Onboarding"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/start": {
+      "post": {
+        "operationId": "OnboardingController_startOnboarding",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Onboarding process started, returns current step and sends OTP if needed"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Start or continue the onboarding process",
+        "tags": [
+          "Onboarding"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/set-password": {
+      "post": {
+        "operationId": "OnboardingController_setPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "New password payload",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password set successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Password set successfully"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid password format or validation failed"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Set password for OAuth users",
+        "tags": [
+          "Onboarding"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/mobile-verification/initiate": {
+      "post": {
+        "operationId": "OnboardingController_initiateMobileVerification",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Mobile verification initiation payload",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InitiateMobileVerificationDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Mobile verification initiated successfully"
+          },
+          "400": {
+            "description": "Invalid phone number or verification method"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Initiate mobile phone verification",
+        "tags": [
+          "Onboarding"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/mobile-verification/status": {
+      "get": {
+        "operationId": "OnboardingController_getMobileVerificationStatus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Returns the current mobile verification status"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          },
+          "404": {
+            "description": "No active mobile verification found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get current mobile verification status",
+        "tags": [
+          "Onboarding"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/mobile-verification/resend": {
+      "post": {
+        "operationId": "OnboardingController_resendMobileVerification",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Mobile verification resend payload",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InitiateMobileVerificationDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Mobile verification code resent successfully"
+          },
+          "400": {
+            "description": "Invalid phone number or verification method"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          },
+          "429": {
+            "description": "Too many requests - Rate limit exceeded"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Resend mobile verification code",
+        "tags": [
+          "Onboarding"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/mobile-verification/verify-otp": {
+      "post": {
+        "operationId": "OnboardingController_verifyMobileOtp",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Mobile OTP verification payload",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyMobileOtpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Phone number verified successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Phone number verified successfully"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or expired OTP"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Verify mobile phone number using OTP",
+        "tags": [
+          "Onboarding"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/webhooks/{provider}": {
+      "get": {
+        "description": "Handles webhook subscription verification from Meta (WhatsApp) and Twilio (SMS).\n\n    For WhatsApp: Returns hub.challenge if hub.verify_token matches.\n    For SMS: Returns challenge if verify_token matches.",
+        "operationId": "VerificationWebhookController_verifyWebhook",
+        "parameters": [
+          {
+            "name": "hub.mode",
+            "required": false,
+            "in": "query",
+            "description": "WhatsApp: Subscription mode (should be \"subscribe\")",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hub.challenge",
+            "required": false,
+            "in": "query",
+            "description": "WhatsApp: Challenge string to echo back",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hub.verify_token",
+            "required": false,
+            "in": "query",
+            "description": "WhatsApp: Verification token to validate",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "verify_token",
+            "required": false,
+            "in": "query",
+            "description": "SMS/Twilio: Verification token to validate",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "challenge",
+            "required": false,
+            "in": "query",
+            "description": "SMS/Twilio: Challenge string to echo back",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "required": true,
+            "in": "path",
+            "description": "Webhook provider type",
+            "schema": {
+              "enum": [
+                "whatsapp",
+                "sms"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Webhook verified successfully, returns the challenge string",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unsupported provider"
+          },
+          "401": {
+            "description": "Invalid verification token"
+          }
+        },
+        "summary": "Verify webhook endpoint (Meta/Twilio subscription verification)",
+        "tags": [
+          "Onboarding - Webhooks"
+        ]
+      },
+      "post": {
+        "description": "Receives and processes incoming message webhooks from Meta (WhatsApp) and Twilio (SMS).\n\n    Validates webhook signatures before processing:\n    - WhatsApp: Uses X-Hub-Signature-256 header (HMAC-SHA256)\n    - SMS: Uses X-Twilio-Signature header (HMAC-SHA1)\n\n    Messages containing verification tokens are processed to complete mobile verification.",
+        "operationId": "VerificationWebhookController_handleWebhook",
+        "parameters": [
+          {
+            "name": "x-hub-signature-256",
+            "required": false,
+            "in": "header",
+            "description": "WhatsApp webhook signature (HMAC-SHA256)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-twilio-signature",
+            "required": false,
+            "in": "header",
+            "description": "Twilio SMS webhook signature (HMAC-SHA1)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "required": true,
+            "in": "path",
+            "description": "Webhook provider type",
+            "schema": {
+              "enum": [
+                "whatsapp",
+                "sms"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Webhook payload from provider (WhatsApp or Twilio format)",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "description": "WhatsApp webhook payload",
+                    "properties": {
+                      "object": {
+                        "type": "string",
+                        "example": "whatsapp_business_account"
+                      },
+                      "entry": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "changes": {
+                              "type": "array"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "description": "Twilio SMS webhook payload",
+                    "properties": {
+                      "MessageSid": {
+                        "type": "string"
+                      },
+                      "From": {
+                        "type": "string"
+                      },
+                      "To": {
+                        "type": "string"
+                      },
+                      "Body": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook received and queued for processing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unsupported provider or malformed payload"
+          },
+          "401": {
+            "description": "Invalid webhook signature"
+          }
+        },
+        "summary": "Handle incoming webhook events from WhatsApp or SMS providers",
+        "tags": [
+          "Onboarding - Webhooks"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/mobile-verification/events": {
+      "get": {
+        "description": "Real-time SSE endpoint for mobile verification status updates.\n    Client connects after initiating verification and receives push notifications when:\n    - Verification succeeds (webhook received valid token)\n    - Verification fails (invalid token, phone mismatch)\n    - Verification expires (10 minute timeout)\n\n    Note: Uses query parameter authentication since EventSource API cannot send headers.",
+        "operationId": "VerificationSseController_subscribeToVerificationEvents",
+        "parameters": [
+          {
+            "name": "token",
+            "required": true,
+            "in": "query",
+            "description": "JWT onboarding token for authentication",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE connection established. Events will be streamed as verification status changes.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "SUCCESS",
+                            "FAILED",
+                            "EXPIRED"
+                          ],
+                          "description": "Verification status"
+                        },
+                        "verificationId": {
+                          "type": "string",
+                          "description": "Unique verification identifier"
+                        },
+                        "phone": {
+                          "type": "string",
+                          "description": "Masked phone number"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Human-readable status message"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "Event timestamp"
+                        }
+                      }
+                    },
+                    "id": {
+                      "type": "string",
+                      "description": "Event ID for reconnection"
+                    },
+                    "type": {
+                      "type": "string",
+                      "example": "verification",
+                      "description": "Event type"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing token in query parameter"
+          },
+          "404": {
+            "description": "Verification already completed or not found"
+          }
+        },
+        "summary": "Subscribe to mobile verification events via Server-Sent Events",
+        "tags": [
+          "Onboarding - Verification Events"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/2fa/totp/setup": {
+      "post": {
+        "operationId": "TwoFactorController_initiateTotpSetup",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Returns QR code and manual key for TOTP setup"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          },
+          "409": {
+            "description": "TOTP already configured for this user"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Initiate TOTP (Time-based One-Time Password) setup",
+        "tags": [
+          "Onboarding - Two-Factor Authentication"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/2fa/totp/verify": {
+      "post": {
+        "operationId": "TwoFactorController_verifyTotpSetup",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "TOTP verification payload",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyTotpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "TOTP verified successfully, returns backup codes"
+          },
+          "400": {
+            "description": "Invalid TOTP code"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Verify TOTP setup with a code from authenticator app",
+        "tags": [
+          "Onboarding - Two-Factor Authentication"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/2fa/skip": {
+      "post": {
+        "operationId": "TwoFactorController_skip2FASetup",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "2FA setup skipped successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Two-factor authentication setup skipped. You can enable it later in settings."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Skip two-factor authentication setup",
+        "tags": [
+          "Onboarding - Two-Factor Authentication"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/2fa/status": {
+      "get": {
+        "operationId": "TwoFactorController_get2FAStatus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Returns the current 2FA configuration status"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get current two-factor authentication status",
+        "tags": [
+          "Onboarding - Two-Factor Authentication"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/2fa/passkey/setup": {
+      "post": {
+        "operationId": "TwoFactorController_initiatePasskeySetup",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Returns WebAuthn registration options for passkey setup"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          },
+          "409": {
+            "description": "Passkey already configured for this user"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Initiate Passkey/WebAuthn setup",
+        "tags": [
+          "Onboarding - Two-Factor Authentication"
+        ]
+      }
+    },
+    "/cloud-api/onboarding/2fa/passkey/verify": {
+      "post": {
+        "operationId": "TwoFactorController_verifyPasskeySetup",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Passkey credential verification payload",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyPasskeyDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Passkey registered successfully, returns backup codes"
+          },
+          "400": {
+            "description": "Invalid passkey credential"
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing onboarding token"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Verify Passkey/WebAuthn credential registration",
+        "tags": [
+          "Onboarding - Two-Factor Authentication"
+        ]
+      }
+    },
+    "/cloud-api/auth/signup": {
+      "post": {
+        "description": "Creates a new user account and initiates the onboarding flow. Returns an access token and sets a refresh token in an httpOnly cookie.",
+        "operationId": "AuthController_signup",
+        "parameters": [
+          {
+            "name": "user-agent",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "User created successfully. Returns onboarding status and access token."
+          },
+          "400": {
+            "description": "Invalid input data or validation error."
+          },
+          "409": {
+            "description": "User with this email already exists."
+          }
+        },
+        "summary": "User signup",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/cloud-api/auth/token": {
+      "get": {
+        "description": "Recovers the session by reading the refresh token from the httpOnly cookie and returns a new access token. Does not rotate the refresh token.",
+        "operationId": "AuthController_getToken",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Session recovered successfully. Returns new access token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accessToken": {
+                      "type": "string",
+                      "description": "JWT access token"
+                    },
+                    "expiresIn": {
+                      "type": "number",
+                      "description": "Token expiry in seconds"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired refresh token."
+          }
+        },
+        "summary": "Recover session token",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/cloud-api/auth/login": {
+      "post": {
+        "description": "Authenticates the user with email and password. Returns an access token and sets a refresh token in an httpOnly cookie.",
+        "operationId": "AuthController_login",
+        "parameters": [
+          {
+            "name": "user-agent",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Login successful. Returns access token and user information."
+          },
+          "400": {
+            "description": "Invalid input data or validation error."
+          },
+          "401": {
+            "description": "Invalid credentials."
+          },
+          "404": {
+            "description": "User not found."
+          }
+        },
+        "summary": "User login",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/cloud-api/auth/refresh": {
+      "post": {
+        "description": "Generates a new access token and rotates the refresh token for enhanced security. Reads refresh token from httpOnly cookie and updates it with the new rotated token.",
+        "operationId": "AuthController_refreshToken",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Token refreshed successfully. Returns new access token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accessToken": {
+                      "type": "string",
+                      "description": "New JWT access token"
+                    },
+                    "expiresIn": {
+                      "type": "number",
+                      "description": "Token expiry in seconds"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired refresh token."
+          }
+        },
+        "summary": "Refresh access token",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/cloud-api/auth/logout": {
+      "post": {
+        "description": "Invalidates the current session and clears the refresh token cookie. Only logs out from the current device.",
+        "operationId": "AuthController_logout",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Successfully logged out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Successfully logged out"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. Invalid or missing access token."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Logout from current device",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/cloud-api/auth/logout-all": {
+      "post": {
+        "description": "Invalidates all active sessions for the current user across all devices and clears the refresh token cookie.",
+        "operationId": "AuthController_logoutAll",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Successfully logged out from all devices.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Successfully logged out from 3 device(s)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. Invalid or missing access token."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Logout from all devices",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/cloud-api/auth/me": {
+      "get": {
+        "description": "Returns the profile information of the currently authenticated user.",
+        "operationId": "AuthController_getCurrentUser",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "User information retrieved successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. Invalid or missing access token."
+          },
+          "404": {
+            "description": "User not found."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get current user information",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/cloud-api/auth/oauth/{provider}/callback": {
+      "get": {
+        "description": "Receives the authorization code from the OAuth provider after user authorization. Exchanges the code for tokens and creates a session.",
+        "operationId": "AuthOAuthController_handleOAuthCallback",
+        "parameters": [
+          {
+            "name": "provider",
+            "required": true,
+            "in": "path",
+            "description": "OAuth provider name",
+            "schema": {
+              "enum": [
+                "google",
+                "github",
+                "microsoft"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "code",
+            "required": true,
+            "in": "query",
+            "description": "Authorization code from OAuth provider",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "required": true,
+            "in": "query",
+            "description": "State parameter for CSRF protection",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirects to frontend with access token on success, or to error page on failure."
+          },
+          "400": {
+            "description": "Missing code or state parameter."
+          }
+        },
+        "summary": "Handle OAuth callback",
+        "tags": [
+          "Auth - OAuth"
+        ]
+      }
+    },
+    "/cloud-api/auth/oauth/{provider}/link": {
+      "get": {
+        "description": "Initiates the OAuth flow to link an additional OAuth provider to the authenticated user's account. Requires an onboarding token.",
+        "operationId": "AuthOAuthController_linkOAuthProvider",
+        "parameters": [
+          {
+            "name": "provider",
+            "required": true,
+            "in": "path",
+            "description": "OAuth provider name to link",
+            "schema": {
+              "enum": [
+                "google",
+                "github",
+                "microsoft"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirects to OAuth provider authorization page."
+          },
+          "400": {
+            "description": "Invalid OAuth provider."
+          },
+          "401": {
+            "description": "Unauthorized. Invalid or missing onboarding token."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Link OAuth provider to existing account",
+        "tags": [
+          "Auth - OAuth"
+        ]
+      }
+    },
+    "/cloud-api/auth/oauth/{provider}": {
+      "get": {
+        "description": "Initiates the OAuth authentication flow by redirecting the user to the specified OAuth provider's authorization page.",
+        "operationId": "AuthOAuthController_initiateOAuth",
+        "parameters": [
+          {
+            "name": "provider",
+            "required": true,
+            "in": "path",
+            "description": "OAuth provider name",
+            "schema": {
+              "enum": [
+                "google",
+                "github",
+                "microsoft"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirects to OAuth provider authorization page."
+          },
+          "400": {
+            "description": "Invalid or unsupported OAuth provider."
+          }
+        },
+        "summary": "Initiate OAuth flow",
+        "tags": [
+          "Auth - OAuth"
+        ]
+      }
+    },
+    "/cloud-api/auth/passkey/start": {
+      "post": {
+        "description": "Initiates the WebAuthn authentication flow by generating a challenge and authentication options. Optionally accepts an email to limit to the user's registered passkeys.",
+        "operationId": "PasskeyAuthController_startPasskeyAuth",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartPasskeyAuthDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authentication options generated successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "description": "Session ID for the authentication flow",
+                      "example": "sess_abc123def456"
+                    },
+                    "options": {
+                      "type": "object",
+                      "description": "WebAuthn PublicKeyCredentialRequestOptions",
+                      "properties": {
+                        "challenge": {
+                          "type": "string",
+                          "description": "Base64URL encoded challenge"
+                        },
+                        "timeout": {
+                          "type": "number",
+                          "description": "Timeout in milliseconds",
+                          "example": 60000
+                        },
+                        "rpId": {
+                          "type": "string",
+                          "description": "Relying party ID",
+                          "example": "example.com"
+                        },
+                        "allowCredentials": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "Credential ID"
+                              },
+                              "type": {
+                                "type": "string",
+                                "example": "public-key"
+                              },
+                              "transports": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "userVerification": {
+                          "type": "string",
+                          "example": "preferred"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or no passkeys registered for the provided email."
+          },
+          "404": {
+            "description": "User not found for the provided email."
+          }
+        },
+        "summary": "Start passkey authentication",
+        "tags": [
+          "Auth - Passkey"
+        ]
+      }
+    },
+    "/cloud-api/auth/passkey/verify": {
+      "post": {
+        "description": "Verifies the WebAuthn authentication response and creates a user session. Returns an access token and sets a refresh token in an httpOnly cookie.",
+        "operationId": "PasskeyAuthController_verifyPasskeyAuth",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyPasskeyAuthDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authentication successful. Returns access token and user information.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accessToken": {
+                      "type": "string",
+                      "description": "JWT access token",
+                      "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    },
+                    "expiresIn": {
+                      "type": "number",
+                      "description": "Token expiry in seconds",
+                      "example": 900
+                    },
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "User ID",
+                          "example": "usr_123456789"
+                        },
+                        "email": {
+                          "type": "string",
+                          "description": "User email",
+                          "example": "user@example.com"
+                        },
+                        "firstName": {
+                          "type": "string",
+                          "description": "User first name",
+                          "example": "John"
+                        },
+                        "lastName": {
+                          "type": "string",
+                          "description": "User last name",
+                          "example": "Doe"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid credential or session ID."
+          },
+          "401": {
+            "description": "Authentication failed. Invalid or expired challenge."
+          },
+          "404": {
+            "description": "Session not found or passkey not registered."
+          }
+        },
+        "summary": "Verify passkey authentication",
+        "tags": [
+          "Auth - Passkey"
+        ]
+      }
+    },
+    "/cloud-api/auth/mfa/verify-totp": {
+      "post": {
+        "operationId": "MfaVerificationController_verifyTotp",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyMfaTotpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "TOTP code verified successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MfaVerificationResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid TOTP code or malformed request"
+          },
+          "401": {
+            "description": "MFA session expired or invalid"
+          }
+        },
+        "summary": "Verify TOTP code for MFA",
+        "tags": [
+          "MFA"
+        ]
+      }
+    },
+    "/cloud-api/auth/mfa/sms/send": {
+      "post": {
+        "operationId": "MfaVerificationController_sendSmsOtp",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendSmsOtpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "SMS OTP sent successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmsOtpSentResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or phone number not configured"
+          },
+          "401": {
+            "description": "MFA session expired or invalid"
+          }
+        },
+        "summary": "Send SMS OTP for MFA verification",
+        "tags": [
+          "MFA"
+        ]
+      }
+    },
+    "/cloud-api/auth/mfa/sms/verify": {
+      "post": {
+        "operationId": "MfaVerificationController_verifySmsOtp",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifySmsOtpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "SMS OTP verified successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MfaVerificationResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid OTP code or malformed request"
+          },
+          "401": {
+            "description": "MFA session expired or invalid"
+          }
+        },
+        "summary": "Verify SMS OTP code for MFA",
+        "tags": [
+          "MFA"
+        ]
+      }
+    },
+    "/cloud-api/auth/mfa/passkey/start": {
+      "post": {
+        "operationId": "MfaVerificationController_startPasskeyMfa",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartPasskeyMfaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Passkey authentication options generated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyMfaOptionsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or no passkeys registered"
+          },
+          "401": {
+            "description": "MFA session expired or invalid"
+          }
+        },
+        "summary": "Start passkey authentication for MFA",
+        "tags": [
+          "MFA"
+        ]
+      }
+    },
+    "/cloud-api/auth/mfa/passkey/verify": {
+      "post": {
+        "operationId": "MfaVerificationController_verifyPasskeyMfa",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyPasskeyMfaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Passkey verified successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MfaVerificationResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid passkey credential or malformed request"
+          },
+          "401": {
+            "description": "MFA session expired or invalid"
+          }
+        },
+        "summary": "Verify passkey authentication for MFA",
+        "tags": [
+          "MFA"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Vritti Cloud API",
+    "description": "Internal API for Vritti SaaS Platform",
+    "version": "1.0.0",
+    "contact": {}
+  },
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Health check endpoints"
+    },
+    {
+      "name": "CSRF",
+      "description": "CSRF token management"
+    },
+    {
+      "name": "Auth",
+      "description": "Authentication endpoints"
+    },
+    {
+      "name": "Auth - OAuth",
+      "description": "OAuth authentication flows"
+    },
+    {
+      "name": "Auth - Passkey",
+      "description": "Passkey/WebAuthn authentication"
+    },
+    {
+      "name": "MFA",
+      "description": "Multi-factor authentication verification"
+    },
+    {
+      "name": "Onboarding",
+      "description": "User onboarding flow"
+    },
+    {
+      "name": "Onboarding - Two-Factor Authentication",
+      "description": "2FA setup during onboarding"
+    },
+    {
+      "name": "Onboarding - Verification Events",
+      "description": "SSE events for verification status"
+    },
+    {
+      "name": "Onboarding - Webhooks",
+      "description": "Webhook handlers for SMS/WhatsApp"
+    },
+    {
+      "name": "Tenants",
+      "description": "Tenant management"
+    },
+    {
+      "name": "Users",
+      "description": "User management"
+    }
+  ],
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Local Development"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http",
+        "description": "Enter your JWT access token"
+      }
+    },
+    "schemas": {
+      "CreateTenantDto": {
+        "type": "object",
+        "properties": {
+          "subdomain": {
+            "type": "string",
+            "description": "Unique subdomain identifier for the tenant. Used in URLs and routing.",
+            "example": "acme-corp",
+            "minLength": 2,
+            "maxLength": 50,
+            "pattern": "^[a-z0-9-]+$"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name of the tenant organization",
+            "example": "Acme Corporation",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional description of the tenant organization",
+            "example": "Leading provider of innovative solutions",
+            "maxLength": 500
+          },
+          "dbType": {
+            "type": "string",
+            "description": "Database deployment type for the tenant",
+            "enum": [
+              "SHARED",
+              "DEDICATED"
+            ],
+            "example": "SHARED"
+          },
+          "status": {
+            "type": "string",
+            "description": "Current operational status of the tenant",
+            "enum": [
+              "ACTIVE",
+              "SUSPENDED",
+              "ARCHIVED"
+            ],
+            "example": "ACTIVE",
+            "default": "ACTIVE"
+          },
+          "dbHost": {
+            "type": "string",
+            "description": "Database server hostname or IP address (required for DEDICATED tenants)",
+            "example": "db.acme-corp.example.com"
+          },
+          "dbPort": {
+            "type": "number",
+            "description": "Database server port number",
+            "example": 5432,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "dbUsername": {
+            "type": "string",
+            "description": "Database username for authentication",
+            "example": "tenant_user"
+          },
+          "dbPassword": {
+            "type": "string",
+            "description": "Database password for authentication",
+            "example": "secure_password_123"
+          },
+          "dbName": {
+            "type": "string",
+            "description": "Name of the database to connect to",
+            "example": "acme_corp_db"
+          },
+          "dbSchema": {
+            "type": "string",
+            "description": "Database schema name (for databases that support schemas)",
+            "example": "tenant_schema"
+          },
+          "dbSslMode": {
+            "type": "string",
+            "description": "SSL mode for database connection security",
+            "enum": [
+              "require",
+              "prefer",
+              "disable"
+            ],
+            "example": "require"
+          },
+          "connectionPoolSize": {
+            "type": "number",
+            "description": "Maximum number of connections in the database connection pool",
+            "example": 10,
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "subdomain",
+          "name",
+          "dbType"
+        ]
+      },
+      "TenantDatabaseConfigResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the database configuration",
+            "example": "550e8400-e29b-41d4-a716-446655440001"
+          },
+          "tenantId": {
+            "type": "string",
+            "description": "Reference to the parent tenant",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "dbHost": {
+            "type": "string",
+            "description": "Database server hostname or IP address",
+            "example": "db.acme-corp.example.com"
+          },
+          "dbPort": {
+            "type": "number",
+            "description": "Database server port number",
+            "example": 5432,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "dbName": {
+            "type": "string",
+            "description": "Name of the database",
+            "example": "acme_corp_db"
+          },
+          "dbSchema": {
+            "type": "object",
+            "description": "Database schema name (for databases that support schemas)",
+            "example": "tenant_schema",
+            "nullable": true
+          },
+          "dbSslMode": {
+            "type": "string",
+            "description": "SSL mode for database connection security",
+            "enum": [
+              "require",
+              "prefer",
+              "disable"
+            ],
+            "example": "require"
+          },
+          "connectionPoolSize": {
+            "type": "number",
+            "description": "Maximum number of connections in the database connection pool",
+            "example": 10,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "Timestamp when the configuration was created",
+            "example": "2024-01-15T10:30:00.000Z",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "Timestamp when the configuration was last updated",
+            "example": "2024-01-20T14:45:00.000Z",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "dbHost",
+          "dbPort",
+          "dbName",
+          "dbSslMode",
+          "connectionPoolSize",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "TenantResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the tenant",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "subdomain": {
+            "type": "string",
+            "description": "Unique subdomain identifier for the tenant. Used in URLs and routing.",
+            "example": "acme-corp"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name of the tenant organization",
+            "example": "Acme Corporation"
+          },
+          "description": {
+            "type": "object",
+            "description": "Optional description of the tenant organization",
+            "example": "Leading provider of innovative solutions",
+            "nullable": true
+          },
+          "dbType": {
+            "type": "string",
+            "description": "Database deployment type for the tenant",
+            "enum": [
+              "SHARED",
+              "DEDICATED"
+            ],
+            "example": "SHARED"
+          },
+          "status": {
+            "type": "string",
+            "description": "Current operational status of the tenant",
+            "enum": [
+              "ACTIVE",
+              "SUSPENDED",
+              "ARCHIVED"
+            ],
+            "example": "ACTIVE"
+          },
+          "databaseConfig": {
+            "description": "Database configuration details (only present for DEDICATED tenants)",
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TenantDatabaseConfigResponseDto"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "Timestamp when the tenant was created",
+            "example": "2024-01-15T10:30:00.000Z",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "Timestamp when the tenant was last updated",
+            "example": "2024-01-20T14:45:00.000Z",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "subdomain",
+          "name",
+          "dbType",
+          "status",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "UpdateTenantDto": {
+        "type": "object",
+        "properties": {
+          "subdomain": {
+            "type": "string",
+            "description": "Unique subdomain identifier for the tenant. Used in URLs and routing.",
+            "example": "acme-corp",
+            "minLength": 2,
+            "maxLength": 50,
+            "pattern": "^[a-z0-9-]+$"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name of the tenant organization",
+            "example": "Acme Corporation",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional description of the tenant organization",
+            "example": "Leading provider of innovative solutions",
+            "maxLength": 500
+          },
+          "dbType": {
+            "type": "string",
+            "description": "Database deployment type for the tenant",
+            "enum": [
+              "SHARED",
+              "DEDICATED"
+            ],
+            "example": "SHARED"
+          },
+          "status": {
+            "type": "string",
+            "description": "Current operational status of the tenant",
+            "enum": [
+              "ACTIVE",
+              "SUSPENDED",
+              "ARCHIVED"
+            ],
+            "example": "ACTIVE",
+            "default": "ACTIVE"
+          },
+          "dbHost": {
+            "type": "string",
+            "description": "Database server hostname or IP address (required for DEDICATED tenants)",
+            "example": "db.acme-corp.example.com"
+          },
+          "dbPort": {
+            "type": "number",
+            "description": "Database server port number",
+            "example": 5432,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "dbUsername": {
+            "type": "string",
+            "description": "Database username for authentication",
+            "example": "tenant_user"
+          },
+          "dbPassword": {
+            "type": "string",
+            "description": "Database password for authentication",
+            "example": "secure_password_123"
+          },
+          "dbName": {
+            "type": "string",
+            "description": "Name of the database to connect to",
+            "example": "acme_corp_db"
+          },
+          "dbSchema": {
+            "type": "string",
+            "description": "Database schema name (for databases that support schemas)",
+            "example": "tenant_schema"
+          },
+          "dbSslMode": {
+            "type": "string",
+            "description": "SSL mode for database connection security",
+            "enum": [
+              "require",
+              "prefer",
+              "disable"
+            ],
+            "example": "require"
+          },
+          "connectionPoolSize": {
+            "type": "number",
+            "description": "Maximum number of connections in the database connection pool",
+            "example": 10,
+            "minimum": 1,
+            "maximum": 100
+          }
+        }
+      },
+      "UserResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "User unique identifier",
+            "example": "usr_abc123xyz"
+          },
+          "email": {
+            "type": "string",
+            "description": "User email address",
+            "example": "user@example.com"
+          },
+          "firstName": {
+            "type": "object",
+            "description": "User first name",
+            "example": "John"
+          },
+          "lastName": {
+            "type": "object",
+            "description": "User last name",
+            "example": "Doe"
+          },
+          "accountStatus": {
+            "type": "string",
+            "description": "Account status",
+            "example": "ACTIVE",
+            "enum": [
+              "PENDING",
+              "ACTIVE",
+              "SUSPENDED",
+              "DEACTIVATED"
+            ]
+          },
+          "emailVerified": {
+            "type": "boolean",
+            "description": "Whether email is verified",
+            "example": true
+          },
+          "phoneVerified": {
+            "type": "boolean",
+            "description": "Whether phone is verified",
+            "example": false
+          },
+          "onboardingStep": {
+            "type": "string",
+            "description": "Current onboarding step",
+            "example": "COMPLETE",
+            "enum": [
+              "EMAIL_VERIFICATION",
+              "PASSWORD_SETUP",
+              "PHONE_VERIFICATION",
+              "TWO_FACTOR_SETUP",
+              "COMPLETE"
+            ]
+          },
+          "hasPassword": {
+            "type": "boolean",
+            "description": "Whether user has set a password",
+            "example": true
+          },
+          "phone": {
+            "type": "object",
+            "description": "Phone number",
+            "example": "+14155551234"
+          },
+          "phoneCountry": {
+            "type": "object",
+            "description": "Phone country code",
+            "example": "US"
+          },
+          "profilePictureUrl": {
+            "type": "object",
+            "description": "Profile picture URL",
+            "example": "https://example.com/avatar.jpg"
+          },
+          "locale": {
+            "type": "string",
+            "description": "User locale",
+            "example": "en-US"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "User timezone",
+            "example": "America/Los_Angeles"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string",
+            "description": "Account creation timestamp",
+            "example": "2024-01-15T10:30:00Z"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string",
+            "description": "Last update timestamp",
+            "example": "2024-01-15T10:30:00Z"
+          },
+          "lastLoginAt": {
+            "type": "object",
+            "description": "Last login timestamp",
+            "example": "2024-01-15T10:30:00Z"
+          },
+          "emailVerifiedAt": {
+            "type": "object",
+            "description": "Email verification timestamp",
+            "example": "2024-01-15T10:30:00Z"
+          },
+          "phoneVerifiedAt": {
+            "type": "object",
+            "description": "Phone verification timestamp",
+            "example": "2024-01-15T10:30:00Z"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "accountStatus",
+          "emailVerified",
+          "phoneVerified",
+          "onboardingStep",
+          "hasPassword",
+          "locale",
+          "timezone",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "VerifyEmailDto": {
+        "type": "object",
+        "properties": {
+          "otp": {
+            "type": "string",
+            "description": "Six-digit one-time password sent to the user email address for verification",
+            "example": "123456",
+            "minLength": 6,
+            "maxLength": 6
+          }
+        },
+        "required": [
+          "otp"
+        ]
+      },
+      "SetPasswordDto": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "User password that must be at least 8 characters and contain at least one lowercase letter, uppercase letter, number, and special character",
+            "example": "SecureP@ss123",
+            "minLength": 8
+          }
+        },
+        "required": [
+          "password"
+        ]
+      },
+      "InitiateMobileVerificationDto": {
+        "type": "object",
+        "properties": {
+          "phone": {
+            "type": "string",
+            "description": "Phone number in E.164 format (with + prefix). Optional for QR-based methods, required for OTP-based method.",
+            "example": "+919876543210",
+            "minLength": 10,
+            "maxLength": 20
+          },
+          "phoneCountry": {
+            "type": "string",
+            "description": "ISO 3166-1 alpha-2 country code for the phone number",
+            "example": "IN",
+            "minLength": 2,
+            "maxLength": 5
+          },
+          "method": {
+            "type": "string",
+            "description": "Method to use for mobile verification. Defaults to WHATSAPP_QR.",
+            "example": "WHATSAPP_QR",
+            "enum": [
+              "WHATSAPP_QR",
+              "SMS_QR",
+              "MANUAL_OTP"
+            ],
+            "default": "WHATSAPP_QR"
+          }
+        }
+      },
+      "VerifyMobileOtpDto": {
+        "type": "object",
+        "properties": {
+          "otp": {
+            "type": "string",
+            "description": "Six-digit one-time password received via SMS for mobile verification",
+            "example": "123456",
+            "minLength": 6,
+            "maxLength": 6
+          }
+        },
+        "required": [
+          "otp"
+        ]
+      },
+      "VerifyTotpDto": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Six-digit TOTP verification code from the authenticator app",
+            "example": "123456",
+            "minLength": 6,
+            "maxLength": 6
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
+      "VerifyPasskeyDto": {
+        "type": "object",
+        "properties": {
+          "credential": {
+            "type": "object",
+            "description": "WebAuthn credential registration response from the browser containing attestation data",
+            "example": {
+              "id": "base64url-credential-id",
+              "rawId": "base64url-raw-credential-id",
+              "response": {
+                "clientDataJSON": "base64url-client-data",
+                "attestationObject": "base64url-attestation-object",
+                "transports": [
+                  "internal",
+                  "hybrid"
+                ]
+              },
+              "authenticatorAttachment": "platform",
+              "clientExtensionResults": {},
+              "type": "public-key"
+            }
+          }
+        },
+        "required": [
+          "credential"
+        ]
+      },
+      "SignupDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "User email address",
+            "example": "user@example.com",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "description": "Password (min 8 chars, must include uppercase, lowercase, number, and special character)",
+            "example": "SecureP@ss123",
+            "minLength": 8
+          },
+          "firstName": {
+            "type": "string",
+            "description": "User first name",
+            "example": "John"
+          },
+          "lastName": {
+            "type": "string",
+            "description": "User last name",
+            "example": "Doe"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ]
+      },
+      "LoginDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "User email address",
+            "example": "user@example.com",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "description": "User password",
+            "example": "SecureP@ss123",
+            "minLength": 8
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ]
+      },
+      "StartPasskeyAuthDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "User email address to identify which passkey credentials to allow. If not provided, all registered passkeys for discoverable credentials will be allowed",
+            "example": "user@example.com",
+            "format": "email"
+          }
+        }
+      },
+      "VerifyPasskeyAuthDto": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "description": "Session identifier from the passkey authentication options request",
+            "example": "sess_abc123def456ghi789"
+          },
+          "credential": {
+            "type": "object",
+            "description": "WebAuthn authentication response containing the signed challenge and credential data",
+            "example": {
+              "id": "Y3JlZGVudGlhbC1pZC1iYXNlNjQ",
+              "rawId": "Y3JlZGVudGlhbC1pZC1iYXNlNjQ",
+              "response": {
+                "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZEdWemRDMWphR0ZzYkdWdVoyVXRZbUZ6WlRZMCIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5jb20ifQ",
+                "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAQ",
+                "signature": "MEUCIQDKoFZ_Bz2nY3T0S7vM6XJ9nKXJTjK2wZ1vW9sC8nA3TAIgX5aK9pM7sQ3rT2vN6wK8jF4hL1bC0mD9eY3xZ2oA1sU",
+                "userHandle": "dXNlcl8xMjM0NTY3ODkw"
+              },
+              "authenticatorAttachment": "platform",
+              "clientExtensionResults": {},
+              "type": "public-key"
+            }
+          }
+        },
+        "required": [
+          "sessionId",
+          "credential"
+        ]
+      },
+      "VerifyMfaTotpDto": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "description": "MFA session identifier obtained from the login challenge response",
+            "example": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+          },
+          "code": {
+            "type": "string",
+            "description": "Six-digit TOTP code from the authenticator app (e.g., Google Authenticator, Authy)",
+            "example": "123456",
+            "minLength": 6,
+            "maxLength": 6,
+            "pattern": "^\\d{6}$"
+          }
+        },
+        "required": [
+          "sessionId",
+          "code"
+        ]
+      },
+      "MfaVerificationUserDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the user",
+            "example": "usr_abc123def456"
+          },
+          "email": {
+            "type": "string",
+            "description": "Email address of the authenticated user",
+            "example": "user@example.com"
+          },
+          "firstName": {
+            "type": "object",
+            "description": "First name of the user",
+            "example": "John",
+            "nullable": true
+          },
+          "lastName": {
+            "type": "object",
+            "description": "Last name of the user",
+            "example": "Doe",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "email"
+        ]
+      },
+      "MfaVerificationResponseDto": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "description": "JWT access token for authenticating subsequent API requests",
+            "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+          },
+          "expiresIn": {
+            "type": "number",
+            "description": "Token expiration time in seconds",
+            "example": 3600
+          },
+          "tokenType": {
+            "type": "string",
+            "description": "Type of the token (always \"Bearer\" for JWT tokens)",
+            "example": "Bearer"
+          },
+          "user": {
+            "description": "Information about the authenticated user",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MfaVerificationUserDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "accessToken",
+          "expiresIn",
+          "tokenType",
+          "user"
+        ]
+      },
+      "SendSmsOtpDto": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "description": "MFA session identifier obtained from the login challenge response",
+            "example": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+          }
+        },
+        "required": [
+          "sessionId"
+        ]
+      },
+      "SmsOtpSentResponseDto": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Indicates whether the SMS OTP was sent successfully",
+            "example": true
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable message about the SMS OTP status",
+            "example": "Verification code sent successfully"
+          },
+          "maskedPhone": {
+            "type": "string",
+            "description": "Masked phone number where the OTP was sent",
+            "example": "+1******7890"
+          }
+        },
+        "required": [
+          "success",
+          "message",
+          "maskedPhone"
+        ]
+      },
+      "VerifySmsOtpDto": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "description": "MFA session identifier obtained from the login challenge response",
+            "example": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+          },
+          "code": {
+            "type": "string",
+            "description": "Six-digit verification code received via SMS",
+            "example": "123456",
+            "minLength": 6,
+            "maxLength": 6,
+            "pattern": "^\\d{6}$"
+          }
+        },
+        "required": [
+          "sessionId",
+          "code"
+        ]
+      },
+      "StartPasskeyMfaDto": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "description": "MFA session identifier obtained from the login challenge response",
+            "example": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+          }
+        },
+        "required": [
+          "sessionId"
+        ]
+      },
+      "PasskeyMfaOptionsDto": {
+        "type": "object",
+        "properties": {
+          "options": {
+            "type": "object",
+            "description": "WebAuthn authentication options to be passed to the browser credentials API (navigator.credentials.get)",
+            "example": {
+              "challenge": "base64-encoded-challenge-string",
+              "timeout": 60000,
+              "rpId": "example.com",
+              "allowCredentials": [
+                {
+                  "type": "public-key",
+                  "id": "base64-encoded-credential-id"
+                }
+              ],
+              "userVerification": "preferred"
+            }
+          }
+        },
+        "required": [
+          "options"
+        ]
+      },
+      "AuthenticatorResponseDto": {
+        "type": "object",
+        "properties": {
+          "clientDataJSON": {
+            "type": "string",
+            "description": "Base64URL-encoded client data JSON containing challenge and origin",
+            "example": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiYWJjMTIzIiwib3JpZ2luIjoiaHR0cHM6Ly9leGFtcGxlLmNvbSJ9"
+          },
+          "authenticatorData": {
+            "type": "string",
+            "description": "Base64URL-encoded authenticator data containing flags and counter",
+            "example": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAQ"
+          },
+          "signature": {
+            "type": "string",
+            "description": "Base64URL-encoded signature over the client data and authenticator data",
+            "example": "MEUCIQDKg5kp3..."
+          },
+          "userHandle": {
+            "type": "string",
+            "description": "Base64URL-encoded user handle (user ID)",
+            "example": "dXNlcl9hYmMxMjM"
+          }
+        },
+        "required": [
+          "clientDataJSON",
+          "authenticatorData",
+          "signature"
+        ]
+      },
+      "AuthenticationResponseJSONDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Base64URL-encoded credential identifier",
+            "example": "pbK2nMnR2..."
+          },
+          "rawId": {
+            "type": "string",
+            "description": "Raw credential ID in Base64URL format (same as id)",
+            "example": "pbK2nMnR2..."
+          },
+          "response": {
+            "description": "Authenticator response containing the cryptographic proof",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthenticatorResponseDto"
+              }
+            ]
+          },
+          "authenticatorAttachment": {
+            "type": "string",
+            "description": "Type of authenticator attachment used",
+            "example": "platform",
+            "enum": [
+              "platform",
+              "cross-platform"
+            ]
+          },
+          "clientExtensionResults": {
+            "type": "object",
+            "description": "Results from client-side WebAuthn extensions",
+            "example": {}
+          },
+          "type": {
+            "type": "string",
+            "description": "Credential type (always \"public-key\" for WebAuthn)",
+            "example": "public-key",
+            "enum": [
+              "public-key"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "rawId",
+          "response",
+          "clientExtensionResults",
+          "type"
+        ]
+      },
+      "VerifyPasskeyMfaDto": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "description": "MFA session identifier obtained from the login challenge response",
+            "example": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+          },
+          "credential": {
+            "description": "WebAuthn authentication response from navigator.credentials.get()",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthenticationResponseJSONDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sessionId",
+          "credential"
+        ]
+      }
+    }
+  }
+}

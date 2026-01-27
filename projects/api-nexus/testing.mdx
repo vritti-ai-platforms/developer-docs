@@ -1,0 +1,634 @@
+---
+title: Testing Guide
+description: Jest testing setup and patterns in vritti-api-nexus
+---
+
+# Testing Guide
+
+This guide covers the testing infrastructure, patterns, and best practices for vritti-api-nexus.
+
+## Testing Stack
+
+| Technology | Version | Purpose |
+|------------|---------|---------|
+| Jest | 30.0.0 | Testing framework |
+| SWC | 0.2.39 | Fast TypeScript compilation |
+| @nestjs/testing | 11.0.1 | NestJS test utilities |
+| Supertest | 7.0.0 | HTTP assertion library |
+
+## Test Directory Structure
+
+```
+vritti-api-nexus/
+├── src/
+│   ├── app.controller.spec.ts     # Unit tests alongside source
+│   └── modules/
+│       └── cloud-api/
+│           ├── auth/
+│           │   └── auth.service.spec.ts
+│           ├── user/
+│           │   └── user.service.spec.ts
+│           └── onboarding/
+│               └── onboarding.service.spec.ts
+├── test/
+│   ├── jest-e2e.json              # E2E Jest config
+│   └── app.e2e-spec.ts            # E2E tests
+└── coverage/                       # Generated coverage reports
+```
+
+## Jest Configuration
+
+### Unit Tests
+
+Configuration is in `package.json`:
+
+```json
+{
+  "jest": {
+    "moduleFileExtensions": ["js", "json", "ts"],
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.(t|j)s$": ["@swc/jest"]
+    },
+    "collectCoverageFrom": ["**/*.(t|j)s"],
+    "coverageDirectory": "../coverage",
+    "testEnvironment": "node"
+  }
+}
+```
+
+Key points:
+- Tests located alongside source files (`src/`)
+- Pattern: `*.spec.ts`
+- Uses SWC for fast transpilation (10x faster than ts-jest)
+
+### E2E Tests
+
+Separate configuration in `test/jest-e2e.json`:
+
+```json
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testEnvironment": "node",
+  "testRegex": ".e2e-spec.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  }
+}
+```
+
+Key points:
+- Tests in `test/` directory
+- Pattern: `.e2e-spec.ts`
+- Uses ts-jest for full TypeScript support
+
+## Test Scripts
+
+```bash
+# Run all unit tests
+pnpm test
+
+# Watch mode (re-runs on file changes)
+pnpm test:watch
+
+# Generate coverage report
+pnpm test:cov
+
+# Debug tests with Node inspector
+pnpm test:debug
+
+# Run E2E tests
+pnpm test:e2e
+```
+
+## Unit Testing
+
+### Testing a Service
+
+```typescript
+// user.service.spec.ts
+import { Test, type TestingModule } from '@nestjs/testing';
+import { UserService } from './user.service';
+import { UserRepository } from './user.repository';
+import { NotFoundException } from '@nestjs/common';
+
+describe('UserService', () => {
+  let service: UserService;
+  let repository: jest.Mocked<UserRepository>;
+
+  beforeEach(async () => {
+    const mockRepository = {
+      findById: jest.fn(),
+      findByEmail: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UserService,
+        { provide: UserRepository, useValue: mockRepository },
+      ],
+    }).compile();
+
+    service = module.get<UserService>(UserService);
+    repository = module.get(UserRepository);
+  });
+
+  describe('findById', () => {
+    it('should return user when found', async () => {
+      const mockUser = { id: '1', email: 'test@example.com' };
+      repository.findById.mockResolvedValue(mockUser);
+
+      const result = await service.findById('1');
+
+      expect(result).toEqual(mockUser);
+      expect(repository.findById).toHaveBeenCalledWith('1');
+    });
+
+    it('should throw NotFoundException when user not found', async () => {
+      repository.findById.mockResolvedValue(null);
+
+      await expect(service.findById('1'))
+        .rejects
+        .toThrow(NotFoundException);
+    });
+  });
+
+  describe('create', () => {
+    it('should create user with pending status', async () => {
+      const dto = { email: 'new@example.com' };
+      const expectedUser = {
+        id: '1',
+        ...dto,
+        accountStatus: 'PENDING_VERIFICATION',
+      };
+
+      repository.findByEmail.mockResolvedValue(null);
+      repository.create.mockResolvedValue(expectedUser);
+
+      const result = await service.create(dto);
+
+      expect(result.accountStatus).toBe('PENDING_VERIFICATION');
+      expect(repository.create).toHaveBeenCalled();
+    });
+  });
+});
+```
+
+### Testing a Controller
+
+```typescript
+// auth.controller.spec.ts
+import { Test, type TestingModule } from '@nestjs/testing';
+import { AuthController } from './auth.controller';
+import { AuthService } from './auth.service';
+import { UnauthorizedException } from '@nestjs/common';
+
+describe('AuthController', () => {
+  let controller: AuthController;
+  let authService: jest.Mocked<AuthService>;
+
+  beforeEach(async () => {
+    const mockAuthService = {
+      login: jest.fn(),
+      signup: jest.fn(),
+      refreshTokens: jest.fn(),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [AuthController],
+      providers: [
+        { provide: AuthService, useValue: mockAuthService },
+      ],
+    }).compile();
+
+    controller = module.get<AuthController>(AuthController);
+    authService = module.get(AuthService);
+  });
+
+  describe('login', () => {
+    it('should return tokens on successful login', async () => {
+      const dto = { email: 'test@example.com', password: 'password123' };
+      const mockResponse = {
+        user: { id: '1', email: dto.email },
+        tokens: { accessToken: 'jwt', refreshToken: 'refresh' },
+      };
+
+      authService.login.mockResolvedValue(mockResponse);
+
+      const result = await controller.login(dto);
+
+      expect(result.tokens.accessToken).toBeDefined();
+      expect(authService.login).toHaveBeenCalledWith(dto);
+    });
+
+    it('should throw UnauthorizedException on invalid credentials', async () => {
+      authService.login.mockRejectedValue(
+        new UnauthorizedException('Invalid credentials')
+      );
+
+      await expect(controller.login({ email: 'test@example.com', password: 'wrong' }))
+        .rejects
+        .toThrow(UnauthorizedException);
+    });
+  });
+});
+```
+
+### Testing a Repository
+
+```typescript
+// user.repository.spec.ts
+import { Test, type TestingModule } from '@nestjs/testing';
+import { UserRepository } from './user.repository';
+import { PrimaryDatabaseService } from '@vritti/api-sdk';
+
+describe('UserRepository', () => {
+  let repository: UserRepository;
+  let mockDb: jest.Mocked<PrimaryDatabaseService>;
+
+  beforeEach(async () => {
+    // Create chainable mock
+    const mockSelect = jest.fn().mockReturnThis();
+    const mockFrom = jest.fn().mockReturnThis();
+    const mockWhere = jest.fn().mockReturnThis();
+    const mockLimit = jest.fn().mockResolvedValue([]);
+
+    mockDb = {
+      select: mockSelect,
+      from: mockFrom,
+      where: mockWhere,
+      limit: mockLimit,
+      insert: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    } as any;
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UserRepository,
+        { provide: PrimaryDatabaseService, useValue: mockDb },
+      ],
+    }).compile();
+
+    repository = module.get<UserRepository>(UserRepository);
+  });
+
+  describe('findByEmail', () => {
+    it('should return user when found', async () => {
+      const mockUser = { id: '1', email: 'test@example.com' };
+      mockDb.limit.mockResolvedValue([mockUser]);
+
+      const result = await repository.findByEmail('test@example.com');
+
+      expect(result).toEqual(mockUser);
+    });
+
+    it('should return null when not found', async () => {
+      mockDb.limit.mockResolvedValue([]);
+
+      const result = await repository.findByEmail('notfound@example.com');
+
+      expect(result).toBeNull();
+    });
+  });
+});
+```
+
+## E2E Testing
+
+### Basic E2E Test
+
+```typescript
+// test/app.e2e-spec.ts
+import type { INestApplication } from '@nestjs/common';
+import { Test, type TestingModule } from '@nestjs/testing';
+import request from 'supertest';
+import { AppModule } from '../src/app.module';
+
+describe('AppController (e2e)', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('/ (GET)', () => {
+    return request(app.getHttpServer())
+      .get('/')
+      .expect(200)
+      .expect('Hello World!');
+  });
+});
+```
+
+### Auth Flow E2E Test
+
+```typescript
+// test/auth.e2e-spec.ts
+import type { INestApplication } from '@nestjs/common';
+import { Test, type TestingModule } from '@nestjs/testing';
+import request from 'supertest';
+import { AppModule } from '../src/app.module';
+
+describe('Auth (e2e)', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  describe('/cloud-api/auth/signup (POST)', () => {
+    it('should create a new user', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/cloud-api/auth/signup')
+        .send({ email: 'test@example.com' })
+        .expect(201);
+
+      expect(response.body.user.email).toBe('test@example.com');
+      expect(response.body.user.accountStatus).toBe('PENDING_VERIFICATION');
+    });
+
+    it('should reject duplicate email', async () => {
+      await request(app.getHttpServer())
+        .post('/cloud-api/auth/signup')
+        .send({ email: 'duplicate@example.com' })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post('/cloud-api/auth/signup')
+        .send({ email: 'duplicate@example.com' })
+        .expect(409);
+    });
+  });
+
+  describe('/cloud-api/auth/login (POST)', () => {
+    it('should return tokens on valid credentials', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/cloud-api/auth/login')
+        .send({
+          email: 'verified@example.com',
+          password: 'ValidPassword123!',
+        })
+        .expect(200);
+
+      expect(response.body.tokens.accessToken).toBeDefined();
+      expect(response.body.tokens.refreshToken).toBeDefined();
+    });
+
+    it('should reject invalid credentials', async () => {
+      await request(app.getHttpServer())
+        .post('/cloud-api/auth/login')
+        .send({
+          email: 'test@example.com',
+          password: 'wrongpassword',
+        })
+        .expect(401);
+    });
+  });
+});
+```
+
+## Mocking Patterns
+
+### Mock Factory Pattern
+
+```typescript
+// test/factories/user.factory.ts
+export const createMockUser = (overrides = {}) => ({
+  id: 'user-123',
+  email: 'test@example.com',
+  accountStatus: 'ACTIVE',
+  onboardingStep: 'COMPLETE',
+  emailVerified: true,
+  phoneVerified: true,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  ...overrides,
+});
+
+// Usage in tests
+const activeUser = createMockUser({ accountStatus: 'ACTIVE' });
+const pendingUser = createMockUser({ accountStatus: 'PENDING_VERIFICATION' });
+```
+
+### Service Mock Pattern
+
+```typescript
+// test/mocks/auth.service.mock.ts
+export const createMockAuthService = () => ({
+  login: jest.fn(),
+  signup: jest.fn(),
+  refreshTokens: jest.fn(),
+  logout: jest.fn(),
+  validateUser: jest.fn(),
+});
+
+// Usage
+const module: TestingModule = await Test.createTestingModule({
+  providers: [
+    { provide: AuthService, useValue: createMockAuthService() },
+  ],
+}).compile();
+```
+
+### Database Mock Pattern
+
+```typescript
+// test/mocks/database.mock.ts
+export const createMockDatabaseService = () => {
+  const queryBuilder = {
+    select: jest.fn().mockReturnThis(),
+    from: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
+    offset: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    returning: jest.fn(),
+  };
+
+  return {
+    ...queryBuilder,
+    insert: jest.fn().mockReturnValue({
+      values: jest.fn().mockReturnThis(),
+      returning: jest.fn(),
+    }),
+    update: jest.fn().mockReturnValue({
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      returning: jest.fn(),
+    }),
+    delete: jest.fn().mockReturnValue({
+      where: jest.fn().mockReturnThis(),
+    }),
+    transaction: jest.fn((callback) => callback(queryBuilder)),
+  };
+};
+```
+
+## Testing Guards and Interceptors
+
+### Testing a Guard
+
+```typescript
+// auth.guard.spec.ts
+import { ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { VrittiAuthGuard } from './auth.guard';
+
+describe('VrittiAuthGuard', () => {
+  let guard: VrittiAuthGuard;
+  let reflector: jest.Mocked<Reflector>;
+
+  beforeEach(() => {
+    reflector = { getAllAndOverride: jest.fn() } as any;
+    guard = new VrittiAuthGuard(reflector);
+  });
+
+  it('should allow public routes', () => {
+    reflector.getAllAndOverride.mockReturnValue(true);
+
+    const context = createMockExecutionContext();
+    const result = guard.canActivate(context);
+
+    expect(result).toBe(true);
+  });
+
+  it('should validate JWT for protected routes', () => {
+    reflector.getAllAndOverride.mockReturnValue(false);
+
+    const context = createMockExecutionContext({
+      headers: { authorization: 'Bearer valid-token' },
+    });
+
+    // Test JWT validation logic
+  });
+});
+
+function createMockExecutionContext(request = {}): ExecutionContext {
+  return {
+    switchToHttp: () => ({
+      getRequest: () => ({
+        headers: {},
+        ...request,
+      }),
+    }),
+    getHandler: jest.fn(),
+    getClass: jest.fn(),
+  } as unknown as ExecutionContext;
+}
+```
+
+## Coverage Reporting
+
+Generate coverage reports:
+
+```bash
+pnpm test:cov
+```
+
+Coverage output:
+```
+--------------------|---------|----------|---------|---------|
+File                | % Stmts | % Branch | % Funcs | % Lines |
+--------------------|---------|----------|---------|---------|
+All files           |   85.23 |    78.45 |   89.12 |   84.67 |
+ auth/              |   90.12 |    85.67 |   92.34 |   89.45 |
+ user/              |   88.45 |    82.34 |   91.23 |   87.89 |
+ onboarding/        |   78.34 |    70.12 |   82.45 |   77.23 |
+--------------------|---------|----------|---------|---------|
+```
+
+Coverage thresholds can be configured in Jest:
+
+```json
+{
+  "jest": {
+    "coverageThreshold": {
+      "global": {
+        "branches": 80,
+        "functions": 80,
+        "lines": 80,
+        "statements": 80
+      }
+    }
+  }
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Isolate Dependencies" icon="cube">
+    Mock all external dependencies (database, services) in unit tests
+  </Card>
+  <Card title="Test One Thing" icon="bullseye">
+    Each test should verify a single behavior or scenario
+  </Card>
+  <Card title="Descriptive Names" icon="tag">
+    Use clear, descriptive test names: "should throw NotFoundException when user not found"
+  </Card>
+  <Card title="AAA Pattern" icon="layer-group">
+    Structure tests as Arrange, Act, Assert for clarity
+  </Card>
+</CardGroup>
+
+### Anti-Patterns to Avoid
+
+<Warning>
+  **Don't do this:**
+
+  ```typescript
+  // ❌ Testing implementation details
+  it('should call repository.findById', async () => {
+    await service.getUser('1');
+    expect(repository.findById).toHaveBeenCalled();
+  });
+
+  // ❌ Multiple assertions testing different behaviors
+  it('should handle user operations', async () => {
+    const user = await service.create(dto);
+    expect(user).toBeDefined();
+    await service.update(user.id, { name: 'New' });
+    await service.delete(user.id);
+  });
+
+  // ❌ Not cleaning up test state
+  beforeEach(async () => {
+    // Creates data but never cleans up
+    await database.insert(users).values(testUser);
+  });
+  ```
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Module Guide" icon="cubes" href="/projects/api-nexus/module-guide">
+    Understand module architecture
+  </Card>
+  <Card title="Service Patterns" icon="layer-group" href="/projects/api-nexus/services">
+    Learn service layer patterns
+  </Card>
+</CardGroup>

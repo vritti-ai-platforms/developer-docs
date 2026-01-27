@@ -1,0 +1,341 @@
+---
+title: Setup Guide
+description: Local development setup for vritti-api-nexus
+---
+
+# Setup Guide
+
+This guide covers setting up vritti-api-nexus for local development.
+
+## Prerequisites
+
+<CardGroup cols={2}>
+  <Card title="Node.js" icon="node-js">
+    Version 20+ required
+  </Card>
+  <Card title="pnpm" icon="package">
+    Package manager (`npm i -g pnpm`)
+  </Card>
+  <Card title="Docker" icon="docker">
+    For local PostgreSQL
+  </Card>
+  <Card title="mkcert" icon="lock">
+    For local HTTPS certificates
+  </Card>
+</CardGroup>
+
+## Installation
+
+<Steps>
+  <Step title="Clone Repository">
+    ```bash
+    git clone git@github.com:vritti-ai/vritti-api-nexus.git
+    cd vritti-api-nexus
+    ```
+  </Step>
+
+  <Step title="Install Dependencies">
+    ```bash
+    pnpm install
+    ```
+  </Step>
+
+  <Step title="Setup Local SSL">
+    ```bash
+    # Install mkcert (macOS)
+    brew install mkcert
+    mkcert -install
+
+    # Generate certificates
+    mkdir -p certs
+    cd certs
+    mkcert local.vrittiai.com "*.local.vrittiai.com" localhost 127.0.0.1 ::1
+    cd ..
+    ```
+  </Step>
+
+  <Step title="Start PostgreSQL">
+    ```bash
+    pnpm db:start
+    ```
+
+    This starts a Docker container with PostgreSQL 16 on port 5432.
+  </Step>
+
+  <Step title="Configure Environment">
+    ```bash
+    cp .env.example .env
+    ```
+
+    Edit `.env` with your configuration (see Environment Variables below).
+  </Step>
+
+  <Step title="Push Database Schema">
+    ```bash
+    pnpm db:push
+    ```
+
+    This creates the `cloud` schema and all tables.
+  </Step>
+
+  <Step title="Start Development Server">
+    ```bash
+    pnpm dev
+    ```
+
+    The API will be available at `https://local.vrittiai.com:3000`.
+  </Step>
+</Steps>
+
+## Environment Variables
+
+### Database Configuration
+
+```bash
+# Primary Database (Cloud Schema)
+PRIMARY_DB_HOST=localhost
+PRIMARY_DB_PORT=5432
+PRIMARY_DB_USERNAME=postgres
+PRIMARY_DB_PASSWORD=postgres
+PRIMARY_DB_DATABASE=vritti
+PRIMARY_DB_SCHEMA=cloud
+PRIMARY_DB_SSL_MODE=disable  # disable for local, require for production
+
+# Direct URL for Drizzle migrations
+PRIMARY_DB_DATABASE_DIRECT_URL=postgresql://postgres:postgres@localhost:5432/vritti
+```
+
+### Authentication
+
+```bash
+# JWT Configuration
+JWT_SECRET=your-super-secret-jwt-key-min-32-chars
+JWT_ACCESS_EXPIRY=15m
+JWT_REFRESH_EXPIRY=30d
+JWT_SIGNUP_EXPIRY=10m
+
+# Security
+BCRYPT_SALT_ROUNDS=12
+REFRESH_TOKEN_ROTATION_DAYS=7
+COOKIE_SECRET=your-cookie-signing-secret
+CSRF_HMAC_KEY=your-csrf-hmac-secret-key
+```
+
+### OAuth Providers
+
+```bash
+# Google OAuth
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=https://cloud.local.vrittiai.com:3012/onboarding/oauth-success
+
+# Microsoft OAuth
+MICROSOFT_CLIENT_ID=your-microsoft-client-id
+MICROSOFT_CLIENT_SECRET=your-microsoft-client-secret
+MICROSOFT_REDIRECT_URI=https://cloud.local.vrittiai.com:3012/onboarding/oauth-success
+```
+
+### Communication Services
+
+```bash
+# Brevo (Email)
+BREVO_API_KEY=your-brevo-api-key
+SENDER_EMAIL=noreply@vrittiai.com
+SENDER_NAME=Vritti
+
+# WhatsApp Cloud API
+WHATSAPP_PHONE_NUMBER_ID=your-phone-number-id
+WHATSAPP_ACCESS_TOKEN=your-access-token
+WHATSAPP_APP_SECRET=your-app-secret
+WHATSAPP_VERIFY_TOKEN=your-webhook-verify-token
+```
+
+### WebAuthn (Passkeys)
+
+```bash
+WEBAUTHN_RP_NAME=Vritti
+WEBAUTHN_RP_ID=local.vrittiai.com
+WEBAUTHN_ORIGIN=https://cloud.local.vrittiai.com:3012
+```
+
+### Logging
+
+```bash
+LOG_PROVIDER=winston  # default or winston
+LOG_TO_FILE=false
+LOG_FILE_PATH=./logs
+LOG_MAX_FILES=14
+MASK_PII=true
+```
+
+## npm Scripts
+
+### Development
+
+```bash
+# Start with hot reload
+pnpm dev
+
+# Start without watch mode
+pnpm start
+
+# Build for production
+pnpm build
+
+# Run production build
+pnpm prod
+```
+
+### Database
+
+```bash
+# Start local PostgreSQL
+pnpm db:start
+
+# Stop PostgreSQL
+pnpm db:stop
+
+# Push schema changes (no migration file)
+pnpm db:push
+
+# Generate migration file
+pnpm db:generate
+
+# Run migrations
+pnpm db:migrate
+
+# Open Drizzle Studio (database UI)
+pnpm db:studio
+
+# Force reset schema (destructive!)
+pnpm db:reset
+
+# Drop cloud schema (destructive!)
+pnpm db:drop
+```
+
+### Code Quality
+
+```bash
+# Run linter
+pnpm lint
+
+# Auto-format code
+pnpm format
+
+# Full Biome check with auto-fix
+pnpm check
+```
+
+### Testing
+
+```bash
+# Run unit tests
+pnpm test
+
+# Run E2E tests
+pnpm test:e2e
+
+# Run tests in watch mode
+pnpm test --watch
+
+# Generate coverage report
+pnpm test --coverage
+```
+
+## API Documentation
+
+Swagger UI is available at:
+
+```
+https://local.vrittiai.com:3000/api/docs
+```
+
+The OpenAPI spec is exported to `openapi.json` in the project root.
+
+## Database Management
+
+### Drizzle Studio
+
+Access the database UI:
+
+```bash
+pnpm db:studio
+```
+
+This opens a web interface at `https://local.drizzle.studio` to browse and edit data.
+
+### Schema Changes
+
+When modifying database schemas:
+
+```mermaid
+flowchart LR
+    A[Edit schema file] --> B{Development?}
+    B -->|Yes| C[pnpm db:push]
+    B -->|No| D[pnpm db:generate]
+    D --> E[Review migration]
+    E --> F[pnpm db:migrate]
+```
+
+<Warning>
+  `db:push` directly modifies the database without migration files. Use `db:generate` + `db:migrate` for production deployments.
+</Warning>
+
+## Hosts File Setup
+
+Add these entries to `/etc/hosts` for local subdomain routing:
+
+```
+127.0.0.1 local.vrittiai.com
+127.0.0.1 cloud.local.vrittiai.com
+127.0.0.1 acme.local.vrittiai.com
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Port 5432 already in use">
+    Stop any existing PostgreSQL:
+    ```bash
+    brew services stop postgresql  # macOS
+    sudo systemctl stop postgresql # Linux
+    ```
+  </Accordion>
+
+  <Accordion title="SSL certificate errors">
+    Reinstall mkcert certificates:
+    ```bash
+    mkcert -uninstall
+    mkcert -install
+    cd certs && mkcert local.vrittiai.com "*.local.vrittiai.com"
+    ```
+  </Accordion>
+
+  <Accordion title="Database connection failed">
+    Check Docker is running and the container is up:
+    ```bash
+    docker ps | grep vritti-postgres
+    pnpm db:start  # Restart if needed
+    ```
+  </Accordion>
+
+  <Accordion title="Migration errors">
+    Reset the schema (destructive):
+    ```bash
+    pnpm db:drop
+    pnpm db:push
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Module Guide" icon="cubes" href="/projects/api-nexus/module-guide">
+    Understand each NestJS module
+  </Card>
+  <Card title="Service Patterns" icon="layer-group" href="/projects/api-nexus/services">
+    Learn service layer patterns
+  </Card>
+</CardGroup>

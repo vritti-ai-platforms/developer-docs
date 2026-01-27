@@ -1,0 +1,297 @@
+---
+title: Monorepo Structure
+description: Organization of the Vritti workspace and projects
+---
+
+# Monorepo Structure
+
+Vritti uses a multi-repo approach with a workspace configuration that links all projects together. This enables consistent tooling while allowing independent deployment of each service.
+
+## Workspace Overview
+
+```
+/Users/shashankraju/Documents/Vritti/
+├── vritti.code-workspace          # VS Code workspace config
+│
+├── quantum-ui/                    # Shared UI component library
+│   ├── src/components/
+│   ├── src/lib/
+│   └── package.json              # @vritti/quantum-ui
+│
+├── api-sdk/                       # Shared NestJS modules
+│   ├── src/auth/
+│   ├── src/database/
+│   └── package.json              # @vritti/api-sdk
+│
+├── vritti-api-nexus/              # Main backend API
+│   ├── src/
+│   ├── src/db/schema/
+│   └── package.json
+│
+├── vritti-web-nexus/              # Frontend host app
+│   ├── src/
+│   └── package.json
+│
+├── vritti-auth/                   # Auth micro-frontend
+│   ├── src/
+│   └── package.json
+│
+├── vritti-landing/                # Next.js landing page
+│   ├── app/
+│   └── package.json
+│
+├── slicingpie/                    # Admin dashboard
+│   ├── src/
+│   └── package.json
+│
+└── developer-docs/                # This documentation
+    ├── docs.json
+    └── *.mdx
+```
+
+## Project Categories
+
+### Shared Libraries
+
+These packages are published to npm and consumed by other projects:
+
+<Tabs>
+  <Tab title="@vritti/quantum-ui">
+    **Purpose:** Shared React component library based on shadcn/ui
+
+    ```bash
+    # Location
+    /quantum-ui
+
+    # Package name
+    @vritti/quantum-ui@0.2.x
+
+    # Key exports
+    - UI Components (Button, Card, Dialog, etc.)
+    - Form components (with react-hook-form integration)
+    - Axios instance with CSRF and auth interceptors
+    - Toast notifications
+    ```
+
+    **Consumers:**
+    - vritti-web-nexus
+    - vritti-auth
+    - slicingpie
+  </Tab>
+  <Tab title="@vritti/api-sdk">
+    **Purpose:** Shared NestJS modules for backend services
+
+    ```bash
+    # Location
+    /api-sdk
+
+    # Package name
+    @vritti/api-sdk@0.1.x
+
+    # Key exports
+    - AuthConfigModule (JWT guards, decorators)
+    - DatabaseModule (Drizzle ORM, multi-tenant)
+    - LoggerModule (Winston-based logging)
+    - Base repositories for common patterns
+    ```
+
+    **Consumers:**
+    - vritti-api-nexus
+    - Future microservices
+  </Tab>
+</Tabs>
+
+### Backend Services
+
+<Card title="vritti-api-nexus" icon="server">
+  **Main API Gateway**
+
+  The primary backend handling all API requests. Implements multi-tenant database routing, authentication, and business logic.
+
+  ```
+  /vritti-api-nexus
+  ├── src/
+  │   ├── db/
+  │   │   ├── schema/         # Drizzle ORM schemas
+  │   │   └── migrations/     # Database migrations
+  │   ├── auth/               # Authentication module
+  │   ├── tenants/            # Tenant management
+  │   ├── users/              # User management
+  │   ├── onboarding/         # Registration flow
+  │   └── mfa/                # Multi-factor auth
+  └── drizzle.config.ts       # Migration config
+  ```
+
+  **Ports:** 3000 (API), 3000/api/docs (Swagger)
+</Card>
+
+### Frontend Applications
+
+<CardGroup cols={2}>
+  <Card title="vritti-web-nexus" icon="window">
+    **Host Application**
+
+    Module Federation host that loads remote micro-frontends.
+
+    ```
+    /vritti-web-nexus
+    ├── src/
+    │   ├── config/remotes.config.ts
+    │   ├── utils/RemoteRoutes.tsx
+    │   └── App.tsx
+    └── rsbuild.config.ts
+    ```
+
+    **Port:** 3012
+  </Card>
+  <Card title="vritti-auth" icon="fingerprint">
+    **Auth Micro-Frontend**
+
+    Handles login, signup, onboarding, and MFA flows.
+
+    ```
+    /vritti-auth
+    ├── src/
+    │   ├── pages/
+    │   ├── context/
+    │   └── routes.tsx
+    └── rsbuild.config.ts
+    ```
+
+    **Port:** 3001
+  </Card>
+  <Card title="vritti-landing" icon="globe">
+    **Marketing Site**
+
+    Next.js 15 application for public-facing pages.
+
+    ```
+    /vritti-landing
+    ├── app/
+    │   ├── page.tsx
+    │   └── layout.tsx
+    └── next.config.ts
+    ```
+
+    **Port:** 3002
+  </Card>
+  <Card title="slicingpie" icon="chart-pie">
+    **Admin Dashboard**
+
+    Internal admin interface for platform management.
+
+    ```
+    /slicingpie
+    ├── src/
+    │   └── ...
+    └── rsbuild.config.ts
+    ```
+
+    **Port:** 3003
+  </Card>
+</CardGroup>
+
+### Documentation
+
+<Card title="developer-docs" icon="book">
+  **This Documentation**
+
+  Mintlify-powered developer documentation with auto-generated API reference from OpenAPI.
+
+  ```
+  /developer-docs
+  ├── docs.json              # Mintlify config
+  ├── openapi.json           # Auto-generated API spec
+  ├── getting-started/       # Onboarding guides
+  ├── architecture/          # System architecture
+  ├── projects/              # Per-project docs
+  ├── features/              # Feature documentation
+  ├── api/                   # API reference pages
+  ├── guidelines/            # Development standards
+  └── operations/            # Deployment & ops
+  ```
+</Card>
+
+## VS Code Workspace
+
+The `vritti.code-workspace` file configures VS Code for multi-project development:
+
+```json
+{
+  "folders": [
+    { "path": "quantum-ui", "name": "quantum-ui" },
+    { "path": "api-sdk", "name": "api-sdk" },
+    { "path": "vritti-api-nexus", "name": "api-nexus" },
+    { "path": "vritti-web-nexus", "name": "web-nexus" },
+    { "path": "vritti-auth", "name": "auth" },
+    { "path": "vritti-landing", "name": "landing" },
+    { "path": "slicingpie", "name": "slicingpie" },
+    { "path": "developer-docs", "name": "docs" }
+  ],
+  "settings": {
+    "typescript.tsdk": "node_modules/typescript/lib"
+  }
+}
+```
+
+<Tip>
+  Open the workspace with: `code vritti.code-workspace`
+</Tip>
+
+## Package Management
+
+All projects use **pnpm** for dependency management:
+
+```bash
+# Install dependencies in a project
+cd vritti-api-nexus
+pnpm install
+
+# Link local packages during development
+# In quantum-ui:
+pnpm build && pnpm link --global
+
+# In consuming project:
+pnpm link --global @vritti/quantum-ui
+```
+
+## Build Configuration
+
+Each project uses appropriate build tools:
+
+| Project | Build Tool | Config File |
+|---------|------------|-------------|
+| quantum-ui | tsup | tsup.config.ts |
+| api-sdk | tsup | tsup.config.ts |
+| vritti-api-nexus | NestJS CLI | nest-cli.json |
+| vritti-web-nexus | RSBuild | rsbuild.config.ts |
+| vritti-auth | RSBuild | rsbuild.config.ts |
+| vritti-landing | Next.js | next.config.ts |
+| slicingpie | RSBuild | rsbuild.config.ts |
+
+## Environment Files
+
+Each project has its own environment configuration:
+
+```
+project/
+├── .env.example         # Template with all variables
+├── .env                  # Local development (git-ignored)
+├── .env.staging         # Staging environment
+└── .env.production      # Production environment
+```
+
+<Warning>
+  Never commit `.env` files. Use `.env.example` as the template and document all variables in the [Environment Variables](/getting-started/environment-variables) guide.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Project Relationships" icon="diagram-project" href="/architecture/project-relationships">
+    Understand dependencies between projects
+  </Card>
+  <Card title="Local Setup" icon="laptop-code" href="/getting-started/local-setup">
+    Set up your development environment
+  </Card>
+</CardGroup>

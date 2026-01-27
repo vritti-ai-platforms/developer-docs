@@ -1,0 +1,397 @@
+---
+title: "Drizzle Integration"
+description: "Multi-tenant database patterns with Drizzle ORM"
+---
+
+# Drizzle Integration
+
+The api-sdk provides multi-tenant database support with Drizzle ORM, including automatic tenant context and base repository classes.
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Request Flow                              │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  1. HTTP Request arrives                                     │
+│          ↓                                                   │
+│  2. TenantContextInterceptor extracts tenant                │
+│          ↓                                                   │
+│  3. PrimaryDatabaseService looks up tenant config           │
+│          ↓                                                   │
+│  4. TenantContextService stores tenant for request          │
+│          ↓                                                   │
+│  5. TenantDatabaseService provides tenant DB connection     │
+│          ↓                                                   │
+│  6. Repository executes query on tenant database            │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## DatabaseModule
+
+### Server Mode (API Gateway)
+
+For HTTP APIs that need tenant routing:
+
+```typescript
+import { DatabaseModule } from '@vritti/api-sdk';
+import * as schema from './db/schema';
+import * as relations from './db/relations';
+
+@Module({
+  imports: [
+    DatabaseModule.forServer({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        // Primary database (tenant registry)
+        primaryDb: {
+          host: config.get('DB_HOST'),
+          port: config.get('DB_PORT'),
+          username: config.get('DB_USER'),
+          password: config.get('DB_PASSWORD'),
+          database: config.get('DB_NAME'),
+          schema: 'public',
+          sslMode: 'disable',
+        },
+
+        // Drizzle schema and relations
+        drizzleSchema: schema,
+        drizzleRelations: relations,
+
+        // Connection settings
+        connectionCacheTTL: 300000,  // 5 minutes
+        maxConnections: 10,
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### Microservice Mode
+
+For message-based services (RabbitMQ workers):
+
+```typescript
+DatabaseModule.forMicroservice({
+  useFactory: () => ({
+    drizzleSchema: schema,
+    drizzleRelations: relations,
+    // No primary DB - tenant from messages
+  }),
+})
+```
+
+## Services
+
+### PrimaryDatabaseService
+
+Queries the primary database (tenant registry).
+
+```typescript
+import { PrimaryDatabaseService } from '@vritti/api-sdk';
+
+@Injectable()
+export class TenantService {
+  constructor(private primaryDb: PrimaryDatabaseService) {}
+
+  async getTenantBySubdomain(subdomain: string) {
+    return this.primaryDb.getTenantInfo(subdomain);
+  }
+
+  // Access Drizzle client directly
+  async customQuery() {
+    const db = this.primaryDb.drizzleClient;
+    return db.query.tenants.findMany({
+      where: eq(tenants.status, 'ACTIVE'),
+    });
+  }
+}
+```
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `getTenantInfo(identifier)` | Get tenant by ID or subdomain |
+| `clearTenantCache(identifier)` | Clear cached tenant config |
+| `clearAllCaches()` | Clear all tenant caches |
+| `drizzleClient` | Raw Drizzle client access |
+
+### TenantDatabaseService
+
+Provides request-scoped tenant database connections.
+
+```typescript
+import { TenantDatabaseService } from '@vritti/api-sdk';
+
+@Injectable()
+export class UserService {
+  constructor(private tenantDb: TenantDatabaseService) {}
+
+  async findUsers() {
+    const db = await this.tenantDb.getConnection();
+    return db.query.users.findMany();
+  }
+}
+```
+
+**Features:**
+- Connection pooling per tenant
+- Automatic cleanup of idle connections
+- Supports SHARED and DEDICATED schemas
+
+### TenantContextService
+
+Request-scoped tenant state.
+
+```typescript
+import { TenantContextService } from '@vritti/api-sdk';
+
+@Injectable()
+export class AuditService {
+  constructor(private tenantContext: TenantContextService) {}
+
+  async logAction(action: string) {
+    const tenant = this.tenantContext.getTenant();
+    console.log(`[${tenant.subdomain}] ${action}`);
+  }
+}
+```
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `setTenant(info)` | Set tenant (called by interceptor) |
+| `getTenant()` | Get tenant (throws if not set) |
+| `hasTenant()` | Check if tenant is set |
+| `getTenantIdSafe()` | Get tenant ID or null |
+| `getTenantSubdomainSafe()` | Get subdomain or null |
+| `clearTenant()` | Clear tenant context |
+
+## Base Repositories
+
+### PrimaryBaseRepository
+
+For querying the primary database (tenant registry, global data).
+
+```typescript
+import { PrimaryBaseRepository, PrimaryDatabaseService } from '@vritti/api-sdk';
+import { tenants } from './db/schema';
+
+@Injectable()
+export class TenantRepository extends PrimaryBaseRepository<typeof tenants> {
+  constructor(database: PrimaryDatabaseService) {
+    super(database, tenants);
+  }
+
+  // Custom methods
+  async findBySubdomain(subdomain: string) {
+    return this.model.findFirst({
+      where: { subdomain },
+    });
+  }
+}
+```
+
+### TenantBaseRepository
+
+For querying tenant-specific databases.
+
+```typescript
+import { TenantBaseRepository, TenantDatabaseService } from '@vritti/api-sdk';
+import { users } from './db/schema';
+
+@Injectable()
+export class UserRepository extends TenantBaseRepository<typeof users> {
+  constructor(database: TenantDatabaseService) {
+    super(database, users);
+  }
+
+  async findByEmail(email: string) {
+    return this.model.findFirst({
+      where: { email },
+      with: { profile: true },
+    });
+  }
+
+  async findActiveUsers() {
+    return this.model.findMany({
+      where: { status: 'ACTIVE' },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+}
+```
+
+### Base Repository Methods
+
+Both base classes provide these CRUD methods:
+
+```typescript
+// Create
+create(data: TInsert): Promise<TSelect>
+
+// Read
+findById(id: string): Promise<TSelect | undefined>
+findOne(where: WhereFilter): Promise<TSelect | undefined>
+findMany(options?): Promise<TSelect[]>
+count(where?): Promise<number>
+exists(where): Promise<boolean>
+
+// Update
+update(id: string, data: Partial<TInsert>): Promise<TSelect>
+updateMany(where: WhereFilter, data: Partial<TInsert>): Promise<{ count: number }>
+
+// Delete
+delete(id: string): Promise<TSelect>
+deleteMany(where: WhereFilter): Promise<{ count: number }>
+```
+
+### Accessing the Model
+
+For complex queries, access the Drizzle model directly:
+
+```typescript
+// Using relational API (recommended)
+async findWithRelations() {
+  return this.model.findMany({
+    where: { status: 'ACTIVE' },
+    with: {
+      profile: true,
+      orders: {
+        where: { status: 'PENDING' },
+        limit: 10,
+      },
+    },
+  });
+}
+
+// Using raw Drizzle client
+async complexQuery() {
+  const db = this.db;
+  return db
+    .select()
+    .from(users)
+    .leftJoin(orders, eq(users.id, orders.userId))
+    .where(and(
+      eq(users.status, 'ACTIVE'),
+      gt(orders.total, 100)
+    ));
+}
+```
+
+## Schema Registry
+
+For type-safe Drizzle clients, augment the schema registry:
+
+```typescript
+// src/db/schema-registry.ts
+declare module '@vritti/api-sdk' {
+  interface SchemaRegistry {
+    schema: typeof import('./schema');
+  }
+}
+
+export {};
+```
+
+This enables full TypeScript inference:
+
+```typescript
+// db.query.users is now fully typed
+const user = await db.query.users.findFirst({
+  where: { email },
+  with: { profile: true },
+});
+// user.profile is typed correctly
+```
+
+## Multi-Tenancy Patterns
+
+### Shared Schema
+
+Multiple tenants in the same database, different schemas:
+
+```
+Database: vritti_production
+├── tenant_acme (schema)
+│   ├── users
+│   └── orders
+├── tenant_globex (schema)
+│   ├── users
+│   └── orders
+```
+
+### Dedicated Database
+
+Each tenant has a separate database:
+
+```
+├── vritti_acme (database)
+│   └── public (schema)
+│       ├── users
+│       └── orders
+├── vritti_globex (database)
+│   └── public (schema)
+│       ├── users
+│       └── orders
+```
+
+### Configuration
+
+Tenant database config is stored in the primary database:
+
+```typescript
+// Primary DB - tenantDatabaseConfigs table
+{
+  tenantId: 'ten_123',
+  type: 'SHARED',         // or 'DEDICATED'
+  host: 'localhost',
+  port: 5432,
+  database: 'vritti_production',
+  schema: 'tenant_acme',
+  username: 'app_user',
+  password: 'encrypted...',
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use repositories over raw queries">
+    Base repositories provide consistent patterns and automatic tenant context. Only use raw Drizzle for complex queries.
+  </Accordion>
+
+  <Accordion title="Register schema for type safety">
+    Always augment `SchemaRegistry` to get full TypeScript inference in your queries.
+  </Accordion>
+
+  <Accordion title="Leverage connection caching">
+    The SDK caches tenant connections. Configure `connectionCacheTTL` based on your traffic patterns.
+  </Accordion>
+
+  <Accordion title="Handle tenant not found">
+    Always handle the case where tenant context isn't available:
+    ```typescript
+    if (!this.tenantContext.hasTenant()) {
+      throw new BadRequestException('Tenant context required');
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Drizzle Re-exports
+
+Use the SDK's re-exports for consistent versions:
+
+```typescript
+// Query operators
+import { eq, and, or, gt, lt, like } from '@vritti/api-sdk/drizzle-orm';
+
+// Schema definitions
+import { pgTable, text, timestamp, integer } from '@vritti/api-sdk/drizzle-pg-core';
+```

@@ -1,0 +1,460 @@
+---
+title: Data Flow Diagrams
+description: Request lifecycle and data flow visualization
+---
+
+# Data Flow Diagrams
+
+Detailed diagrams showing how requests flow through the system, from client to database and back.
+
+## Request Lifecycle Overview
+
+```mermaid
+flowchart TB
+    subgraph Client
+        Browser[Browser]
+        Request[HTTP Request]
+    end
+
+    subgraph Edge["Edge Layer"]
+        CDN[Cloudflare CDN]
+        WAF[WAF / DDoS Protection]
+    end
+
+    subgraph API["API Layer"]
+        Fastify[Fastify HTTP Server]
+        Middleware[Global Middleware]
+        Guards[Auth Guards]
+        Controller[Controller]
+        Service[Service Layer]
+        Repository[Repository]
+    end
+
+    subgraph Data["Data Layer"]
+        Drizzle[Drizzle ORM]
+        Pool[Connection Pool]
+        DB[(PostgreSQL)]
+    end
+
+    Browser --> Request
+    Request --> CDN
+    CDN --> WAF
+    WAF --> Fastify
+    Fastify --> Middleware
+    Middleware --> Guards
+    Guards --> Controller
+    Controller --> Service
+    Service --> Repository
+    Repository --> Drizzle
+    Drizzle --> Pool
+    Pool --> DB
+
+    DB --> Pool
+    Pool --> Drizzle
+    Drizzle --> Repository
+    Repository --> Service
+    Service --> Controller
+    Controller --> |Response| Browser
+```
+
+## NestJS Request Pipeline
+
+```mermaid
+flowchart LR
+    subgraph Incoming["Incoming Request"]
+        Req[HTTP Request]
+    end
+
+    subgraph Pipeline["NestJS Pipeline"]
+        GM[Global Middleware<br/>Logger, CORS]
+        GG[Global Guards<br/>VrittiAuthGuard]
+        GI[Global Interceptors<br/>TenantContext]
+        GP[Global Pipes<br/>ValidationPipe]
+        C[Controller<br/>Route Handler]
+        GF[Global Filters<br/>HttpExceptionFilter]
+    end
+
+    subgraph Outgoing["Outgoing Response"]
+        Res[HTTP Response]
+    end
+
+    Req --> GM
+    GM --> GG
+    GG --> GI
+    GI --> GP
+    GP --> C
+    C --> GI
+    GI --> Res
+
+    C -.->|Exception| GF
+    GF --> Res
+```
+
+## Authentication Data Flow
+
+```mermaid
+flowchart TB
+    subgraph Request["Incoming Request"]
+        Headers[Headers]
+        AT[Authorization: Bearer xxx]
+        CT[X-CSRF-Token: xxx]
+        Cookie[Cookie: _csrf, refreshToken]
+    end
+
+    subgraph Guards["Guard Layer"]
+        VrittiGuard[VrittiAuthGuard]
+        CSRFGuard[CSRF Guard]
+        CheckPublic{Is @Public?}
+        CheckOnboarding{Is @Onboarding?}
+    end
+
+    subgraph TokenValidation["Token Validation"]
+        ExtractJWT[Extract JWT from Header]
+        VerifyJWT[Verify JWT Signature]
+        HashToken[Hash Access Token]
+        LookupSession[Lookup Session in DB]
+        VerifyBinding[Verify Token Binding]
+        LoadUser[Load User Context]
+    end
+
+    subgraph Context["Request Context"]
+        UserID[userId]
+        SessionType[sessionType]
+        TenantID[tenantId]
+    end
+
+    Headers --> AT
+    Headers --> CT
+    Headers --> Cookie
+
+    AT --> VrittiGuard
+    CT --> CSRFGuard
+    Cookie --> CSRFGuard
+
+    VrittiGuard --> CheckPublic
+    CheckPublic -->|Yes| Context
+    CheckPublic -->|No| CheckOnboarding
+    CheckOnboarding -->|Check Session Type| ExtractJWT
+
+    ExtractJWT --> VerifyJWT
+    VerifyJWT --> HashToken
+    HashToken --> LookupSession
+    LookupSession --> VerifyBinding
+    VerifyBinding --> LoadUser
+    LoadUser --> Context
+```
+
+## Multi-Tenant Data Flow
+
+```mermaid
+flowchart TB
+    subgraph Request["Request with Tenant Header"]
+        Req[HTTP Request]
+        TenantHeader[X-Tenant-ID: acme-uuid]
+    end
+
+    subgraph Interceptor["TenantContextInterceptor"]
+        ExtractTenant[Extract Tenant ID]
+        QueryPrimary[Query Primary DB]
+        LoadConfig[Load Tenant Config]
+        SetContext[Set TenantContext]
+    end
+
+    subgraph Context["TenantContextService"]
+        TenantInfo[Tenant Info<br/>id, subdomain, dbType]
+        DBConfig[Database Config<br/>host, port, credentials]
+    end
+
+    subgraph DatabaseService["TenantDatabaseService"]
+        CheckCache{Connection<br/>Cached?}
+        CreateConn[Create New Pool]
+        GetConn[Get Cached Pool]
+        DrizzleClient[Return Drizzle Client]
+    end
+
+    subgraph Repository["Repository Layer"]
+        Query[Execute Query]
+        TenantDB[(Tenant Database)]
+    end
+
+    Req --> TenantHeader
+    TenantHeader --> ExtractTenant
+    ExtractTenant --> QueryPrimary
+    QueryPrimary --> LoadConfig
+    LoadConfig --> SetContext
+
+    SetContext --> TenantInfo
+    SetContext --> DBConfig
+
+    TenantInfo --> CheckCache
+    DBConfig --> CheckCache
+
+    CheckCache -->|Yes| GetConn
+    CheckCache -->|No| CreateConn
+    CreateConn --> DrizzleClient
+    GetConn --> DrizzleClient
+
+    DrizzleClient --> Query
+    Query --> TenantDB
+```
+
+## API Response Flow
+
+```mermaid
+flowchart TB
+    subgraph Service["Service Layer"]
+        BusinessLogic[Business Logic]
+        Result[Result Data]
+    end
+
+    subgraph Controller["Controller"]
+        Handler[Route Handler]
+        ReturnValue[Return Value]
+    end
+
+    subgraph Serialization["Response Serialization"]
+        Interceptor[Response Interceptor]
+        Transform[Class Transformer]
+        Sanitize[Remove Sensitive Fields]
+    end
+
+    subgraph Response["HTTP Response"]
+        Status[HTTP Status Code]
+        Headers[Response Headers]
+        Body[JSON Body]
+    end
+
+    BusinessLogic --> Result
+    Result --> Handler
+    Handler --> ReturnValue
+    ReturnValue --> Interceptor
+    Interceptor --> Transform
+    Transform --> Sanitize
+    Sanitize --> Status
+    Sanitize --> Headers
+    Sanitize --> Body
+```
+
+## Error Handling Flow
+
+```mermaid
+flowchart TB
+    subgraph Exception["Exception Thrown"]
+        Service[Service Layer]
+        Validation[Validation Error]
+        Auth[Auth Error]
+        NotFound[Not Found]
+        Business[Business Logic Error]
+    end
+
+    subgraph Filter["HttpExceptionFilter"]
+        CatchException[Catch Exception]
+        ExtractDetails[Extract Error Details]
+        FormatRFC7807[Format as RFC 7807]
+        LogError[Log Error]
+    end
+
+    subgraph Response["Error Response"]
+        StatusCode[HTTP Status]
+        ProblemJSON[application/problem+json]
+        ErrorBody["{ type, title, status, detail, instance }"]
+    end
+
+    Service --> Business
+    Service --> Validation
+    Service --> Auth
+    Service --> NotFound
+
+    Validation --> CatchException
+    Auth --> CatchException
+    NotFound --> CatchException
+    Business --> CatchException
+
+    CatchException --> ExtractDetails
+    ExtractDetails --> FormatRFC7807
+    FormatRFC7807 --> LogError
+    LogError --> StatusCode
+    LogError --> ProblemJSON
+    ProblemJSON --> ErrorBody
+```
+
+## Database Query Flow (Drizzle ORM)
+
+```mermaid
+flowchart LR
+    subgraph Repository["Repository"]
+        Method[findByEmail]
+        BuildQuery[Build Query]
+    end
+
+    subgraph Drizzle["Drizzle ORM"]
+        QueryBuilder[Query Builder]
+        SQL[Generate SQL]
+        Params[Parameterized Query]
+    end
+
+    subgraph Pool["Connection Pool"]
+        GetConn[Acquire Connection]
+        Execute[Execute Query]
+        ReleaseConn[Release Connection]
+    end
+
+    subgraph Database["PostgreSQL"]
+        Parse[Parse SQL]
+        Plan[Query Plan]
+        Exec[Execute]
+        Return[Return Rows]
+    end
+
+    subgraph Result["Result"]
+        Map[Map to Types]
+        TypedResult[Typed Result]
+    end
+
+    Method --> BuildQuery
+    BuildQuery --> QueryBuilder
+    QueryBuilder --> SQL
+    SQL --> Params
+    Params --> GetConn
+    GetConn --> Execute
+    Execute --> Parse
+    Parse --> Plan
+    Plan --> Exec
+    Exec --> Return
+    Return --> ReleaseConn
+    ReleaseConn --> Map
+    Map --> TypedResult
+```
+
+## Module Federation Data Flow
+
+```mermaid
+flowchart TB
+    subgraph Host["Host App (vritti-web-nexus)"]
+        HostRouter[React Router]
+        RemoteLoader[Remote Loader]
+        SharedDeps[Shared Dependencies]
+    end
+
+    subgraph Network["Network"]
+        FetchManifest[Fetch remoteEntry.js]
+        FetchChunks[Fetch Module Chunks]
+    end
+
+    subgraph Remote["Remote App (vritti-auth)"]
+        RemoteEntry[remoteEntry.js]
+        AuthModule[./routes Module]
+        AuthRoutes[authRoutes Export]
+    end
+
+    subgraph Render["Rendering"]
+        CreateRoutes[Create Route Elements]
+        RenderAuth[Render Auth Components]
+    end
+
+    HostRouter --> RemoteLoader
+    RemoteLoader --> FetchManifest
+    FetchManifest --> RemoteEntry
+    RemoteEntry --> AuthModule
+    AuthModule --> FetchChunks
+    FetchChunks --> AuthRoutes
+    AuthRoutes --> CreateRoutes
+    CreateRoutes --> SharedDeps
+    SharedDeps --> RenderAuth
+```
+
+## State Management Flow (TanStack Query)
+
+```mermaid
+flowchart TB
+    subgraph Component["React Component"]
+        Hook[useUser Hook]
+        Render[Render UI]
+    end
+
+    subgraph TanStack["TanStack Query"]
+        QueryClient[QueryClient]
+        Cache[Query Cache]
+        CheckCache{Cache Valid?}
+        Fetcher[Query Function]
+    end
+
+    subgraph API["API Layer"]
+        Fetch[fetch /auth/me]
+        Response[JSON Response]
+    end
+
+    subgraph State["Component State"]
+        Loading[isLoading: true]
+        Data[data: User]
+        Error[error: Error]
+    end
+
+    Hook --> QueryClient
+    QueryClient --> CheckCache
+
+    CheckCache -->|Yes| Cache
+    Cache --> Data
+    Data --> Render
+
+    CheckCache -->|No| Loading
+    Loading --> Render
+    Loading --> Fetcher
+    Fetcher --> Fetch
+    Fetch --> Response
+    Response --> Cache
+    Response --> Data
+    Response -.->|On Error| Error
+    Error --> Render
+```
+
+## SSE (Server-Sent Events) Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as API Nexus
+    participant Service as Event Service
+    participant DB as Database
+
+    Client->>API: GET /events/subscribe
+    Note over Client,API: Authorization: Bearer {token}
+
+    API->>API: Validate Auth
+    API->>Client: HTTP 200 (text/event-stream)
+
+    loop Event Loop
+        Service->>DB: Poll for changes
+        DB-->>Service: New data
+        Service->>API: Emit event
+        API->>Client: data: {"type": "update", ...}
+    end
+
+    Note over Client: Connection kept alive
+
+    Client->>API: Close connection
+    API->>Service: Cleanup subscription
+```
+
+## Data Flow Summary
+
+| Flow | Description | Key Components |
+|------|-------------|----------------|
+| **Request Pipeline** | Middleware → Guards → Interceptors → Pipes → Controller | NestJS lifecycle hooks |
+| **Auth Validation** | JWT → Session lookup → Token binding → User context | VrittiAuthGuard |
+| **Multi-Tenant** | Tenant header → Config lookup → Dynamic connection | TenantDatabaseService |
+| **Database Query** | Repository → Drizzle → Connection Pool → PostgreSQL | Drizzle ORM |
+| **Error Handling** | Exception → Filter → RFC 7807 response | HttpExceptionFilter |
+| **Module Federation** | Host → Remote manifest → Module load → Shared deps | RSBuild + MF |
+| **State Management** | Component → Query hook → Cache → API fetch | TanStack Query |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="System Architecture" icon="sitemap" href="/architecture/diagrams/system-architecture">
+    Overall system overview
+  </Card>
+  <Card title="Auth Flow Diagram" icon="key" href="/architecture/diagrams/auth-flow">
+    Authentication sequences
+  </Card>
+</CardGroup>

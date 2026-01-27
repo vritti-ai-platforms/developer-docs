@@ -1,0 +1,243 @@
+---
+title: "Ecosystem Overview"
+description: "Understanding all 7 projects in the Vritti ecosystem"
+---
+
+# Ecosystem Overview
+
+The Vritti ecosystem consists of 7 projects that work together to deliver a multi-tenant SaaS platform.
+
+## Project Summary
+
+| Project | Type | Purpose | Status |
+|---------|------|---------|--------|
+| **@vritti/quantum-ui** | NPM Package | Component library | Published |
+| **@vritti/api-sdk** | NPM Package | Backend SDK | Published |
+| **vritti-api-nexus** | Backend | API Gateway | Private |
+| **vritti-web-nexus** | Frontend | SaaS Dashboard | Private |
+| **vritti-auth** | Frontend | Auth Micro-frontend | Private |
+| **vritti-landing** | Frontend | Marketing Site | Private |
+| **slicingpie** | Frontend | Equity Management | Independent |
+
+---
+
+## Shared Packages
+
+### @vritti/quantum-ui
+
+<Card title="Component Library" icon="cube">
+Modern, TypeScript-first React component library built on Radix UI and Tailwind CSS v4.
+</Card>
+
+**Version**: 0.2.7
+**Repository**: [github.com/vritti-hub/quantum-ui](https://github.com/vritti-hub/quantum-ui)
+
+**Key Features**:
+- 17+ accessible components (Button, Card, TextField, Form, etc.)
+- Dark/light mode with semantic color tokens
+- react-hook-form integration with API error mapping
+- Tree-shakeable imports
+
+**Used By**: vritti-web-nexus, vritti-auth, vritti-landing
+
+```bash
+pnpm add @vritti/quantum-ui
+```
+
+[Full Documentation →](/projects/quantum-ui/overview)
+
+---
+
+### @vritti/api-sdk
+
+<Card title="Backend SDK" icon="server">
+NestJS SDK for building multi-tenant applications with authentication, database routing, and logging.
+</Card>
+
+**Version**: 0.1.7
+**Scope**: Published NPM Package
+
+**Key Features**:
+- Multi-tenant database routing (Drizzle ORM)
+- JWT authentication with decorators (`@Public()`, `@Onboarding()`)
+- Request-scoped tenant context
+- Winston logging with correlation IDs
+- RFC 7807 error handling
+
+**Used By**: vritti-api-nexus
+
+```bash
+pnpm add @vritti/api-sdk
+```
+
+[Full Documentation →](/projects/api-sdk/overview)
+
+---
+
+## Backend
+
+### vritti-api-nexus
+
+<Card title="API Gateway" icon="network-wired">
+Main backend API serving all frontend applications with authentication, multi-tenancy, and business logic.
+</Card>
+
+**Stack**: NestJS 11, Fastify, Drizzle ORM, PostgreSQL
+
+**Key Features**:
+- RESTful API with OpenAPI documentation
+- Multi-tenant data isolation
+- Authentication (JWT, OAuth, Passkeys, MFA)
+- 5-step onboarding flow
+- Email/SMS/WhatsApp integrations
+
+**Endpoints**:
+- `/cloud-api/auth/*` - Authentication
+- `/cloud-api/onboarding/*` - User onboarding
+- `/cloud-api/tenants/*` - Tenant management
+- `/cloud-api/users/*` - User management
+
+[Full Documentation →](/projects/api-nexus/overview)
+
+---
+
+## Frontend Applications
+
+### vritti-web-nexus
+
+<Card title="SaaS Dashboard" icon="browser">
+Main host application for the SaaS platform using Module Federation.
+</Card>
+
+**Stack**: React 19, Rsbuild, Module Federation, TanStack Query
+
+**Key Features**:
+- Module Federation HOST
+- Dynamically loads vritti-auth as remote
+- Server state management with React Query
+- SSL support for local development
+
+**Local URL**: `https://local.vrittiai.com:3000`
+
+[Full Documentation →](/projects/web-nexus/overview)
+
+---
+
+### vritti-auth
+
+<Card title="Auth Micro-frontend" icon="lock">
+Authentication and onboarding micro-frontend loaded into vritti-web-nexus.
+</Card>
+
+**Stack**: React 19, Rsbuild, Module Federation, SimpleWebAuthn
+
+**Key Features**:
+- Module Federation REMOTE
+- Login, signup, password reset flows
+- Passwordless authentication (WebAuthn)
+- MFA setup (TOTP, SMS)
+- Consumed dynamically by vritti-web-nexus
+
+**Pages**:
+- `/auth/login` - User login
+- `/auth/signup` - New user registration
+- `/auth/mfa` - Multi-factor authentication
+- `/onboarding/*` - Onboarding steps
+
+[Full Documentation →](/projects/auth/overview)
+
+---
+
+### vritti-landing
+
+<Card title="Marketing Site" icon="globe">
+Public-facing marketing and landing pages.
+</Card>
+
+**Stack**: Next.js 15, Material-UI, Emotion
+
+**Key Features**:
+- Static site generation (SSG)
+- SEO optimized with next-seo
+- Dark/light mode
+- Contact forms
+
+**URL**: `https://vritti.cloud` (production)
+
+[Full Documentation →](/projects/landing/overview)
+
+---
+
+## Independent Application
+
+### slicingpie
+
+<Card title="Equity Management" icon="chart-pie">
+Standalone application for equity tracking and cap table management.
+</Card>
+
+**Stack**: React 19, Vite, Supabase, Recharts
+
+**Key Features**:
+- Independent from main Vritti platform
+- Uses Supabase as backend (not api-nexus)
+- Cap table management
+- Equity calculations
+- Data visualization
+
+<Warning>
+slicingpie uses a different tech stack (Supabase, shadcn/ui) and is not integrated with the main Vritti ecosystem.
+</Warning>
+
+[Full Documentation →](/projects/slicingpie/overview)
+
+---
+
+## Dependency Graph
+
+```
+                    ┌──────────────────┐
+                    │  @vritti/quantum-ui  │
+                    │   (Component Lib)   │
+                    └─────────┬──────────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          │                   │                   │
+          ▼                   ▼                   ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│ vritti-web-nexus │  │   vritti-auth   │  │ vritti-landing  │
+│   (MF Host)     │◄─┤  (MF Remote)    │  │   (Next.js)     │
+└────────┬────────┘  └────────┬────────┘  └─────────────────┘
+         │                    │
+         │    ┌───────────────┘
+         │    │
+         ▼    ▼
+┌─────────────────────┐
+│  vritti-api-nexus   │
+│   (API Gateway)     │
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│   @vritti/api-sdk   │
+│   (Backend SDK)     │
+└─────────────────────┘
+```
+
+## Module Federation Architecture
+
+vritti-web-nexus acts as the HOST application that dynamically loads vritti-auth as a REMOTE:
+
+```typescript
+// vritti-web-nexus (HOST)
+const AuthModule = await import('vritti-auth/AuthRoutes');
+
+// vritti-auth (REMOTE)
+export { AuthRoutes } from './routes';
+```
+
+This enables:
+- Independent deployments of auth features
+- Shared dependencies (React, quantum-ui)
+- Lazy loading of auth module
+- Separate CI/CD pipelines

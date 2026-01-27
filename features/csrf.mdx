@@ -308,10 +308,10 @@ export class HealthController {
   - Token mismatch (stale token)
 
   **Solution:**
-  1. Ensure `withCredentials: true` in axios config
-  2. Check if `_csrf` cookie exists in browser DevTools
-  3. Call `/csrf/token` to get a fresh token
-  4. Verify CORS allows `X-CSRF-Token` header
+  - Ensure `withCredentials: true` in axios config
+  - Check if `_csrf` cookie exists in browser DevTools
+  - Call `/csrf/token` to get a fresh token
+  - Verify CORS allows `X-CSRF-Token` header
 </Accordion>
 
 <Accordion title="CSRF protection plugin not found">
@@ -346,9 +346,19 @@ export class HealthController {
   ```
 </Accordion>
 
-## Related Concepts
+## Related Documentation
 
-- **VrittiAuthGuard** - JWT authentication guard (works alongside CSRF)
-- **@Public() Decorator** - Bypasses both auth and CSRF checks
-- **OAuth State Tokens** - Uses same HMAC key for state signing
-- **@fastify/cookie** - Required dependency for CSRF cookie storage
+<CardGroup cols={2}>
+  <Card title="JWT Sessions" icon="key" href="/features/auth/jwt-sessions">
+    Authentication guard works alongside CSRF
+  </Card>
+  <Card title="Signup & Login" icon="right-to-bracket" href="/features/auth/signup-login">
+    Auth flows protected by CSRF
+  </Card>
+  <Card title="Guards & Decorators" icon="shield" href="/architecture/backend/guards-decorators">
+    @Public() bypasses CSRF checks
+  </Card>
+  <Card title="OAuth Overview" icon="key" href="/features/oauth/overview">
+    Uses same HMAC key for state signing
+  </Card>
+</CardGroup>

@@ -1,0 +1,262 @@
+---
+title: "Design Tokens"
+description: "Colors, typography, spacing, and other design tokens in quantum-ui"
+---
+
+# Design Tokens
+
+quantum-ui uses CSS custom properties (design tokens) for consistent styling across all components. These tokens are defined in `lib/index.css` and integrate seamlessly with Tailwind CSS v4.
+
+## Color System
+
+quantum-ui uses the **OKLch color space** for perceptually-uniform colors that look consistent across different hues and brightness levels.
+
+### Semantic Colors
+
+| Token | Light Mode | Dark Mode | Usage |
+|-------|------------|-----------|-------|
+| `--primary` | Blue | Blue | Primary actions, links |
+| `--secondary` | Gray | Gray | Secondary actions |
+| `--destructive` | Red | Red | Errors, delete actions |
+| `--warning` | Yellow | Yellow | Warnings, caution |
+| `--success` | Green | Green | Success states |
+| `--info` | Blue | Blue | Information |
+| `--muted` | Light gray | Dark gray | Subtle backgrounds |
+| `--accent` | Light gray | Dark gray | Accent highlights |
+
+### Surface Colors
+
+| Token | Description |
+|-------|-------------|
+| `--background` | Page background |
+| `--foreground` | Default text color |
+| `--card` | Card backgrounds |
+| `--card-foreground` | Card text color |
+| `--popover` | Popover backgrounds |
+| `--popover-foreground` | Popover text color |
+
+### UI Colors
+
+| Token | Description |
+|-------|-------------|
+| `--border` | Border color |
+| `--input` | Input border color |
+| `--ring` | Focus ring color |
+
+### Usage with Tailwind
+
+All tokens are available as Tailwind classes:
+
+```tsx
+// Background colors
+<div className="bg-primary" />
+<div className="bg-destructive" />
+<div className="bg-success" />
+
+// Text colors
+<span className="text-primary" />
+<span className="text-muted-foreground" />
+
+// With opacity
+<div className="bg-success/15" />
+<div className="bg-destructive/10" />
+
+// Border colors
+<div className="border border-border" />
+<div className="ring-2 ring-ring" />
+```
+
+<Warning>
+**Never hardcode colors.** Always use design tokens:
+
+```tsx
+// CORRECT
+<div className="text-success bg-destructive/15" />
+
+// WRONG
+<div className="text-green-600" style={{ color: '#16a34a' }} />
+```
+</Warning>
+
+## Typography
+
+### Font Families
+
+| Token | Font Stack | Usage |
+|-------|-----------|-------|
+| `--font-sans` | IBM Plex Sans | Body text, UI |
+| `--font-serif` | Playfair Display | Headings, display |
+| `--font-mono` | JetBrains Mono | Code, technical |
+
+```tsx
+<p className="font-sans">Body text with IBM Plex Sans</p>
+<h1 className="font-serif">Display heading</h1>
+<code className="font-mono">const code = true;</code>
+```
+
+### Font Sizes
+
+Tailwind's default type scale is used:
+
+| Class | Size |
+|-------|------|
+| `text-xs` | 0.75rem (12px) |
+| `text-sm` | 0.875rem (14px) |
+| `text-base` | 1rem (16px) |
+| `text-lg` | 1.125rem (18px) |
+| `text-xl` | 1.25rem (20px) |
+| `text-2xl` | 1.5rem (24px) |
+| `text-3xl` | 1.875rem (30px) |
+| `text-4xl` | 2.25rem (36px) |
+
+## Spacing
+
+| Token | Value |
+|-------|-------|
+| `--spacing` | 0.25rem (4px) |
+
+Tailwind's spacing scale is based on this unit:
+
+```tsx
+<div className="p-4" />    // 1rem (16px)
+<div className="mt-2" />   // 0.5rem (8px)
+<div className="gap-6" />  // 1.5rem (24px)
+```
+
+## Border Radius
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--radius` | 0.75rem | Default radius |
+| `--radius-sm` | calc(var(--radius) - 4px) | Small elements |
+| `--radius-md` | calc(var(--radius) - 2px) | Medium elements |
+| `--radius-lg` | var(--radius) | Large elements |
+| `--radius-xl` | calc(var(--radius) + 4px) | Extra large |
+
+```tsx
+<div className="rounded" />      // Default
+<div className="rounded-sm" />   // Small
+<div className="rounded-lg" />   // Large
+<div className="rounded-full" /> // Circular
+```
+
+## Shadows
+
+Available shadow tokens from smallest to largest:
+
+| Token | Usage |
+|-------|-------|
+| `--shadow-2xs` | Subtle depth |
+| `--shadow-xs` | Input focus |
+| `--shadow-sm` | Cards, buttons |
+| `--shadow` | Default shadow |
+| `--shadow-md` | Dropdowns |
+| `--shadow-lg` | Modals |
+| `--shadow-xl` | Popovers |
+| `--shadow-2xl` | Dialogs |
+
+```tsx
+<div className="shadow-sm" />
+<div className="shadow-md" />
+<div className="shadow-lg" />
+```
+
+## Dark Mode
+
+quantum-ui supports automatic dark mode via the `.dark` class on the root element. All tokens have dark mode variants that activate automatically.
+
+### Theme Toggle Implementation
+
+```tsx
+import { ThemeToggle } from '@vritti/quantum-ui/ThemeToggle';
+
+function App() {
+  return (
+    <div>
+      <ThemeToggle />
+      {/* App content */}
+    </div>
+  );
+}
+```
+
+### Manual Theme Control
+
+```ts
+// Check current theme
+const isDark = document.documentElement.classList.contains('dark');
+
+// Set dark mode
+document.documentElement.classList.add('dark');
+
+// Set light mode
+document.documentElement.classList.remove('dark');
+
+// Toggle
+document.documentElement.classList.toggle('dark');
+```
+
+## Chart Colors
+
+Five chart-specific colors for data visualization:
+
+| Token | Tailwind Class |
+|-------|---------------|
+| `--chart-1` | `fill-chart-1` |
+| `--chart-2` | `fill-chart-2` |
+| `--chart-3` | `fill-chart-3` |
+| `--chart-4` | `fill-chart-4` |
+| `--chart-5` | `fill-chart-5` |
+
+## Sidebar Colors
+
+Dedicated tokens for sidebar components:
+
+| Token | Description |
+|-------|-------------|
+| `--sidebar-background` | Sidebar background |
+| `--sidebar-foreground` | Sidebar text |
+| `--sidebar-primary` | Sidebar primary accent |
+| `--sidebar-primary-foreground` | Sidebar primary text |
+| `--sidebar-accent` | Sidebar accent |
+| `--sidebar-accent-foreground` | Sidebar accent text |
+| `--sidebar-border` | Sidebar borders |
+| `--sidebar-ring` | Sidebar focus ring |
+
+## Using Tokens in Custom Components
+
+Access tokens directly in custom components:
+
+```tsx
+// Using CSS variables
+const CustomComponent = () => (
+  <div style={{
+    backgroundColor: 'var(--primary)',
+    color: 'var(--primary-foreground)'
+  }}>
+    Custom styled content
+  </div>
+);
+
+// Using Tailwind (preferred)
+const CustomComponent = () => (
+  <div className="bg-primary text-primary-foreground">
+    Custom styled content
+  </div>
+);
+```
+
+## CSS Import
+
+Import the token stylesheet in your app:
+
+```tsx
+// main.tsx or App.tsx
+import '@vritti/quantum-ui/index.css';
+```
+
+This single import includes:
+- All design tokens (colors, typography, spacing)
+- Component base styles
+- Tailwind CSS utilities
+- Dark mode variants

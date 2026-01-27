@@ -1,0 +1,344 @@
+---
+title: "Auth Module"
+description: "JWT authentication, guards, and decorators in api-sdk"
+---
+
+# Auth Module
+
+The auth module provides JWT authentication with guards, decorators, and utilities for securing NestJS applications.
+
+## AuthConfigModule
+
+Configures JWT verification and registers the global auth guard.
+
+```typescript
+import { AuthConfigModule } from '@vritti/api-sdk';
+
+@Module({
+  imports: [
+    AuthConfigModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get('JWT_SECRET'),
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `secret` | `string` | JWT signing secret (required) |
+
+## Decorators
+
+### @Public()
+
+Bypasses authentication entirely. Use for health checks, public APIs.
+
+```typescript
+import { Public } from '@vritti/api-sdk';
+
+@Controller('health')
+export class HealthController {
+  @Public()
+  @Get()
+  check() {
+    return { status: 'ok' };
+  }
+}
+```
+
+### @Onboarding()
+
+Requires an onboarding token (`type: 'onboarding'`). Skips tenant validation.
+
+```typescript
+import { Onboarding } from '@vritti/api-sdk';
+
+@Controller('onboarding')
+export class OnboardingController {
+  @Onboarding()
+  @Post('verify-email')
+  verifyEmail(@Body() dto: VerifyEmailDto, @UserId() userId: string) {
+    // User is partially authenticated (onboarding token)
+  }
+}
+```
+
+### @UserId()
+
+Extracts the authenticated user ID from the JWT.
+
+```typescript
+import { UserId } from '@vritti/api-sdk';
+
+@Get('profile')
+getProfile(@UserId() userId: string) {
+  return this.userService.findById(userId);
+}
+```
+
+### @SkipCsrf()
+
+Skips CSRF validation. Use for webhook endpoints.
+
+```typescript
+import { SkipCsrf } from '@vritti/api-sdk';
+
+@Controller('webhooks')
+export class WebhookController {
+  @SkipCsrf()
+  @Post('stripe')
+  handleStripe(@Body() payload: any) {
+    // No CSRF check for external webhooks
+  }
+}
+```
+
+### @Tenant()
+
+Injects the tenant info for the current request.
+
+```typescript
+import { Tenant } from '@vritti/api-sdk';
+import type { TenantInfo } from '@vritti/api-sdk';
+
+@Get('data')
+getData(@Tenant() tenant: TenantInfo) {
+  console.log(tenant.id, tenant.subdomain);
+}
+```
+
+## Guards
+
+### VrittiAuthGuard
+
+The main authentication guard. Automatically applied globally.
+
+**Validation Flow:**
+
+1. Check `@Public()` → skip all validation
+2. Check `@Onboarding()` → require onboarding token, skip tenant
+3. Regular endpoints → require access token
+4. Validate JWT signature, expiry, and `nbf` claim
+5. Optional: Validate refresh token binding
+6. CSRF validation for POST/PUT/DELETE/PATCH
+7. Extract and validate tenant from headers
+
+**Error Responses:**
+
+| Status | Condition |
+|--------|-----------|
+| 401 | Invalid/expired token |
+| 401 | Tenant not found or inactive |
+| 403 | CSRF token invalid |
+
+### SseAuthGuard
+
+For Server-Sent Events endpoints where token is passed via query param.
+
+```typescript
+import { SseAuthGuard, Public } from '@vritti/api-sdk';
+
+@Controller('events')
+export class EventsController {
+  @Public()  // Bypass global guard
+  @UseGuards(SseAuthGuard)  // Use SSE guard
+  @Sse('stream')
+  stream(@Query('token') token: string) {
+    // Token validated from ?token=<jwt>
+    return this.eventsService.getStream();
+  }
+}
+```
+
+**Differences from VrittiAuthGuard:**
+- Token from query param (`?token=<jwt>`)
+- Sets CORS headers first
+- No CSRF validation
+
+## Token Types
+
+### Access Token
+
+Short-lived token for API requests.
+
+```typescript
+{
+  sub: 'usr_123',           // User ID
+  type: 'access',           // Token type
+  tenantId: 'ten_456',      // Tenant ID
+  email: 'user@example.com',
+  iat: 1234567890,
+  exp: 1234568790,          // 15 minutes
+  nbf: 1234567890
+}
+```
+
+### Refresh Token
+
+Long-lived token stored in httpOnly cookie.
+
+```typescript
+{
+  sub: 'usr_123',
+  type: 'refresh',
+  jti: 'unique-token-id',   // For revocation
+  iat: 1234567890,
+  exp: 1237159890           // 30 days
+}
+```
+
+### Onboarding Token
+
+Limited token for onboarding flow.
+
+```typescript
+{
+  sub: 'usr_123',
+  type: 'onboarding',
+  email: 'user@example.com',
+  iat: 1234567890,
+  exp: 1234654290           // 24 hours
+}
+```
+
+## Token Utilities
+
+### hashToken
+
+Creates a SHA-256 hash of a token for storage.
+
+```typescript
+import { hashToken } from '@vritti/api-sdk';
+
+const hash = hashToken(refreshToken);
+// Store hash in database for token binding validation
+```
+
+### verifyTokenHash
+
+Compares a token against its hash (constant-time).
+
+```typescript
+import { verifyTokenHash } from '@vritti/api-sdk';
+
+const isValid = verifyTokenHash(refreshToken, storedHash);
+```
+
+## Token Binding
+
+Token binding links refresh tokens to access tokens for additional security.
+
+### How it Works
+
+1. On login, hash the refresh token
+2. Store hash in user's session record
+3. Include hash in access token payload
+4. On protected requests, verify access token's hash matches current refresh token
+
+### Implementation
+
+```typescript
+// On login
+const refreshToken = generateRefreshToken();
+const accessToken = jwt.sign({
+  sub: userId,
+  type: 'access',
+  rtHash: hashToken(refreshToken), // Binding
+});
+
+// In guard (automatic with validateTokenBinding: true)
+const storedHash = await getStoredRefreshTokenHash(userId);
+if (payload.rtHash !== storedHash) {
+  throw new UnauthorizedException('Token binding mismatch');
+}
+```
+
+## CSRF Protection
+
+CSRF validation is automatic for state-changing requests (POST, PUT, DELETE, PATCH).
+
+### Token Flow
+
+1. Client fetches CSRF token: `GET /csrf/token`
+2. Client includes token in header: `x-csrf-token: <token>`
+3. Guard validates token on mutations
+
+### Skip CSRF
+
+Use `@SkipCsrf()` for webhooks:
+
+```typescript
+@SkipCsrf()
+@Post('webhook/payment')
+handlePayment() { }
+```
+
+## Configuration
+
+Configure auth behavior via `configureApiSdk`:
+
+```typescript
+configureApiSdk({
+  jwt: {
+    accessTokenExpiry: '15m',
+    refreshTokenExpiry: '30d',
+    onboardingTokenExpiry: '24h',
+    validateTokenBinding: true,  // Enable token binding
+  },
+  guard: {
+    tenantHeaderName: 'x-tenant-id',
+    authHeaderName: 'authorization',
+    tokenPrefix: 'Bearer',
+  },
+});
+```
+
+## Error Handling
+
+Auth errors follow RFC 7807:
+
+```typescript
+// 401 Unauthorized
+{
+  type: 'https://vritti.cloud/errors/unauthorized',
+  title: 'Unauthorized',
+  status: 401,
+  detail: 'Token has expired',
+  instance: '/api/users/profile'
+}
+
+// 403 Forbidden
+{
+  type: 'https://vritti.cloud/errors/forbidden',
+  title: 'Forbidden',
+  status: 403,
+  detail: 'Invalid CSRF token',
+  instance: '/api/users/update'
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use @Public() sparingly">
+    Only use for truly public endpoints. Health checks, CSRF token endpoint, and public content are valid use cases.
+  </Accordion>
+
+  <Accordion title="Always validate tenant context">
+    For multi-tenant operations, ensure tenant context is validated. The guard does this automatically unless using `@Onboarding()`.
+  </Accordion>
+
+  <Accordion title="Enable token binding in production">
+    Token binding adds security by linking access and refresh tokens. Enable with `validateTokenBinding: true`.
+  </Accordion>
+
+  <Accordion title="Use @SkipCsrf() only for webhooks">
+    External services (Stripe, Twilio) can't provide CSRF tokens. Use webhook secrets for validation instead.
+  </Accordion>
+</AccordionGroup>

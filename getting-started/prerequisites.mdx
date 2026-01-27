@@ -1,0 +1,300 @@
+---
+title: "Prerequisites"
+description: "Required tools and software for Vritti development"
+---
+
+# Prerequisites
+
+Before setting up your development environment, ensure you have the following tools installed.
+
+## Required Software
+
+### Node.js 22+
+
+We use Node.js 22 LTS for all projects.
+
+<Tabs>
+  <Tab title="macOS (Homebrew)">
+    ```bash
+    brew install node@22
+    ```
+  </Tab>
+  <Tab title="nvm">
+    ```bash
+    nvm install 22
+    nvm use 22
+    ```
+  </Tab>
+  <Tab title="fnm">
+    ```bash
+    fnm install 22
+    fnm use 22
+    ```
+  </Tab>
+</Tabs>
+
+Verify installation:
+```bash
+node --version  # Should be v22.x.x
+```
+
+### pnpm 9+
+
+We use pnpm as our package manager for all projects.
+
+```bash
+# Install via corepack (recommended)
+corepack enable
+corepack prepare pnpm@latest --activate
+
+# Or install directly
+npm install -g pnpm
+```
+
+Verify installation:
+```bash
+pnpm --version  # Should be 9.x.x
+```
+
+### Docker & Docker Compose
+
+Required for running PostgreSQL and other services locally.
+
+<Tabs>
+  <Tab title="macOS">
+    Install [Docker Desktop for Mac](https://docs.docker.com/desktop/install/mac-install/)
+  </Tab>
+  <Tab title="Linux">
+    ```bash
+    # Install Docker
+    curl -fsSL https://get.docker.com | sh
+
+    # Add user to docker group
+    sudo usermod -aG docker $USER
+    ```
+  </Tab>
+  <Tab title="Windows">
+    Install [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/)
+  </Tab>
+</Tabs>
+
+Verify installation:
+```bash
+docker --version         # Docker version 24.x+
+docker compose version   # Docker Compose version v2.x+
+```
+
+### Git
+
+Version control system.
+
+```bash
+# macOS
+brew install git
+
+# Verify
+git --version  # git version 2.x+
+```
+
+---
+
+## Recommended Tools
+
+### VS Code Extensions
+
+Install these extensions for the best development experience:
+
+```json
+{
+  "recommendations": [
+    "biomejs.biome",
+    "bradlc.vscode-tailwindcss",
+    "dbaeumer.vscode-eslint",
+    "prisma.prisma",
+    "ms-azuretools.vscode-docker"
+  ]
+}
+```
+
+### Claude Code CLI
+
+AI-assisted development tool:
+
+```bash
+# Install Claude Code
+npm install -g @anthropic-ai/claude-code
+
+# Verify
+claude --version
+```
+
+### Cursor IDE
+
+Alternative to VS Code with built-in AI:
+
+Download from [cursor.sh](https://cursor.sh)
+
+---
+
+## Database Tools
+
+### DBeaver (Optional)
+
+GUI for database management:
+
+```bash
+# macOS
+brew install --cask dbeaver-community
+```
+
+### Drizzle Studio
+
+Built-in database viewer (included in projects):
+
+```bash
+pnpm db:studio
+```
+
+---
+
+## SSL Certificates (Local Development)
+
+For local HTTPS development, you'll need mkcert:
+
+```bash
+# Install mkcert
+brew install mkcert
+
+# Install local CA
+mkcert -install
+
+# Generate certificates (done automatically by projects)
+mkcert local.vrittiai.com localhost 127.0.0.1 ::1
+```
+
+---
+
+## Environment Setup Checklist
+
+Use this checklist to verify your setup:
+
+<Steps>
+  <Step title="Node.js 22+">
+    ```bash
+    node --version
+    # Expected: v22.x.x
+    ```
+  </Step>
+
+  <Step title="pnpm 9+">
+    ```bash
+    pnpm --version
+    # Expected: 9.x.x
+    ```
+  </Step>
+
+  <Step title="Docker">
+    ```bash
+    docker --version
+    docker compose version
+    # Expected: Docker 24+, Compose v2+
+    ```
+  </Step>
+
+  <Step title="Git">
+    ```bash
+    git --version
+    # Expected: 2.x+
+    ```
+  </Step>
+
+  <Step title="mkcert (for SSL)">
+    ```bash
+    mkcert --version
+    # Expected: v1.x.x
+    ```
+  </Step>
+</Steps>
+
+---
+
+## System Requirements
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| **RAM** | 8 GB | 16 GB |
+| **CPU** | 4 cores | 8 cores |
+| **Disk** | 20 GB free | 50 GB free |
+| **OS** | macOS 12+, Ubuntu 22.04+, Windows 11 | macOS 14+ |
+
+---
+
+## Network Requirements
+
+Ensure these ports are available:
+
+| Port | Service |
+|------|---------|
+| 3000 | vritti-web-nexus |
+| 3001 | vritti-auth |
+| 3002 | vritti-api-nexus |
+| 3003 | vritti-landing |
+| 5432 | PostgreSQL |
+| 6379 | Redis (optional) |
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Node.js version mismatch">
+    If you see version errors, ensure you're using Node.js 22:
+    ```bash
+    # Check current version
+    node --version
+
+    # Switch version (nvm)
+    nvm use 22
+
+    # Switch version (fnm)
+    fnm use 22
+    ```
+  </Accordion>
+
+  <Accordion title="pnpm not found">
+    Enable corepack first:
+    ```bash
+    corepack enable
+    corepack prepare pnpm@latest --activate
+    ```
+  </Accordion>
+
+  <Accordion title="Docker permission denied">
+    Add your user to the docker group:
+    ```bash
+    sudo usermod -aG docker $USER
+    # Log out and back in
+    ```
+  </Accordion>
+
+  <Accordion title="Port already in use">
+    Find and kill the process:
+    ```bash
+    # Find process on port
+    lsof -i :3000
+
+    # Kill process
+    kill -9 <PID>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Next Steps
+
+Once you have all prerequisites installed:
+
+<Card title="Local Setup" icon="arrow-right" href="/getting-started/local-setup">
+  Clone repositories and install dependencies
+</Card>

@@ -420,18 +420,18 @@ const handleMFASuccess = (response) => {
   - Typo in manual entry
 
   **Solution:**
-  1. Ensure device time is synchronized
-  2. Wait for new code and enter quickly
-  3. Try backup code if persistent
+  - Ensure device time is synchronized
+  - Wait for new code and enter quickly
+  - Try backup code if persistent
 </Accordion>
 
 <Accordion title="QR code not scanning">
   **Cause:** Camera focus or lighting issues
 
   **Solution:**
-  1. Use manual setup key instead
-  2. Enter: Account = email, Issuer = Vritti
-  3. Copy secret key from display
+  - Use manual setup key instead
+  - Enter: Account = email, Issuer = Vritti
+  - Copy secret key from display
 </Accordion>
 
 <Accordion title="SMS code not received">
@@ -441,9 +441,9 @@ const handleMFASuccess = (response) => {
   - Rate limiting
 
   **Solution:**
-  1. Wait 30 seconds and resend
-  2. Check phone verification status
-  3. Use TOTP or passkey instead
+  - Wait 30 seconds and resend
+  - Check phone verification status
+  - Use TOTP or passkey instead
 </Accordion>
 
 <Accordion title="All backup codes used">
@@ -453,9 +453,19 @@ const handleMFASuccess = (response) => {
   User must contact support to disable MFA or generate new backup codes (requires identity verification).
 </Accordion>
 
-## Related Concepts
+## Related Documentation
 
-- **Passkeys** - Can be used as MFA factor
-- **Session Management** - MFA creates standard session tokens
-- **Phone Verification** - Required for SMS MFA
-- **Onboarding Flow** - MFA setup is part of user onboarding
+<CardGroup cols={2}>
+  <Card title="Passkeys (WebAuthn)" icon="fingerprint" href="/features/passkeys">
+    Can be used as MFA factor
+  </Card>
+  <Card title="JWT Sessions" icon="key" href="/features/auth/jwt-sessions">
+    MFA creates standard session tokens
+  </Card>
+  <Card title="Signup & Login" icon="right-to-bracket" href="/features/auth/signup-login">
+    MFA integration with login flow
+  </Card>
+  <Card title="Onboarding Flow" icon="list-check" href="/features/onboarding/flow-overview">
+    MFA setup is part of user onboarding
+  </Card>
+</CardGroup>

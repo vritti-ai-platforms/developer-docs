@@ -1,0 +1,77 @@
+---
+title: "Authentication"
+description: "How to authenticate with the Vritti API"
+---
+
+# Authentication
+
+The Vritti API uses JWT (JSON Web Tokens) for authentication. Most endpoints require a valid access token.
+
+## Obtaining Tokens
+
+### Login
+```bash
+POST /cloud-api/auth/login
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "your-password"
+}
+```
+
+Response:
+```json
+{
+  "accessToken": "eyJhbG...",
+  "refreshToken": "eyJhbG...",
+  "tokenType": "Bearer",
+  "expiresIn": 3600
+}
+```
+
+## Using Tokens
+
+Include the access token in the `Authorization` header:
+
+```bash
+GET /cloud-api/users
+Authorization: Bearer eyJhbG...
+```
+
+## Token Refresh
+
+Access tokens expire after 1 hour. Use the refresh token to obtain new tokens:
+
+```bash
+POST /cloud-api/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "eyJhbG..."
+}
+```
+
+## CSRF Protection
+
+For browser-based requests, include a CSRF token:
+
+1. Get a CSRF token: `GET /csrf/token`
+2. Include in requests: `X-CSRF-Token: <token>`
+
+## Multi-Factor Authentication
+
+If MFA is enabled, login returns an MFA challenge:
+
+```json
+{
+  "requiresMfa": true,
+  "mfaChallenge": {
+    "sessionId": "mfa_abc123",
+    "availableMethods": ["totp", "sms"],
+    "defaultMethod": "totp"
+  }
+}
+```
+
+Complete MFA verification at `/cloud-api/auth/mfa/verify-totp` or `/cloud-api/auth/mfa/sms/verify`.

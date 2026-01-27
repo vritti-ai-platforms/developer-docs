@@ -1,0 +1,364 @@
+---
+title: "Component Catalog"
+description: "Complete catalog of quantum-ui components with usage examples"
+---
+
+# Component Catalog
+
+quantum-ui provides 17 production-ready components built on Radix UI primitives.
+
+## Button
+
+Primary action component with loading state support.
+
+```tsx
+import { Button } from '@vritti/quantum-ui/Button';
+
+// Basic usage
+<Button>Click me</Button>
+
+// With loading state
+<Button loading>Processing...</Button>
+
+// Variants
+<Button variant="default">Primary</Button>
+<Button variant="secondary">Secondary</Button>
+<Button variant="destructive">Delete</Button>
+<Button variant="outline">Outline</Button>
+<Button variant="ghost">Ghost</Button>
+<Button variant="link">Link</Button>
+
+// Sizes
+<Button size="sm">Small</Button>
+<Button size="default">Default</Button>
+<Button size="lg">Large</Button>
+<Button size="icon"><Icon /></Button>
+```
+
+## TextField
+
+Text input with label, description, and adornment support.
+
+```tsx
+import { TextField } from '@vritti/quantum-ui/TextField';
+
+// Basic usage
+<TextField
+  name="email"
+  label="Email Address"
+  placeholder="you@example.com"
+/>
+
+// With description
+<TextField
+  name="username"
+  label="Username"
+  description="Must be 3-20 characters"
+/>
+
+// With error
+<TextField
+  name="email"
+  label="Email"
+  error="Invalid email format"
+/>
+
+// With adornments
+<TextField
+  name="price"
+  label="Price"
+  startAdornment={<span>$</span>}
+  endAdornment={<span>.00</span>}
+/>
+```
+
+## PasswordField
+
+Password input with built-in visibility toggle.
+
+```tsx
+import { PasswordField } from '@vritti/quantum-ui/PasswordField';
+
+<PasswordField
+  name="password"
+  label="Password"
+  description="At least 8 characters"
+/>
+```
+
+## PhoneField
+
+International phone number input with country selector.
+
+```tsx
+import { PhoneField, isValidPhoneNumber } from '@vritti/quantum-ui/PhoneField';
+
+// Basic usage
+<PhoneField
+  name="phone"
+  label="Phone Number"
+  defaultCountry="US"
+/>
+
+// Validation
+const isValid = isValidPhoneNumber('+14155551234');
+```
+
+## OTPField
+
+One-time password input for verification codes.
+
+```tsx
+import { OTPField } from '@vritti/quantum-ui/OTPField';
+
+<OTPField
+  name="code"
+  label="Verification Code"
+  description="Enter the 6-digit code"
+  maxLength={6}
+/>
+```
+
+## TextArea
+
+Multi-line text input with auto-resize support.
+
+```tsx
+import { TextArea } from '@vritti/quantum-ui/TextArea';
+
+<TextArea
+  name="message"
+  label="Message"
+  placeholder="Type your message..."
+  rows={4}
+/>
+```
+
+## Card
+
+Container component with semantic structure.
+
+```tsx
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  CardFooter
+} from '@vritti/quantum-ui/Card';
+
+<Card>
+  <CardHeader>
+    <CardTitle>Account Settings</CardTitle>
+    <CardDescription>Manage your account preferences</CardDescription>
+  </CardHeader>
+  <CardContent>
+    <TextField name="name" label="Display Name" />
+    <TextField name="email" label="Email" />
+  </CardContent>
+  <CardFooter>
+    <Button>Save Changes</Button>
+  </CardFooter>
+</Card>
+```
+
+## Badge
+
+Status indicators with semantic variants.
+
+```tsx
+import { Badge } from '@vritti/quantum-ui/Badge';
+
+<Badge>Default</Badge>
+<Badge variant="secondary">Secondary</Badge>
+<Badge variant="destructive">Error</Badge>
+<Badge variant="outline">Outline</Badge>
+```
+
+## Checkbox
+
+Accessible checkbox with form integration.
+
+```tsx
+import { Checkbox } from '@vritti/quantum-ui/Checkbox';
+
+// Basic usage
+<Checkbox name="terms" label="I agree to the terms" />
+
+// With description
+<Checkbox
+  name="marketing"
+  label="Marketing emails"
+  description="Receive updates about new features"
+/>
+```
+
+## DatePicker
+
+Calendar-based date selection with popover.
+
+```tsx
+import { DatePicker } from '@vritti/quantum-ui/DatePicker';
+
+<DatePicker
+  name="birthdate"
+  label="Date of Birth"
+  placeholder="Select date"
+/>
+```
+
+## Progress
+
+Progress bar for loading states.
+
+```tsx
+import { Progress } from '@vritti/quantum-ui/Progress';
+
+<Progress value={45} />
+<Progress value={100} className="bg-success" />
+```
+
+## Skeleton
+
+Loading placeholder animations.
+
+```tsx
+import { Skeleton } from '@vritti/quantum-ui/Skeleton';
+
+// Basic skeleton
+<Skeleton className="h-4 w-[200px]" />
+
+// Card skeleton
+<div className="space-y-2">
+  <Skeleton className="h-12 w-12 rounded-full" />
+  <Skeleton className="h-4 w-[250px]" />
+  <Skeleton className="h-4 w-[200px]" />
+</div>
+```
+
+## Spinner
+
+Loading spinner component.
+
+```tsx
+import { Spinner } from '@vritti/quantum-ui/Spinner';
+
+<Spinner />
+<Spinner size="sm" />
+<Spinner size="lg" />
+```
+
+## Sonner (Toast)
+
+Toast notifications for feedback.
+
+```tsx
+import { Sonner, toast } from '@vritti/quantum-ui/Sonner';
+
+// Add Toaster to your app root
+<Sonner />
+
+// Show toasts
+toast.success('Changes saved');
+toast.error('Something went wrong');
+toast.info('New update available');
+toast.warning('Session expiring soon');
+
+// With description
+toast.success('Account created', {
+  description: 'Check your email to verify your account'
+});
+
+// With action
+toast.error('Failed to save', {
+  action: {
+    label: 'Retry',
+    onClick: () => saveData()
+  }
+});
+```
+
+## ThemeToggle
+
+Dark/light mode toggle switch.
+
+```tsx
+import { ThemeToggle } from '@vritti/quantum-ui/ThemeToggle';
+
+<ThemeToggle />
+```
+
+## Typography
+
+Text styling component for consistent typography.
+
+```tsx
+import { Typography } from '@vritti/quantum-ui/Typography';
+
+<Typography variant="h1">Heading 1</Typography>
+<Typography variant="h2">Heading 2</Typography>
+<Typography variant="h3">Heading 3</Typography>
+<Typography variant="body">Body text</Typography>
+<Typography variant="small">Small text</Typography>
+<Typography variant="muted">Muted text</Typography>
+```
+
+## Field System
+
+Low-level field primitives for building custom form layouts.
+
+```tsx
+import {
+  Field,
+  FieldSet,
+  FieldGroup,
+  FieldLabel,
+  FieldContent,
+  FieldDescription,
+  FieldError
+} from '@vritti/quantum-ui/Field';
+
+<FieldSet>
+  <FieldGroup>
+    <Field>
+      <FieldLabel>Email</FieldLabel>
+      <FieldContent>
+        <input type="email" />
+      </FieldContent>
+      <FieldDescription>Your work email address</FieldDescription>
+      <FieldError>Invalid email format</FieldError>
+    </Field>
+  </FieldGroup>
+</FieldSet>
+```
+
+### Field Orientations
+
+```tsx
+// Vertical (default)
+<Field orientation="vertical">...</Field>
+
+// Horizontal
+<Field orientation="horizontal">...</Field>
+
+// Responsive (vertical on mobile, horizontal on desktop)
+<Field orientation="responsive">...</Field>
+```
+
+## Form Component
+
+Smart form wrapper with react-hook-form integration. See [Form System](/projects/quantum-ui/form-system) for detailed documentation.
+
+```tsx
+import { Form } from '@vritti/quantum-ui/Form';
+import { useForm } from 'react-hook-form';
+
+const form = useForm();
+
+<Form form={form} onSubmit={handleSubmit}>
+  <TextField name="email" label="Email" />
+  <PasswordField name="password" label="Password" />
+  <Button type="submit">Sign In</Button>
+</Form>
+```

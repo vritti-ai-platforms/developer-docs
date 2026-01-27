@@ -1,0 +1,365 @@
+---
+title: System Architecture
+description: Visual overview of the Vritti platform architecture
+---
+
+# System Architecture
+
+Visual diagrams showing the overall system architecture, component relationships, and deployment topology.
+
+## High-Level Architecture
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        Browser[Web Browser]
+        Mobile[Mobile App]
+    end
+
+    subgraph "CDN / Edge"
+        CF[Cloudflare CDN]
+    end
+
+    subgraph "Frontend Applications"
+        Landing[vritti-landing<br/>Next.js 15]
+        WebNexus[vritti-web-nexus<br/>React 19 Host]
+        Auth[vritti-auth<br/>React 19 Remote]
+        Slicing[slicingpie<br/>React 19]
+    end
+
+    subgraph "API Layer"
+        APIGateway[API Gateway<br/>Rate Limiting]
+        APINexus[vritti-api-nexus<br/>NestJS 11 + Fastify 5]
+    end
+
+    subgraph "Data Layer"
+        PrimaryDB[(Primary Database<br/>PostgreSQL)]
+        TenantDB1[(Tenant DB: ACME)]
+        TenantDB2[(Tenant DB: Beta)]
+        TenantDBN[(Tenant DB: N...)]
+        Redis[(Redis<br/>Cache/Sessions)]
+    end
+
+    subgraph "External Services"
+        Brevo[Brevo<br/>Email]
+        Twilio[Twilio<br/>SMS]
+        WhatsApp[WhatsApp<br/>Cloud API]
+        Google[Google OAuth]
+        Microsoft[Microsoft OAuth]
+    end
+
+    Browser --> CF
+    Mobile --> CF
+    CF --> Landing
+    CF --> WebNexus
+    CF --> APIGateway
+
+    WebNexus -.->|Module Federation| Auth
+    WebNexus -.->|Module Federation| Slicing
+
+    APIGateway --> APINexus
+    APINexus --> PrimaryDB
+    APINexus --> TenantDB1
+    APINexus --> TenantDB2
+    APINexus --> TenantDBN
+    APINexus --> Redis
+
+    APINexus --> Brevo
+    APINexus --> Twilio
+    APINexus --> WhatsApp
+    APINexus --> Google
+    APINexus --> Microsoft
+```
+
+## Subdomain Routing
+
+```mermaid
+graph LR
+    subgraph "DNS / Routing"
+        DNS[*.vrittiai.com]
+    end
+
+    subgraph "Subdomains"
+        Cloud[cloud.vrittiai.com]
+        Tenant1[acme.vrittiai.com]
+        Tenant2[beta.vrittiai.com]
+        WWW[www.vrittiai.com]
+    end
+
+    subgraph "Applications"
+        AuthApp[vritti-auth<br/>Authentication]
+        Dashboard1[Tenant Dashboard<br/>ACME Context]
+        Dashboard2[Tenant Dashboard<br/>Beta Context]
+        LandingApp[vritti-landing<br/>Marketing]
+    end
+
+    DNS --> Cloud
+    DNS --> Tenant1
+    DNS --> Tenant2
+    DNS --> WWW
+
+    Cloud --> AuthApp
+    Tenant1 --> Dashboard1
+    Tenant2 --> Dashboard2
+    WWW --> LandingApp
+```
+
+## Module Federation Architecture
+
+```mermaid
+graph TB
+    subgraph "Host Application"
+        Host[vritti-web-nexus<br/>Port 3002]
+        HostRouter[React Router v7]
+        HostShared[Shared Dependencies<br/>React, React-DOM, TanStack Query]
+    end
+
+    subgraph "Remote: Auth"
+        AuthRemote[vritti-auth<br/>Port 3003]
+        AuthRoutes[authRoutes Export]
+        AuthComponents[Login, Signup, Onboarding]
+    end
+
+    subgraph "Remote: SlicingPie"
+        SlicingRemote[slicingpie<br/>Port 3004]
+        SlicingRoutes[adminRoutes Export]
+        SlicingComponents[Admin Dashboard]
+    end
+
+    subgraph "Shared Libraries"
+        QuantumUI[@vritti/quantum-ui<br/>UI Components]
+        APISDK[@vritti/api-sdk<br/>Auth Guards, DB Utils]
+    end
+
+    Host --> HostRouter
+    Host --> HostShared
+
+    HostRouter -.->|Dynamic Import| AuthRemote
+    HostRouter -.->|Dynamic Import| SlicingRemote
+
+    AuthRemote --> AuthRoutes
+    AuthRoutes --> AuthComponents
+
+    SlicingRemote --> SlicingRoutes
+    SlicingRoutes --> SlicingComponents
+
+    Host --> QuantumUI
+    AuthRemote --> QuantumUI
+    SlicingRemote --> QuantumUI
+
+    Host --> APISDK
+```
+
+## Multi-Tenant Database Architecture
+
+```mermaid
+graph TB
+    subgraph "API Layer"
+        API[vritti-api-nexus]
+        TenantContext[TenantContextService<br/>REQUEST Scoped]
+        TenantDB[TenantDatabaseService<br/>Connection Pool Cache]
+    end
+
+    subgraph "Primary Database"
+        PrimaryPool[(Connection Pool)]
+        CloudSchema[cloud schema]
+        Tenants[tenants table]
+        Users[users table]
+        Sessions[sessions table]
+        TenantConfigs[tenant_database_configs]
+    end
+
+    subgraph "Tenant Databases"
+        TenantPool1[(ACME Pool)]
+        TenantPool2[(Beta Pool)]
+
+        ACMEDB[vritti_acme]
+        ACMEProducts[products]
+        ACMEOrders[orders]
+        ACMECustomers[customers]
+
+        BetaDB[vritti_beta]
+        BetaProducts[products]
+        BetaOrders[orders]
+        BetaCustomers[customers]
+    end
+
+    API --> TenantContext
+    TenantContext --> TenantDB
+
+    TenantDB --> PrimaryPool
+    PrimaryPool --> CloudSchema
+    CloudSchema --> Tenants
+    CloudSchema --> Users
+    CloudSchema --> Sessions
+    CloudSchema --> TenantConfigs
+
+    TenantConfigs -.->|Connection Lookup| TenantPool1
+    TenantConfigs -.->|Connection Lookup| TenantPool2
+
+    TenantPool1 --> ACMEDB
+    ACMEDB --> ACMEProducts
+    ACMEDB --> ACMEOrders
+    ACMEDB --> ACMECustomers
+
+    TenantPool2 --> BetaDB
+    BetaDB --> BetaProducts
+    BetaDB --> BetaOrders
+    BetaDB --> BetaCustomers
+```
+
+## Security Architecture
+
+```mermaid
+graph TB
+    subgraph "Client"
+        Browser[Browser]
+        AccessToken[Access Token<br/>Memory Only]
+        RefreshToken[Refresh Token<br/>HttpOnly Cookie]
+        CSRFToken[CSRF Token<br/>Cookie + Header]
+    end
+
+    subgraph "API Security Layer"
+        CORS[CORS Filter]
+        RateLimit[Rate Limiter]
+        CSRFGuard[CSRF Guard]
+        AuthGuard[VrittiAuthGuard]
+        TenantGuard[Tenant Isolation]
+    end
+
+    subgraph "Token Validation"
+        JWTVerify[JWT Verification]
+        SessionLookup[Session Lookup]
+        TokenBinding[Token Binding Check]
+        UserLoad[User Context Load]
+    end
+
+    subgraph "Data Access"
+        Repository[Repository Layer]
+        DrizzleORM[Drizzle ORM]
+        Database[(PostgreSQL)]
+    end
+
+    Browser --> |Request| CORS
+    Browser --> AccessToken
+    Browser --> RefreshToken
+    Browser --> CSRFToken
+
+    CORS --> RateLimit
+    RateLimit --> CSRFGuard
+    CSRFGuard --> AuthGuard
+    AuthGuard --> TenantGuard
+
+    AuthGuard --> JWTVerify
+    JWTVerify --> SessionLookup
+    SessionLookup --> TokenBinding
+    TokenBinding --> UserLoad
+
+    TenantGuard --> Repository
+    Repository --> DrizzleORM
+    DrizzleORM --> Database
+```
+
+## Deployment Topology
+
+```mermaid
+graph TB
+    subgraph "Edge Layer"
+        CF[Cloudflare]
+        DNS[DNS Management]
+        SSL[SSL/TLS Termination]
+        WAF[Web Application Firewall]
+    end
+
+    subgraph "Compute Layer"
+        subgraph "Frontend Pods"
+            FE1[Frontend Pod 1]
+            FE2[Frontend Pod 2]
+        end
+
+        subgraph "API Pods"
+            API1[API Pod 1]
+            API2[API Pod 2]
+            API3[API Pod 3]
+        end
+    end
+
+    subgraph "Data Layer"
+        subgraph "PostgreSQL Cluster"
+            PGPrimary[(Primary)]
+            PGReplica1[(Replica 1)]
+            PGReplica2[(Replica 2)]
+        end
+
+        subgraph "Redis Cluster"
+            RedisPrimary[(Primary)]
+            RedisReplica[(Replica)]
+        end
+    end
+
+    subgraph "Observability"
+        Logs[Log Aggregation]
+        Metrics[Metrics Collection]
+        Traces[Distributed Tracing]
+    end
+
+    CF --> DNS
+    CF --> SSL
+    CF --> WAF
+
+    WAF --> FE1
+    WAF --> FE2
+    WAF --> API1
+    WAF --> API2
+    WAF --> API3
+
+    API1 --> PGPrimary
+    API2 --> PGPrimary
+    API3 --> PGPrimary
+
+    PGPrimary --> PGReplica1
+    PGPrimary --> PGReplica2
+
+    API1 --> RedisPrimary
+    API2 --> RedisPrimary
+    API3 --> RedisPrimary
+
+    RedisPrimary --> RedisReplica
+
+    API1 --> Logs
+    API2 --> Logs
+    API3 --> Logs
+
+    API1 --> Metrics
+    API2 --> Metrics
+    API3 --> Metrics
+```
+
+## Technology Stack Summary
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| **Frontend** | React 19, RSBuild | UI rendering, bundling |
+| **Micro-frontends** | Module Federation | Code splitting, independent deployment |
+| **State** | TanStack Query | Server state management |
+| **Routing** | React Router v7 | Client-side navigation |
+| **UI Components** | @vritti/quantum-ui | Shared component library |
+| **API Framework** | NestJS 11 | Backend application framework |
+| **HTTP Server** | Fastify 5 | High-performance HTTP |
+| **ORM** | Drizzle ORM v1 | Type-safe database access |
+| **Database** | PostgreSQL 16 | Primary data storage |
+| **Cache** | Redis | Session cache, rate limiting |
+| **Email** | Brevo | Transactional email |
+| **SMS** | Twilio | SMS verification |
+| **CDN** | Cloudflare | Edge caching, DDoS protection |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Auth Flow Diagram" icon="key" href="/architecture/diagrams/auth-flow">
+    Authentication sequence diagrams
+  </Card>
+  <Card title="Data Flow Diagram" icon="arrows-spin" href="/architecture/diagrams/data-flow">
+    Request lifecycle visualization
+  </Card>
+</CardGroup>

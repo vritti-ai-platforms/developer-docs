@@ -1,0 +1,353 @@
+---
+title: Drizzle ORM
+description: Why we chose Drizzle and how it's configured
+---
+
+# Drizzle ORM
+
+Vritti uses **Drizzle ORM** for database access. Drizzle provides type-safe SQL queries with excellent TypeScript integration and a lightweight runtime.
+
+## Why Drizzle Over Prisma?
+
+<CardGroup cols={2}>
+  <Card title="SQL-First Design" icon="database">
+    Drizzle generates SQL you can understand and optimize. No magic query translation.
+  </Card>
+  <Card title="No Code Generation" icon="bolt">
+    Schema is TypeScript code - no `prisma generate` step. Changes are instant.
+  </Card>
+  <Card title="Lightweight Runtime" icon="feather">
+    ~7KB runtime vs Prisma's ~2MB. Faster cold starts in serverless.
+  </Card>
+  <Card title="Multi-Tenant Ready" icon="building">
+    Dynamic database connections work seamlessly. Prisma requires client recreation.
+  </Card>
+</CardGroup>
+
+## Version
+
+We use Drizzle ORM v1 (beta):
+
+```json
+{
+  "drizzle-orm": "1.0.0-beta.3-36e9b9e",
+  "drizzle-kit": "1.0.0-beta.3-36e9b9e"
+}
+```
+
+## Configuration
+
+### Drizzle Config
+
+```typescript
+// vritti-api-nexus/drizzle.config.ts
+import { defineConfig } from 'drizzle-kit';
+
+export default defineConfig({
+  dialect: 'postgresql',
+  schema: './src/db/schema/index.ts',
+  out: './src/db/migrations',
+
+  // Use direct connection URL (bypasses pgBouncer)
+  dbCredentials: {
+    url: process.env.PRIMARY_DB_DATABASE_DIRECT_URL!,
+  },
+
+  // Only manage the 'cloud' schema
+  schemaFilter: ['cloud'],
+
+  verbose: true,
+  strict: true,
+});
+```
+
+### Database Connection
+
+```typescript
+// Using node-postgres (pg) driver
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 10, // Connection pool size
+});
+
+export const db = drizzle(pool, {
+  schema,
+  logger: process.env.NODE_ENV === 'development',
+});
+```
+
+## Schema Definition
+
+### PostgreSQL Schema Namespace
+
+```typescript
+// src/db/schema/cloud-schema.ts
+import { pgSchema } from 'drizzle-orm/pg-core';
+
+// All tables live in the 'cloud' schema
+export const cloudSchema = pgSchema('cloud');
+```
+
+### Table Definition
+
+```typescript
+// src/db/schema/user.ts
+import { cloudSchema } from './cloud-schema';
+import { accountStatusEnum, onboardingStepEnum } from './enums';
+
+export const users = cloudSchema.table('users', {
+  // Primary key
+  id: uuid('id').primaryKey().defaultRandom(),
+
+  // Basic fields
+  email: varchar('email', { length: 255 }).notNull().unique(),
+  phone: varchar('phone', { length: 20 }),
+  locale: varchar('locale', { length: 10 }).default('en'),
+  timezone: varchar('timezone', { length: 50 }).default('UTC'),
+
+  // Status tracking
+  accountStatus: accountStatusEnum('account_status').notNull().default('PENDING_VERIFICATION'),
+  currentOnboardingStep: onboardingStepEnum('current_onboarding_step').default('EMAIL_VERIFICATION'),
+
+  // Verification flags
+  emailVerified: boolean('email_verified').notNull().default(false),
+  phoneVerified: boolean('phone_verified').notNull().default(false),
+  mfaEnabled: boolean('mfa_enabled').notNull().default(false),
+
+  // Timestamps
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+// Type inference
+export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;
+```
+
+### Enum Definition
+
+```typescript
+// src/db/schema/enums.ts
+import { cloudSchema } from './cloud-schema';
+
+export const accountStatusEnum = cloudSchema.enum('account_status', [
+  'PENDING_VERIFICATION',
+  'ACTIVE',
+  'INACTIVE',
+]);
+
+export const onboardingStepEnum = cloudSchema.enum('onboarding_step', [
+  'EMAIL_VERIFICATION',
+  'SET_PASSWORD',
+  'MOBILE_VERIFICATION',
+  'TWO_FACTOR_SETUP',
+  'COMPLETE',
+]);
+
+export const tenantStatusEnum = cloudSchema.enum('tenant_status', [
+  'ACTIVE',
+  'SUSPENDED',
+  'ARCHIVED',
+]);
+```
+
+## Relations
+
+Drizzle v1 uses `defineRelations` for relationship definitions:
+
+```typescript
+// src/db/schema/relations.ts
+import { defineRelations } from 'drizzle-orm';
+import { tenants, tenantDatabaseConfigs, users, sessions } from './';
+
+export const relations = defineRelations(schema, (r) => ({
+  // Tenant has one database config
+  tenants: r.one.tenantDatabaseConfigs({
+    from: tenantDatabaseConfigs.tenantId,
+    to: tenants.id,
+    alias: 'databaseConfig',
+  }),
+
+  // User has many sessions
+  users: r.many.sessions({
+    from: users.id,
+    to: sessions.userId,
+    alias: 'sessions',
+  }),
+}));
+```
+
+## Query Patterns
+
+### Basic CRUD
+
+```typescript
+// Create
+const user = await db.insert(users).values({
+  email: 'user@example.com',
+}).returning();
+
+// Read
+const user = await db.select().from(users).where(eq(users.id, userId));
+
+// Update
+await db.update(users)
+  .set({ emailVerified: true })
+  .where(eq(users.id, userId));
+
+// Delete
+await db.delete(users).where(eq(users.id, userId));
+```
+
+### Relational Queries
+
+```typescript
+// Fetch tenant with database config
+const tenant = await db.query.tenants.findFirst({
+  where: eq(tenants.subdomain, 'acme'),
+  with: {
+    databaseConfig: true,
+  },
+});
+
+// Fetch user with sessions
+const user = await db.query.users.findFirst({
+  where: eq(users.email, email),
+  with: {
+    sessions: {
+      where: gt(sessions.expiresAt, new Date()),
+    },
+  },
+});
+```
+
+### Complex Queries
+
+```typescript
+// Join with aggregation
+const result = await db
+  .select({
+    tenantId: tenants.id,
+    subdomain: tenants.subdomain,
+    userCount: count(users.id),
+  })
+  .from(tenants)
+  .leftJoin(users, eq(users.tenantId, tenants.id))
+  .groupBy(tenants.id)
+  .having(gt(count(users.id), 10));
+```
+
+## Repository Pattern
+
+Vritti uses base repository classes from `@vritti/api-sdk`:
+
+### Primary Repository (for cloud schema)
+
+```typescript
+@Injectable()
+export class UserRepository extends PrimaryBaseRepository<typeof users> {
+  constructor(primaryDb: PrimaryDatabaseService) {
+    super(primaryDb, users);
+  }
+
+  async findByEmail(email: string) {
+    return this.db.query.users.findFirst({
+      where: eq(users.email, email),
+    });
+  }
+}
+```
+
+### Tenant Repository (for tenant databases)
+
+```typescript
+@Injectable()
+export class ProductRepository extends TenantBaseRepository<typeof products> {
+  constructor(tenantDb: TenantDatabaseService) {
+    super(tenantDb, products);
+  }
+
+  // Queries automatically use current tenant's database
+  async findByCategory(categoryId: string) {
+    return this.db.query.products.findMany({
+      where: eq(products.categoryId, categoryId),
+    });
+  }
+}
+```
+
+## Type Safety
+
+Drizzle provides compile-time type checking:
+
+```typescript
+// This fails at compile time
+await db.insert(users).values({
+  email: 123, // Type error: number is not string
+});
+
+// This fails at compile time
+const user = await db.select().from(users);
+console.log(user.nonExistentField); // Type error: property doesn't exist
+
+// Inferred types
+type User = typeof users.$inferSelect;
+// {
+//   id: string;
+//   email: string;
+//   phone: string | null;
+//   emailVerified: boolean;
+//   ...
+// }
+```
+
+## Transactions
+
+```typescript
+await db.transaction(async (tx) => {
+  // Create user
+  const [user] = await tx.insert(users)
+    .values({ email })
+    .returning();
+
+  // Create initial session
+  await tx.insert(sessions)
+    .values({
+      userId: user.id,
+      type: 'ONBOARDING',
+      expiresAt: new Date(Date.now() + 3600000),
+    });
+
+  return user;
+});
+```
+
+## SDK Re-exports
+
+The `@vritti/api-sdk` re-exports Drizzle for consistent versioning:
+
+```typescript
+// api-sdk/src/drizzle-orm.ts
+export * from 'drizzle-orm';
+
+// api-sdk/src/drizzle-pg-core.ts
+export * from 'drizzle-orm/pg-core';
+
+// Usage in vritti-api-nexus
+import { eq, and, or } from '@vritti/api-sdk/drizzle-orm';
+import { pgTable, varchar, uuid } from '@vritti/api-sdk/drizzle-pg-core';
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Schema Overview" icon="table" href="/architecture/database/schema-overview">
+    See all database tables
+  </Card>
+  <Card title="Migrations" icon="code-branch" href="/architecture/database/migrations">
+    Learn migration workflow
+  </Card>
+</CardGroup>

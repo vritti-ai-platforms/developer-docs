@@ -1,0 +1,466 @@
+---
+title: Multi-Tenant Schemas
+description: Per-tenant database architecture
+---
+
+# Multi-Tenant Schemas
+
+Vritti's multi-tenant architecture separates tenant data into dedicated databases while maintaining a shared primary database for platform-level data.
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                      Primary Database                                │
+│                    (Platform-Level Data)                            │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│   cloud (schema)                                                     │
+│   ├── tenants              # Tenant registry                        │
+│   ├── tenant_database_configs  # Connection credentials             │
+│   ├── users                # User accounts                          │
+│   ├── sessions             # Auth sessions                          │
+│   ├── oauth_providers      # OAuth connections                      │
+│   ├── email_verifications  # Email OTP tracking                     │
+│   ├── mobile_verifications # Phone verification                     │
+│   └── two_factor_auth      # 2FA configuration                      │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              │ Connection lookup
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      Tenant Databases                                │
+│                    (Business-Level Data)                            │
+├────────────────────┬────────────────────┬───────────────────────────┤
+│                    │                    │                           │
+│  tenant_acme (db)  │  tenant_beta (db)  │  tenant_corp (db)        │
+│  ──────────────    │  ──────────────    │  ──────────────          │
+│  • products        │  • products        │  • products              │
+│  • orders          │  • orders          │  • orders                │
+│  • customers       │  • customers       │  • customers             │
+│  • invoices        │  • invoices        │  • invoices              │
+│  • settings        │  • settings        │  • settings              │
+│                    │                    │                           │
+└────────────────────┴────────────────────┴───────────────────────────┘
+```
+
+## Tenant Types
+
+### Dedicated Database
+
+Each tenant has their own PostgreSQL database:
+
+```
+PostgreSQL Server
+├── vritti_primary    # Primary database (cloud schema)
+├── vritti_acme       # ACME Corp's database
+├── vritti_beta       # Beta Inc's database
+└── vritti_corp       # Corp LLC's database
+```
+
+**Configuration:**
+```typescript
+// In tenant_database_configs table
+{
+  tenantId: 'acme-tenant-uuid',
+  dbHost: 'db.vrittiai.com',
+  dbPort: 5432,
+  dbName: 'vritti_acme',
+  dbUsername: 'acme_user',
+  dbPassword: 'encrypted_password',
+  dbSchema: 'public',
+  connectionPoolSize: 10,
+}
+```
+
+**Advantages:**
+- Complete data isolation
+- Per-tenant backup/restore
+- Independent scaling
+- Compliance (SOC2, HIPAA)
+
+### Shared Database (Schema Isolation)
+
+Multiple tenants share a database with schema-level separation:
+
+```
+PostgreSQL Server
+└── vritti_shared
+    ├── cloud (schema)       # Primary data
+    ├── tenant_small1 (schema)
+    ├── tenant_small2 (schema)
+    └── tenant_small3 (schema)
+```
+
+**Advantages:**
+- Lower infrastructure cost
+- Faster provisioning
+- Simpler operations
+
+## Connection Management
+
+### TenantDatabaseService
+
+```typescript
+@Injectable()
+export class TenantDatabaseService {
+  // Connection pool cache
+  private readonly clients = new Map<string, TenantConnection>();
+  private readonly clientLastUsed = new Map<string, number>();
+
+  constructor(
+    private tenantContext: TenantContextService,
+    @Inject(DATABASE_OPTIONS) private options: DatabaseModuleOptions,
+  ) {}
+
+  // Returns Drizzle client for current tenant
+  get drizzleClient(): TypedDrizzleClient {
+    const tenant = this.tenantContext.getTenant();
+    const cacheKey = this.getCacheKey(tenant);
+
+    // Reuse existing connection
+    let connection = this.clients.get(cacheKey);
+    if (!connection) {
+      connection = this.createConnection(tenant);
+      this.clients.set(cacheKey, connection);
+    }
+
+    this.clientLastUsed.set(cacheKey, Date.now());
+    return connection.db;
+  }
+
+  private getCacheKey(tenant: TenantInfo): string {
+    // For dedicated: use tenant ID
+    // For shared: use schema name
+    return tenant.type === 'DEDICATED'
+      ? tenant.id
+      : `${tenant.databaseHost}:${tenant.databaseSchema}`;
+  }
+
+  private createConnection(tenant: TenantInfo): TenantConnection {
+    const connectionUrl = this.buildConnectionUrl(tenant);
+
+    const pool = new Pool({
+      connectionString: connectionUrl,
+      max: tenant.connectionPoolSize || this.options.maxConnections,
+    });
+
+    const db = drizzle(pool, {
+      schema: this.options.drizzleSchema,
+    });
+
+    return { pool, db };
+  }
+
+  // Cleanup idle connections
+  @Interval(60000)
+  private cleanupIdleConnections() {
+    const now = Date.now();
+    const ttl = this.options.connectionCacheTTL;
+
+    for (const [key, lastUsed] of this.clientLastUsed) {
+      if (now - lastUsed > ttl) {
+        const connection = this.clients.get(key);
+        connection?.pool.end();
+        this.clients.delete(key);
+        this.clientLastUsed.delete(key);
+      }
+    }
+  }
+}
+```
+
+### Connection Lifecycle
+
+```
+Request for Tenant "ACME" arrives
+            ↓
+┌─────────────────────────────────────────┐
+│ TenantContextInterceptor                │
+│ 1. Extract tenant ID from header        │
+│ 2. Query primary DB for tenant config   │
+│ 3. Set TenantContextService             │
+└─────────────────────────────────────────┘
+            ↓
+┌─────────────────────────────────────────┐
+│ TenantDatabaseService.drizzleClient     │
+│ 1. Get tenant from context              │
+│ 2. Check connection cache               │
+│    - Cache hit → return existing        │
+│    - Cache miss → create new pool       │
+│ 3. Return Drizzle client                │
+└─────────────────────────────────────────┘
+            ↓
+┌─────────────────────────────────────────┐
+│ Repository Query                        │
+│ Uses tenant-specific database           │
+└─────────────────────────────────────────┘
+            ↓
+Request completes
+(Connection stays in pool for reuse)
+```
+
+## Tenant Schema Migration
+
+### Applying Migrations to Tenant Databases
+
+Tenant databases need their own migrations separate from the primary database:
+
+```typescript
+// Tenant migration service
+@Injectable()
+export class TenantMigrationService {
+  async migrateAll() {
+    const tenants = await this.tenantRepo.findAll();
+
+    for (const tenant of tenants) {
+      await this.migrateTenant(tenant);
+    }
+  }
+
+  async migrateTenant(tenant: TenantInfo) {
+    // Get connection to tenant database
+    const connection = this.createTenantConnection(tenant);
+
+    // Run migrations
+    await migrate(connection.db, {
+      migrationsFolder: './src/db/tenant-migrations',
+    });
+
+    // Close connection
+    await connection.pool.end();
+  }
+}
+```
+
+### Tenant Schema Definition
+
+```typescript
+// Tenant-specific schema (separate from primary)
+// src/db/tenant-schema/index.ts
+
+export const products = pgTable('products', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 255 }).notNull(),
+  sku: varchar('sku', { length: 50 }).notNull(),
+  price: decimal('price', { precision: 10, scale: 2 }).notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+export const orders = pgTable('orders', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  customerId: uuid('customer_id').notNull(),
+  status: orderStatusEnum('status').notNull().default('PENDING'),
+  total: decimal('total', { precision: 10, scale: 2 }).notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+export const customers = pgTable('customers', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: varchar('email', { length: 255 }).notNull(),
+  name: varchar('name', { length: 255 }).notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+```
+
+## Repository Pattern
+
+### Primary Repository
+
+For platform-level tables in the primary database:
+
+```typescript
+@Injectable()
+export class UserRepository extends PrimaryBaseRepository<typeof users> {
+  constructor(primaryDb: PrimaryDatabaseService) {
+    super(primaryDb, users);
+  }
+
+  // Queries the primary database
+  async findByEmail(email: string) {
+    return this.db.query.users.findFirst({
+      where: eq(users.email, email),
+    });
+  }
+}
+```
+
+### Tenant Repository
+
+For business-level tables in tenant databases:
+
+```typescript
+@Injectable()
+export class ProductRepository extends TenantBaseRepository<typeof products> {
+  constructor(tenantDb: TenantDatabaseService) {
+    super(tenantDb, products);
+  }
+
+  // Queries automatically use current tenant's database
+  async findByCategory(categoryId: string) {
+    return this.db.query.products.findMany({
+      where: eq(products.categoryId, categoryId),
+    });
+  }
+
+  async createProduct(data: NewProduct) {
+    // Automatically inserted into current tenant's database
+    return this.db.insert(products).values(data).returning();
+  }
+}
+```
+
+## Tenant Provisioning
+
+When creating a new tenant:
+
+```typescript
+@Injectable()
+export class TenantProvisioningService {
+  async provision(dto: CreateTenantDto) {
+    return await this.db.transaction(async (tx) => {
+      // 1. Create tenant record
+      const [tenant] = await tx.insert(tenants)
+        .values({
+          subdomain: dto.subdomain,
+          name: dto.name,
+          dbType: dto.dbType,
+        })
+        .returning();
+
+      // 2. Create dedicated database (if applicable)
+      if (dto.dbType === 'DEDICATED') {
+        const dbConfig = await this.createDedicatedDatabase(tenant);
+        await tx.insert(tenantDatabaseConfigs)
+          .values({
+            tenantId: tenant.id,
+            ...dbConfig,
+          });
+      }
+
+      return tenant;
+    });
+
+    // 3. Run migrations on new database
+    await this.runTenantMigrations(tenant);
+
+    // 4. Seed initial data
+    await this.seedTenantData(tenant);
+  }
+
+  private async createDedicatedDatabase(tenant: Tenant) {
+    const dbName = `vritti_${tenant.subdomain}`;
+    const username = `${tenant.subdomain}_user`;
+    const password = generateSecurePassword();
+
+    // Create database and user via admin connection
+    await this.adminDb.execute(sql`
+      CREATE DATABASE ${sql.identifier(dbName)};
+      CREATE USER ${sql.identifier(username)} WITH PASSWORD ${password};
+      GRANT ALL PRIVILEGES ON DATABASE ${sql.identifier(dbName)} TO ${sql.identifier(username)};
+    `);
+
+    return {
+      dbHost: process.env.DB_HOST,
+      dbPort: 5432,
+      dbName,
+      dbUsername: username,
+      dbPassword: this.encrypt(password),
+      dbSchema: 'public',
+    };
+  }
+}
+```
+
+## Security Considerations
+
+### Credential Storage
+
+Database credentials are encrypted at rest:
+
+```typescript
+// Encrypt before storing
+const encryptedPassword = await this.encryptionService.encrypt(password);
+await db.insert(tenantDatabaseConfigs).values({
+  dbPassword: encryptedPassword,
+});
+
+// Decrypt when connecting
+const config = await db.query.tenantDatabaseConfigs.findFirst({...});
+const password = await this.encryptionService.decrypt(config.dbPassword);
+```
+
+### Connection String Safety
+
+```typescript
+// Never log connection strings
+private buildConnectionUrl(tenant: TenantInfo): string {
+  // This URL contains credentials - NEVER log it
+  return `postgresql://${encodeURIComponent(tenant.databaseUsername)}:${encodeURIComponent(tenant.databasePassword)}@${tenant.databaseHost}:${tenant.databasePort}/${tenant.databaseName}`;
+}
+```
+
+### Request Isolation
+
+```typescript
+// Each request gets its own TenantContextService instance
+@Injectable({ scope: Scope.REQUEST })
+export class TenantContextService {
+  private tenantInfo: TenantInfo | null = null;
+
+  setTenant(info: TenantInfo): void {
+    if (this.tenantInfo !== null) {
+      // Prevent accidental overwrites
+      throw new Error('Tenant context already set');
+    }
+    this.tenantInfo = info;
+  }
+}
+```
+
+## Monitoring
+
+### Connection Pool Metrics
+
+```typescript
+// Export metrics for monitoring
+getConnectionMetrics() {
+  return {
+    totalConnections: this.clients.size,
+    connectionsPerTenant: Array.from(this.clients.entries()).map(([key, conn]) => ({
+      tenant: key,
+      poolSize: conn.pool.totalCount,
+      idleCount: conn.pool.idleCount,
+      waitingCount: conn.pool.waitingCount,
+    })),
+  };
+}
+```
+
+### Health Checks
+
+```typescript
+// Verify tenant database connectivity
+async healthCheck(tenantId: string): Promise<boolean> {
+  try {
+    const db = await this.getConnection(tenantId);
+    await db.execute(sql`SELECT 1`);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="System Architecture Diagram" icon="diagram-project" href="/architecture/diagrams/system-architecture">
+    Visual system overview
+  </Card>
+  <Card title="Multi-Tenancy Patterns" icon="building" href="/architecture/backend/multi-tenancy">
+    Backend implementation details
+  </Card>
+</CardGroup>

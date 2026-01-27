@@ -1,0 +1,371 @@
+---
+title: "Form System"
+description: "Smart form handling with react-hook-form integration and API error mapping"
+---
+
+# Form System
+
+quantum-ui provides a powerful form system that integrates with react-hook-form and TanStack Query for seamless form handling, validation, and API error mapping.
+
+## Core Concepts
+
+<CardGroup cols={2}>
+  <Card title="Auto-wrapping" icon="wand-magic-sparkles">
+    Field components are automatically wrapped with react-hook-form's Controller
+  </Card>
+  <Card title="Error Mapping" icon="map">
+    API errors are automatically mapped to form fields
+  </Card>
+  <Card title="Loading States" icon="spinner">
+    Submit buttons automatically show loading state during mutations
+  </Card>
+  <Card title="Mutation Integration" icon="code">
+    Direct integration with TanStack Query mutations
+  </Card>
+</CardGroup>
+
+## Basic Usage
+
+```tsx
+import { Form } from '@vritti/quantum-ui/Form';
+import { TextField } from '@vritti/quantum-ui/TextField';
+import { PasswordField } from '@vritti/quantum-ui/PasswordField';
+import { Button } from '@vritti/quantum-ui/Button';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+
+const schema = z.object({
+  email: z.string().email('Invalid email'),
+  password: z.string().min(8, 'At least 8 characters'),
+});
+
+type FormData = z.infer<typeof schema>;
+
+function LoginForm() {
+  const form = useForm<FormData>({
+    resolver: zodResolver(schema),
+    defaultValues: {
+      email: '',
+      password: '',
+    },
+  });
+
+  const handleSubmit = async (data: FormData) => {
+    await api.post('/auth/login', data);
+  };
+
+  return (
+    <Form form={form} onSubmit={handleSubmit}>
+      <TextField
+        name="email"
+        label="Email"
+        type="email"
+      />
+      <PasswordField
+        name="password"
+        label="Password"
+      />
+      <Button type="submit">Sign In</Button>
+    </Form>
+  );
+}
+```
+
+## With TanStack Query Mutation
+
+For better control over loading, error, and success states, integrate with TanStack Query:
+
+```tsx
+import { useMutation } from '@tanstack/react-query';
+import { toast } from '@vritti/quantum-ui/Sonner';
+
+function SignupForm() {
+  const form = useForm<SignupData>({
+    resolver: zodResolver(signupSchema),
+  });
+
+  const mutation = useMutation({
+    mutationFn: (data: SignupData) => api.post('/auth/signup', data),
+    onSuccess: () => {
+      toast.success('Account created!');
+      router.push('/verify-email');
+    },
+  });
+
+  return (
+    <Form form={form} mutation={mutation}>
+      <TextField name="email" label="Email" />
+      <PasswordField name="password" label="Password" />
+      <Button type="submit">Create Account</Button>
+    </Form>
+  );
+}
+```
+
+The Form component automatically:
+- Calls `mutation.mutate()` on submit
+- Maps API errors to form fields
+- Injects loading state into the submit button
+- Displays root errors
+
+## API Error Mapping
+
+### Field Mapping
+
+When API field names differ from form field names, use `fieldMapping`:
+
+```tsx
+<Form
+  form={form}
+  mutation={mutation}
+  fieldMapping={{
+    'email_address': 'email',      // API field → form field
+    'password_hash': 'password',
+  }}
+>
+  <TextField name="email" label="Email" />
+  <PasswordField name="password" label="Password" />
+</Form>
+```
+
+### Expected API Error Format (RFC 7807)
+
+The error mapper expects errors in this format:
+
+```json
+{
+  "message": "Validation failed",
+  "errors": [
+    { "field": "email", "message": "Email already exists" },
+    { "field": "password", "message": "Password is too weak" }
+  ]
+}
+```
+
+### Manual Error Mapping
+
+For custom error handling, use `mapApiErrorsToForm`:
+
+```tsx
+import { mapApiErrorsToForm } from '@vritti/quantum-ui';
+
+const handleSubmit = async (data: FormData) => {
+  try {
+    await api.post('/auth/login', data);
+  } catch (error) {
+    mapApiErrorsToForm(error.response?.data, form, {
+      fieldMapping: {
+        'email_address': 'email',
+      },
+      setRootError: true,
+    });
+  }
+};
+```
+
+## Root Error Display
+
+Root errors (errors not tied to a specific field) are displayed automatically:
+
+```tsx
+<Form
+  form={form}
+  mutation={mutation}
+  showRootError={true}           // default: true
+  rootErrorPosition="bottom"      // 'top' | 'bottom'
+  rootErrorClassName="my-4"       // custom styling
+>
+  {/* fields */}
+</Form>
+```
+
+## Transform Before Submit
+
+Transform form data before sending to the API:
+
+```tsx
+<Form
+  form={form}
+  mutation={mutation}
+  transformSubmit={(data) => ({
+    ...data,
+    timestamp: Date.now(),
+    source: 'web',
+  })}
+>
+  {/* fields */}
+</Form>
+```
+
+## Form Props Reference
+
+```tsx
+interface FormProps<TFieldValues, TMutationData, TMutationError, TMutationVariables> {
+  // Required
+  form: UseFormReturn<TFieldValues>;
+  children: React.ReactNode;
+
+  // Submit handling (one of these)
+  onSubmit?: (data: TFieldValues) => Promise<void>;
+  mutation?: UseMutationResult<TMutationData, TMutationError, TMutationVariables>;
+
+  // Error handling
+  showRootError?: boolean;              // default: true
+  rootErrorPosition?: 'top' | 'bottom'; // default: 'bottom'
+  rootErrorClassName?: string;
+  fieldMapping?: Record<string, string>;
+
+  // Data transformation
+  transformSubmit?: (data: TFieldValues) => TMutationVariables;
+}
+```
+
+## Field Components
+
+All quantum-ui field components are form-aware:
+
+| Component | Props | Notes |
+|-----------|-------|-------|
+| TextField | `name`, `label`, `description`, `error` | Auto-registers with form |
+| PasswordField | `name`, `label` | Built-in visibility toggle |
+| PhoneField | `name`, `label`, `defaultCountry` | International phone input |
+| OTPField | `name`, `label`, `maxLength` | OTP input |
+| TextArea | `name`, `label`, `rows` | Multi-line input |
+| Checkbox | `name`, `label`, `description` | Boolean field |
+| DatePicker | `name`, `label` | Calendar picker |
+
+### Field Auto-registration
+
+When inside a Form component, fields are automatically:
+1. Wrapped with react-hook-form's Controller
+2. Connected to form state
+3. Display validation errors
+4. Update on change/blur
+
+```tsx
+// This "just works" - no manual registration needed
+<Form form={form} onSubmit={handleSubmit}>
+  <TextField name="email" label="Email" />
+  <TextField name="name" label="Name" />
+</Form>
+```
+
+## Validation with Zod
+
+quantum-ui works seamlessly with Zod schemas:
+
+```tsx
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+
+const schema = z.object({
+  email: z.string().email('Please enter a valid email'),
+  password: z.string()
+    .min(8, 'At least 8 characters')
+    .regex(/[A-Z]/, 'At least one uppercase letter')
+    .regex(/[0-9]/, 'At least one number'),
+  confirmPassword: z.string(),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: "Passwords don't match",
+  path: ['confirmPassword'],
+});
+
+const form = useForm({
+  resolver: zodResolver(schema),
+  mode: 'onBlur', // Validate on blur
+});
+```
+
+## Loading State Injection
+
+Submit buttons automatically receive loading state:
+
+```tsx
+<Form form={form} mutation={mutation}>
+  <TextField name="email" label="Email" />
+
+  {/* These buttons auto-receive loading={mutation.isPending} */}
+  <Button type="submit">Submit</Button>
+  <Button type="submit" variant="secondary">Save Draft</Button>
+</Form>
+```
+
+## Complex Form Layouts
+
+Use the Field system for custom layouts:
+
+```tsx
+import {
+  FieldSet,
+  FieldGroup,
+  FieldLegend
+} from '@vritti/quantum-ui/Field';
+
+<Form form={form} onSubmit={handleSubmit}>
+  <FieldSet>
+    <FieldLegend>Personal Information</FieldLegend>
+    <FieldGroup>
+      <TextField name="firstName" label="First Name" />
+      <TextField name="lastName" label="Last Name" />
+    </FieldGroup>
+  </FieldSet>
+
+  <FieldSet>
+    <FieldLegend>Contact</FieldLegend>
+    <TextField name="email" label="Email" />
+    <PhoneField name="phone" label="Phone" />
+  </FieldSet>
+
+  <Button type="submit">Save</Button>
+</Form>
+```
+
+## Best Practices
+
+<Accordion title="1. Always use Zod for validation">
+Zod provides type-safe schema validation with excellent error messages.
+
+```tsx
+const schema = z.object({
+  email: z.string().email(),
+  age: z.number().min(18).max(120),
+});
+```
+</Accordion>
+
+<Accordion title="2. Use mutations for API calls">
+TanStack Query mutations provide better loading/error state management than plain async functions.
+
+```tsx
+const mutation = useMutation({
+  mutationFn: createUser,
+  onSuccess: () => toast.success('User created'),
+  onError: (error) => console.error(error),
+});
+```
+</Accordion>
+
+<Accordion title="3. Provide field mapping for API compatibility">
+When API field names differ from your form fields, always provide explicit mapping.
+
+```tsx
+fieldMapping={{
+  'user_email': 'email',
+  'user_name': 'name',
+}}
+```
+</Accordion>
+
+<Accordion title="4. Set validation mode based on UX needs">
+- `onBlur`: Validates when field loses focus (recommended)
+- `onChange`: Validates on every keystroke (can be noisy)
+- `onSubmit`: Only validates on submit (default)
+
+```tsx
+const form = useForm({
+  resolver: zodResolver(schema),
+  mode: 'onBlur',
+});
+```
+</Accordion>

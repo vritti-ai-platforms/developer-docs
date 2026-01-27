@@ -1,0 +1,80 @@
+---
+title: "Error Handling"
+description: "Understanding API error responses"
+---
+
+# Error Handling
+
+The Vritti API uses RFC 7807 Problem Details format for all error responses.
+
+## Error Response Structure
+
+```json
+{
+  "type": "https://vritti.ai/errors/validation",
+  "title": "Validation Error",
+  "status": 400,
+  "detail": "Request validation failed",
+  "instance": "/cloud-api/auth/signup",
+  "errors": [
+    { "field": "email", "message": "Email is required" },
+    { "field": "password", "message": "Password must be at least 8 characters" }
+  ]
+}
+```
+
+## HTTP Status Codes
+
+| Code | Description |
+|------|-------------|
+| 200 | Success |
+| 201 | Created |
+| 400 | Bad Request - Invalid input |
+| 401 | Unauthorized - Invalid or missing token |
+| 403 | Forbidden - Insufficient permissions |
+| 404 | Not Found - Resource doesn't exist |
+| 409 | Conflict - Resource already exists |
+| 422 | Unprocessable Entity - Semantic error |
+| 429 | Too Many Requests - Rate limited |
+| 500 | Internal Server Error |
+
+## Common Error Types
+
+### Validation Errors (400)
+```json
+{
+  "type": "https://vritti.ai/errors/validation",
+  "title": "Validation Error",
+  "status": 400,
+  "errors": [
+    { "field": "email", "message": "Invalid email format" }
+  ]
+}
+```
+
+### Authentication Errors (401)
+```json
+{
+  "type": "https://vritti.ai/errors/unauthorized",
+  "title": "Unauthorized",
+  "status": 401,
+  "detail": "Access token expired"
+}
+```
+
+### Not Found Errors (404)
+```json
+{
+  "type": "https://vritti.ai/errors/not-found",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "User not found"
+}
+```
+
+## Error Handling Best Practices
+
+1. Always check the `status` field for the HTTP status code
+2. Parse the `errors` array for field-specific validation errors
+3. Display the `detail` message for user-friendly error descriptions
+4. Log the full error response for debugging

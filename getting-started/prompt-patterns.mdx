@@ -1,0 +1,327 @@
+---
+title: "Prompt Patterns"
+description: "Effective prompts for AI-assisted development tasks"
+---
+
+# Prompt Patterns
+
+This guide provides effective prompt patterns for common development tasks with Claude Code and Cursor.
+
+## General Principles
+
+### Be Specific
+
+```bash
+# Vague (less helpful)
+> Create a user service
+
+# Specific (better)
+> Create a UserService in src/modules/users that extends TenantBaseRepository,
+> with methods for findByEmail, updateProfile, and softDelete. Follow the
+> pattern in src/modules/tenants/tenant.service.ts
+```
+
+### Provide Context
+
+```bash
+# Without context
+> Fix the authentication bug
+
+# With context
+> Users report getting 401 errors after 15 minutes even though they have
+> valid refresh tokens. The issue seems to be in the token refresh flow.
+> Check src/modules/auth/auth.service.ts
+```
+
+### Reference Existing Code
+
+```bash
+# Reference patterns
+> Following the pattern in Button.tsx, create a new IconButton component
+> that accepts an icon prop and renders it inside the button
+
+# Reference files
+> Looking at the TenantBaseRepository class, explain how multi-tenancy
+> is implemented in the database layer
+```
+
+## Task-Specific Patterns
+
+### Creating New Features
+
+```bash
+# Pattern: Describe → Plan → Implement
+
+# Step 1: Describe
+> I need to add a user preferences feature where users can set their
+> notification preferences (email, SMS, push) and theme preference.
+
+# Step 2: Plan
+> What files would I need to create for this feature? Consider:
+> - Database schema
+> - DTOs
+> - Service
+> - Controller
+> - Frontend components
+
+# Step 3: Implement (one piece at a time)
+> Create the Drizzle schema for user preferences
+> Now create the CreateUserPreferencesDto and UpdateUserPreferencesDto
+> Create the UserPreferencesService with CRUD methods
+```
+
+### Debugging
+
+```bash
+# Pattern: Symptom → Investigation → Fix
+
+# Describe symptom
+> The login form shows "Invalid credentials" even with correct
+> email/password. The API returns 401.
+
+# Investigation
+> Check the login flow starting from AuthController.login through
+> AuthService.validateUser. What validations are performed?
+
+# Request fix
+> Found the issue: password comparison is case-sensitive for the hash.
+> Fix the password validation in AuthService.validateUser
+```
+
+### Refactoring
+
+```bash
+# Pattern: Current State → Goal → Execute
+
+# Analyze current state
+> Analyze the error handling in src/modules/auth. How are errors
+> currently being thrown and caught?
+
+# Define goal
+> I want to refactor to use RFC 7807 error responses consistently.
+> Show me how to update the error handling.
+
+# Execute in steps
+> Update AuthService to use the new exception classes
+> Update the tests to expect the new error format
+```
+
+### Code Review
+
+```bash
+# Pattern: Provide code → Ask for review
+
+> Review this code for:
+> - Security issues
+> - Performance problems
+> - Best practice violations
+> - TypeScript improvements
+>
+> [paste code or reference file]
+```
+
+### Understanding Code
+
+```bash
+# High-level understanding
+> Explain the authentication flow from login request to token generation.
+> Include the guards, services, and decorators involved.
+
+# Specific implementation
+> How does the TenantContextInterceptor extract and validate tenant info?
+> Walk me through the code step by step.
+
+# Architecture
+> What is the relationship between PrimaryDatabaseService and
+> TenantDatabaseService? When is each used?
+```
+
+## Vritti-Specific Prompts
+
+### quantum-ui
+
+```bash
+# Creating components
+> Create a new Tabs component following the Button component structure.
+> It should:
+> - Wrap the shadcn Tabs primitive
+> - Export from lib/components/Tabs
+> - Include Storybook stories
+> - Be added to package.json exports
+
+# Styling
+> What semantic color tokens should I use for a success message card?
+> Show me an example with proper Tailwind classes.
+
+# Form integration
+> How do I create a new form field component that integrates with
+> the Form component's auto-registration?
+```
+
+### api-sdk
+
+```bash
+# Understanding modules
+> Explain how DatabaseModule.forServer() and DatabaseModule.forMicroservice()
+> differ. When would I use each?
+
+# Creating guards
+> Create a new guard that checks if the user has a specific role.
+> Follow the pattern in VrittiAuthGuard.
+
+# Repository patterns
+> How do I create a custom query in a repository that extends
+> TenantBaseRepository? Show me with a complex join.
+```
+
+### vritti-api-nexus
+
+```bash
+# New endpoint
+> Create a REST endpoint for managing user preferences:
+> - GET /users/:id/preferences
+> - PUT /users/:id/preferences
+> Follow the existing controller patterns and add Swagger decorators.
+
+# Database queries
+> Write a Drizzle query to find all users in a tenant who have
+> logged in within the last 30 days, ordered by last login.
+
+# Authentication
+> How do I create an endpoint that requires MFA verification before
+> allowing access? Show me the guards/decorators to use.
+```
+
+### vritti-web-nexus / vritti-auth
+
+```bash
+# React components
+> Create a UserPreferencesForm using quantum-ui components and
+> react-hook-form. Include Zod validation.
+
+# API integration
+> How do I fetch user data using TanStack Query with proper
+> loading and error states?
+
+# Module Federation
+> How do I expose a new module from vritti-auth that can be
+> consumed by vritti-web-nexus?
+```
+
+## Prompt Templates
+
+### New Feature Template
+
+```
+I need to implement [FEATURE NAME].
+
+Context:
+- [What it does]
+- [Who uses it]
+- [Any constraints]
+
+Requirements:
+- [Requirement 1]
+- [Requirement 2]
+- [Requirement 3]
+
+Please follow the patterns in [REFERENCE FILE/MODULE].
+
+Start with [FIRST STEP].
+```
+
+### Bug Fix Template
+
+```
+Bug Report:
+- Expected: [what should happen]
+- Actual: [what is happening]
+- Steps to reproduce: [how to trigger]
+
+Relevant code: [file paths or code snippets]
+
+Please investigate and suggest a fix.
+```
+
+### Refactoring Template
+
+```
+I want to refactor [COMPONENT/MODULE].
+
+Current state:
+- [Description of current implementation]
+- [Problems with current approach]
+
+Goals:
+- [Goal 1]
+- [Goal 2]
+
+Constraints:
+- [Must maintain compatibility with...]
+- [Cannot change...]
+
+Please provide a step-by-step plan.
+```
+
+## Anti-Patterns
+
+<Warning>
+Avoid these prompt patterns:
+</Warning>
+
+### Too Vague
+
+```bash
+# Bad
+> Make it better
+
+# Good
+> Optimize the database query in getUsersByTenant() to reduce
+> the number of joins and add an index suggestion
+```
+
+### No Context
+
+```bash
+# Bad
+> Why is this failing?
+
+# Good
+> The test in auth.service.spec.ts line 45 is failing with
+> "Expected 401, received 403". The test validates that expired
+> tokens return 401. Here's the relevant code: [code]
+```
+
+### Too Much at Once
+
+```bash
+# Bad
+> Create the entire user management module with CRUD operations,
+> role management, permissions, audit logging, and tests
+
+# Good
+> Let's create the user management module step by step.
+> Start with the database schema for users and roles.
+```
+
+## Tips for Better Results
+
+<AccordionGroup>
+  <Accordion title="Iterate">
+    Build complex features in steps. Review each step before moving to the next.
+  </Accordion>
+
+  <Accordion title="Ask for Explanations">
+    If you don't understand generated code, ask for an explanation before using it.
+  </Accordion>
+
+  <Accordion title="Verify Patterns">
+    Ask the AI to verify its suggestions match existing patterns:
+    "Does this follow the pattern in [file]?"
+  </Accordion>
+
+  <Accordion title="Request Tests">
+    Always ask for tests with new code:
+    "Now write unit tests for this service"
+  </Accordion>
+</AccordionGroup>

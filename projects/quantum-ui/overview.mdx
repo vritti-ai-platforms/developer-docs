@@ -1,0 +1,190 @@
+---
+title: "quantum-ui Overview"
+description: "Modern, TypeScript-first React component library built on Radix UI and Tailwind CSS v4"
+---
+
+# quantum-ui
+
+**@vritti/quantum-ui** is Vritti's internal component library - a modern, TypeScript-first React component library built on Radix UI primitives and styled with Tailwind CSS v4.
+
+<Info>
+**Package Details**
+- Version: 0.2.7
+- Repository: [github.com/vritti-hub/quantum-ui](https://github.com/vritti-hub/quantum-ui)
+- Storybook: [vritti-hub.github.io/quantum-ui](https://vritti-hub.github.io/quantum-ui)
+</Info>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Radix UI Primitives" icon="cube">
+    Built on accessible, unstyled Radix UI components for proper semantics and ARIA support
+  </Card>
+  <Card title="Tailwind CSS v4" icon="paintbrush">
+    Styled with Tailwind CSS v4 using OKLch color space for perceptually-uniform colors
+  </Card>
+  <Card title="React 18/19 Support" icon="react">
+    Full compatibility with React 18.x and React 19.x
+  </Card>
+  <Card title="Smart Form System" icon="file-signature">
+    Auto-wiring with react-hook-form, TanStack Query integration, and API error mapping
+  </Card>
+</CardGroup>
+
+## Installation
+
+```bash
+pnpm add @vritti/quantum-ui
+```
+
+### Peer Dependencies
+
+Ensure you have these peer dependencies installed:
+
+```bash
+pnpm add react react-dom react-router-dom @tanstack/react-query
+```
+
+## Quick Start
+
+### 1. Import CSS
+
+Import the component library CSS in your app entry point:
+
+```tsx
+// main.tsx or App.tsx
+import '@vritti/quantum-ui/index.css';
+```
+
+### 2. Configure quantum-ui
+
+Create a configuration file for API integration:
+
+```ts
+// quantum-ui.config.ts
+import { defineConfig } from '@vritti/quantum-ui';
+
+export default defineConfig({
+  axios: {
+    baseURL: '/api',
+    timeout: 30000,
+    withCredentials: true,
+  },
+  auth: {
+    tokenEndpoint: 'cloud-api/auth/token',
+    refreshEndpoint: 'cloud-api/auth/refresh',
+  },
+  csrf: {
+    endpoint: '/csrf/token',
+    enabled: true,
+  },
+});
+```
+
+Apply configuration at app startup:
+
+```tsx
+// main.tsx
+import config from './quantum-ui.config';
+import { configureQuantumUI } from '@vritti/quantum-ui';
+
+configureQuantumUI(config);
+```
+
+### 3. Use Components
+
+Import components individually for tree-shaking:
+
+```tsx
+import { Button } from '@vritti/quantum-ui/Button';
+import { TextField } from '@vritti/quantum-ui/TextField';
+import { Card, CardHeader, CardTitle, CardContent } from '@vritti/quantum-ui/Card';
+
+function LoginForm() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Login</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <TextField name="email" label="Email" type="email" />
+        <TextField name="password" label="Password" type="password" />
+        <Button type="submit">Sign In</Button>
+      </CardContent>
+    </Card>
+  );
+}
+```
+
+## Import Patterns
+
+Two import patterns are available:
+
+```tsx
+// Individual imports (recommended - tree-shaking)
+import { Button } from '@vritti/quantum-ui/Button';
+import { TextField } from '@vritti/quantum-ui/TextField';
+
+// Bulk imports (convenience)
+import { Button, TextField, Card } from '@vritti/quantum-ui';
+```
+
+<Warning>
+Always prefer individual imports in production applications to minimize bundle size.
+</Warning>
+
+## Project Structure
+
+```
+quantum-ui/
+├── lib/                          # Published source code
+│   ├── components/               # 17 public components
+│   ├── config/                   # Configuration system
+│   ├── utils/                    # Utilities (formHelpers, axios)
+│   ├── index.ts                  # Main barrel export
+│   └── index.css                 # Theme tokens and styles
+├── shadcn/                       # Base shadcn/ui components (internal)
+├── dist/                         # Build output
+├── src/                          # Demo/dev app
+└── vite.config.ts                # Build configuration
+```
+
+## Available Components
+
+| Component | Description |
+|-----------|-------------|
+| Badge | Status badges with variants |
+| Button | Primary action button with loading state |
+| Card | Container with header, content, footer |
+| Checkbox | Accessible checkbox input |
+| DatePicker | Calendar-based date selection |
+| Field | Field system primitives |
+| Form | Smart form with react-hook-form |
+| OTPField | One-time password input |
+| PasswordField | Password with visibility toggle |
+| PhoneField | International phone input |
+| Progress | Progress bar |
+| Skeleton | Loading placeholder |
+| Sonner | Toast notifications |
+| Spinner | Loading spinner |
+| TextArea | Multi-line text input |
+| TextField | Text input with label |
+| ThemeToggle | Dark/light mode switch |
+| Typography | Text styling component |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Components" href="/projects/quantum-ui/components">
+    Browse the full component catalog with examples
+  </Card>
+  <Card title="Design Tokens" href="/projects/quantum-ui/design-tokens">
+    Learn about colors, spacing, and typography tokens
+  </Card>
+  <Card title="Form System" href="/projects/quantum-ui/form-system">
+    Deep dive into the smart form integration
+  </Card>
+  <Card title="Contributing" href="/projects/quantum-ui/contributing">
+    How to add new components to the library
+  </Card>
+</CardGroup>

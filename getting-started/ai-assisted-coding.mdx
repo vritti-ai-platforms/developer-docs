@@ -1,0 +1,281 @@
+---
+title: "AI-Assisted Coding"
+description: "Using Claude Code and Cursor for faster development"
+---
+
+# AI-Assisted Coding
+
+Vritti projects are optimized for AI-assisted development using Claude Code and Cursor IDE.
+
+## Claude Code
+
+[Claude Code](https://docs.anthropic.com/claude-code) is Anthropic's CLI tool for AI-assisted coding.
+
+### Installation
+
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+### Usage
+
+Navigate to any Vritti project and start Claude Code:
+
+```bash
+cd ~/Documents/Vritti/vritti-api-nexus
+claude
+```
+
+### Common Commands
+
+```bash
+# Ask about the codebase
+> How is authentication implemented?
+
+# Generate code
+> Create a new endpoint for user preferences
+
+# Fix bugs
+> The login flow is failing, can you investigate?
+
+# Refactor
+> Refactor the tenant service to use the repository pattern
+```
+
+### Project Context
+
+Each Vritti project includes a `CLAUDE.md` file that provides context to Claude Code about:
+
+- Project architecture
+- Coding conventions
+- Important patterns
+- File structure
+
+<Tip>
+Claude Code automatically reads `CLAUDE.md` to understand project context. Keep this file updated!
+</Tip>
+
+## Cursor IDE
+
+[Cursor](https://cursor.sh) is an AI-first IDE built on VS Code.
+
+### Installation
+
+Download from [cursor.sh](https://cursor.sh)
+
+### Setup
+
+1. Open a Vritti project in Cursor
+2. The AI will automatically index the codebase
+3. Use `Cmd+K` (or `Ctrl+K`) to ask questions
+
+### Features
+
+| Feature | Shortcut | Description |
+|---------|----------|-------------|
+| Chat | `Cmd+L` | Open AI chat panel |
+| Edit | `Cmd+K` | AI-powered editing |
+| Autocomplete | `Tab` | Accept AI suggestions |
+| Explain | Select + `Cmd+L` | Explain selected code |
+
+### Configuration
+
+Add to `.cursor/settings.json`:
+
+```json
+{
+  "cursor.contextFiles": [
+    "CLAUDE.md",
+    "package.json",
+    "tsconfig.json"
+  ]
+}
+```
+
+## Best Practices
+
+### 1. Provide Context
+
+Be specific about what you're working on:
+
+```bash
+# Good
+> I'm working on the auth module. Create a guard that validates
+> onboarding tokens and checks if the user has completed email verification.
+
+# Less helpful
+> Create a guard
+```
+
+### 2. Reference Files
+
+Point to relevant files:
+
+```bash
+> Looking at src/auth/guards/vritti-auth.guard.ts, create a similar
+> guard for SSE connections that validates tokens from query params.
+```
+
+### 3. Specify Patterns
+
+Reference existing patterns:
+
+```bash
+> Following the pattern in TenantBaseRepository, create a UserRepository
+> that extends it and adds methods for finding users by email.
+```
+
+### 4. Iterate
+
+Build up complex features step by step:
+
+```bash
+> First, let's create the DTO for the new endpoint
+> Now, let's add the service method
+> Finally, let's wire it up in the controller
+```
+
+## CLAUDE.md Files
+
+Each project has a `CLAUDE.md` that serves as a guide for AI assistants.
+
+### Structure
+
+```markdown
+# Project Name - Development Best Practices
+
+## Project Overview
+Brief description and tech stack
+
+## Directory Structure
+```
+src/
+├── modules/
+├── common/
+└── ...
+```
+
+## Critical Best Practices
+Key patterns and conventions
+
+## Common Patterns
+Code examples and templates
+```
+
+### Keeping Updated
+
+Update `CLAUDE.md` when:
+
+- Adding new architectural patterns
+- Changing conventions
+- Adding important dependencies
+- Discovering common mistakes
+
+## Example Workflows
+
+### Adding a New Feature
+
+```bash
+# 1. Understand existing patterns
+> Show me how existing CRUD endpoints are structured in this project
+
+# 2. Plan the feature
+> I need to add a notifications feature. What files would I need to create?
+
+# 3. Generate code
+> Create the NotificationService following the pattern in UserService
+
+# 4. Test
+> Write unit tests for the NotificationService
+```
+
+### Debugging
+
+```bash
+# 1. Describe the issue
+> Users are getting 401 errors after their session expires,
+> even though they have a valid refresh token
+
+# 2. Investigate
+> Check the refresh token flow in AuthService
+
+# 3. Fix
+> The issue is that we're not checking the token binding hash. Fix it.
+```
+
+### Refactoring
+
+```bash
+# 1. Understand current state
+> Analyze the current error handling approach across the codebase
+
+# 2. Plan refactor
+> How should we refactor to use RFC 7807 error responses consistently?
+
+# 3. Execute
+> Update the UserController to use the new error handling pattern
+```
+
+## Tips for Vritti Projects
+
+### For quantum-ui
+
+```bash
+# Component generation
+> Create a new Tooltip component following the Button component pattern
+
+# Design tokens
+> What color tokens are available for success states?
+```
+
+### For api-sdk
+
+```bash
+# Understanding modules
+> Explain how the DatabaseModule handles multi-tenancy
+
+# Extending functionality
+> Add a new decorator for rate limiting
+```
+
+### For vritti-api-nexus
+
+```bash
+# API development
+> Create a new endpoint for user preferences following REST conventions
+
+# Database queries
+> Write a Drizzle query to find users who haven't logged in for 30 days
+```
+
+### For vritti-web-nexus / vritti-auth
+
+```bash
+# React components
+> Create a new settings page using quantum-ui components
+
+# Form handling
+> Add validation for the phone number field using Zod
+```
+
+## Limitations
+
+<Warning>
+AI assistants may:
+- Hallucinate APIs or patterns that don't exist
+- Suggest outdated approaches
+- Miss project-specific conventions
+
+Always review generated code before committing.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CLAUDE.md Files" icon="file-lines" href="/getting-started/claude-md-files">
+    Learn how to write effective CLAUDE.md files
+  </Card>
+  <Card title="Prompt Patterns" icon="message" href="/getting-started/prompt-patterns">
+    Effective prompts for development tasks
+  </Card>
+</CardGroup>

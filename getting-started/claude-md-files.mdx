@@ -1,0 +1,306 @@
+---
+title: "CLAUDE.md Files"
+description: "How CLAUDE.md files work and how to maintain them"
+---
+
+# CLAUDE.md Files
+
+`CLAUDE.md` files provide context to AI assistants about project architecture, conventions, and patterns.
+
+## Purpose
+
+When you open a project with Claude Code or Cursor, the AI reads `CLAUDE.md` to understand:
+
+- Project structure and organization
+- Coding conventions and patterns
+- Technology choices and why
+- Common pitfalls to avoid
+- Examples of correct implementations
+
+## Location
+
+Place `CLAUDE.md` in the project root:
+
+```
+my-project/
+├── CLAUDE.md          # AI context file
+├── package.json
+├── src/
+└── ...
+```
+
+## Structure
+
+A well-structured `CLAUDE.md` includes:
+
+### 1. Project Overview
+
+```markdown
+# Project Name - Development Best Practices
+
+Brief description of what the project does, its role in the ecosystem,
+and the primary technologies used.
+
+## Tech Stack
+- Framework: NestJS 11
+- Database: PostgreSQL + Drizzle ORM
+- Runtime: Node.js 22
+```
+
+### 2. Directory Structure
+
+```markdown
+## Directory Structure
+
+```
+src/
+├── modules/           # Feature modules
+│   ├── auth/         # Authentication
+│   ├── users/        # User management
+│   └── tenants/      # Multi-tenancy
+├── common/           # Shared utilities
+│   ├── decorators/   # Custom decorators
+│   ├── guards/       # Auth guards
+│   └── filters/      # Exception filters
+└── db/               # Database
+    ├── schema/       # Drizzle schemas
+    └── migrations/   # Database migrations
+```
+```
+
+### 3. Critical Best Practices
+
+```markdown
+## Critical Best Practices
+
+### 1. Always Use Type-Safe Queries
+
+```typescript
+// WRONG - Raw SQL
+const users = await db.execute('SELECT * FROM users');
+
+// CORRECT - Drizzle query
+const users = await db.query.users.findMany({
+  where: eq(users.tenantId, tenantId),
+});
+```
+
+### 2. Never Skip Authentication
+
+All endpoints must be authenticated unless explicitly marked:
+
+```typescript
+// Public endpoint
+@Public()
+@Get('health')
+healthCheck() { ... }
+
+// Protected endpoint (default)
+@Get('profile')
+getProfile(@UserId() userId: string) { ... }
+```
+```
+
+### 4. Common Patterns
+
+```markdown
+## Common Patterns
+
+### Creating a New Module
+
+1. Create directory under `src/modules/`
+2. Add module file with `@Module()` decorator
+3. Create service with business logic
+4. Create controller with endpoints
+5. Register in `AppModule`
+
+### Example Service
+
+```typescript
+@Injectable()
+export class UserService extends TenantBaseRepository<typeof users> {
+  constructor(database: TenantDatabaseService) {
+    super(database, users);
+  }
+
+  async findByEmail(email: string) {
+    return this.model.findFirst({
+      where: { email },
+    });
+  }
+}
+```
+```
+
+### 5. Do's and Don'ts
+
+```markdown
+## Do's and Don'ts
+
+### DO:
+- Use design system tokens for colors
+- Follow existing naming conventions
+- Add proper TypeScript types
+- Write meaningful error messages
+
+### DON'T:
+- Hardcode colors or magic numbers
+- Skip validation on inputs
+- Use `any` type
+- Commit secrets to the repository
+```
+
+## Vritti Project Examples
+
+### quantum-ui CLAUDE.md
+
+Key sections:
+- Component wrapping pattern (always alias shadcn imports)
+- Design token usage (never hardcode colors)
+- Export registration checklist
+- CVA for variants
+
+### api-sdk CLAUDE.md
+
+Key sections:
+- Multi-tenant database patterns
+- Guard and decorator usage
+- Repository base classes
+- Error handling with RFC 7807
+
+### vritti-api-nexus CLAUDE.md
+
+Key sections:
+- Module structure
+- Authentication flow
+- Onboarding steps
+- API conventions
+
+### vritti-web-nexus / vritti-auth CLAUDE.md
+
+Key sections:
+- Component patterns
+- Form handling with react-hook-form
+- TanStack Query patterns
+- Module Federation setup
+
+## Maintaining CLAUDE.md
+
+### When to Update
+
+Update `CLAUDE.md` when:
+
+<Steps>
+  <Step title="Adding New Patterns">
+    When you establish a new architectural pattern, document it immediately.
+  </Step>
+
+  <Step title="Fixing Common Mistakes">
+    If you see the same mistake repeatedly (in code reviews or AI output), add it to the "Don't" section.
+  </Step>
+
+  <Step title="Changing Conventions">
+    When conventions change, update the file so AI doesn't suggest the old way.
+  </Step>
+
+  <Step title="Adding Dependencies">
+    When adding important new dependencies, document how to use them.
+  </Step>
+</Steps>
+
+### Review Checklist
+
+Before committing changes to `CLAUDE.md`:
+
+- [ ] Examples compile and work
+- [ ] Patterns match current codebase
+- [ ] No outdated information
+- [ ] Clear and concise explanations
+- [ ] Do's and Don'ts are accurate
+
+## Template
+
+Here's a minimal template for new projects:
+
+```markdown
+# [Project Name] - Development Best Practices
+
+## Project Overview
+
+[Brief description of the project]
+
+## Tech Stack
+
+- [Primary framework]
+- [Database]
+- [Key libraries]
+
+## Directory Structure
+
+```
+src/
+├── [main directories]
+└── ...
+```
+
+## Critical Best Practices
+
+### 1. [Most Important Pattern]
+
+```typescript
+// Example code
+```
+
+### 2. [Second Pattern]
+
+```typescript
+// Example code
+```
+
+## Common Patterns
+
+### [Pattern Name]
+
+[Description and example]
+
+## Do's and Don'ts
+
+### DO:
+- [Good practice 1]
+- [Good practice 2]
+
+### DON'T:
+- [Bad practice 1]
+- [Bad practice 2]
+
+## Resources
+
+- [Link to documentation]
+- [Link to examples]
+```
+
+## Tips
+
+<AccordionGroup>
+  <Accordion title="Keep it Focused">
+    CLAUDE.md should be concise. Include only the most important patterns. For detailed documentation, link to other files.
+  </Accordion>
+
+  <Accordion title="Use Code Examples">
+    Concrete code examples are more effective than abstract descriptions. Show both correct and incorrect patterns.
+  </Accordion>
+
+  <Accordion title="Update Regularly">
+    Treat CLAUDE.md as living documentation. Regular updates keep AI suggestions accurate.
+  </Accordion>
+
+  <Accordion title="Test with AI">
+    After updating, test by asking the AI questions to verify it gives correct answers.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<Card title="Prompt Patterns" icon="message" href="/getting-started/prompt-patterns">
+  Learn effective prompts for development tasks
+</Card>

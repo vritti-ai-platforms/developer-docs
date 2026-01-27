@@ -1,0 +1,132 @@
+---
+title: "Welcome to Vritti"
+description: "Internal developer documentation for the Vritti SaaS Platform"
+---
+
+# Welcome to Vritti Developer Docs
+
+Welcome to the internal developer documentation for **Vritti** - a modern, multi-tenant SaaS platform built with cutting-edge technologies.
+
+<Info>
+This documentation is for internal developers working on the Vritti ecosystem. It covers architecture, development guidelines, and operational procedures.
+</Info>
+
+## Quick Links
+
+<CardGroup cols={2}>
+  <Card title="Ecosystem Overview" icon="sitemap" href="/getting-started/ecosystem-overview">
+    Learn about all 7 projects in the Vritti ecosystem
+  </Card>
+  <Card title="Tech Stack" icon="layer-group" href="/getting-started/tech-stack">
+    React 19, NestJS 11, Drizzle ORM, Tailwind v4, and more
+  </Card>
+  <Card title="Local Setup" icon="laptop-code" href="/getting-started/local-setup">
+    Get your development environment running
+  </Card>
+  <Card title="AI-Assisted Development" icon="robot" href="/getting-started/ai-assisted-coding">
+    Use Claude Code and Cursor for faster development
+  </Card>
+</CardGroup>
+
+## Platform Architecture
+
+Vritti is built as a collection of independent projects that work together:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    VRITTI ECOSYSTEM                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  SHARED PACKAGES (NPM)                                       │
+│  ├─ @vritti/quantum-ui    → Component library               │
+│  └─ @vritti/api-sdk       → Backend SDK                     │
+│                                                              │
+│  FRONTEND APPS                                               │
+│  ├─ vritti-web-nexus      → Main SaaS dashboard (MF Host)   │
+│  ├─ vritti-auth           → Auth micro-frontend (MF Remote) │
+│  └─ vritti-landing        → Marketing site                  │
+│                                                              │
+│  BACKEND                                                     │
+│  └─ vritti-api-nexus      → API Gateway (NestJS)            │
+│                                                              │
+│  INDEPENDENT                                                 │
+│  └─ slicingpie            → Equity management app           │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Key Features
+
+<AccordionGroup>
+  <Accordion title="Multi-Tenant Architecture">
+    - Database-per-tenant isolation
+    - Automatic tenant context injection
+    - Subdomain-based routing
+  </Accordion>
+
+  <Accordion title="Micro-Frontend Architecture">
+    - Module Federation for independent deployments
+    - vritti-auth loaded dynamically into vritti-web-nexus
+    - Shared component library (quantum-ui)
+  </Accordion>
+
+  <Accordion title="Modern Authentication">
+    - JWT with refresh token rotation
+    - Passwordless (WebAuthn/Passkeys)
+    - Multi-factor authentication (TOTP, SMS)
+    - OAuth (Google, Microsoft)
+  </Accordion>
+
+  <Accordion title="Developer Experience">
+    - TypeScript everywhere
+    - CLAUDE.md files for AI-assisted development
+    - Comprehensive API documentation
+    - Storybook for component development
+  </Accordion>
+</AccordionGroup>
+
+## Getting Started
+
+<Steps>
+  <Step title="Review Prerequisites">
+    Ensure you have Node.js 22+, pnpm, Docker, and other tools installed.
+
+    [View Prerequisites →](/getting-started/prerequisites)
+  </Step>
+
+  <Step title="Clone Repositories">
+    Clone the projects you'll be working on and install dependencies.
+
+    [View Setup Guide →](/getting-started/local-setup)
+  </Step>
+
+  <Step title="Configure Environment">
+    Set up environment variables for local development.
+
+    [View Environment Variables →](/getting-started/environment-variables)
+  </Step>
+
+  <Step title="Start Development">
+    Run the services locally and start building.
+
+    [View Running Locally →](/getting-started/running-locally)
+  </Step>
+</Steps>
+
+## Documentation Structure
+
+| Section | Description |
+|---------|-------------|
+| **Getting Started** | Setup guides and ecosystem overview |
+| **Architecture** | System design, patterns, and diagrams |
+| **Projects** | Individual project documentation |
+| **Features** | Feature-specific guides (auth, onboarding, etc.) |
+| **API Reference** | OpenAPI documentation for all endpoints |
+| **Guidelines** | Code standards and best practices |
+| **Operations** | Deployment and monitoring guides |
+
+## Support
+
+- **Questions**: Open an issue in the relevant repository
+- **Feedback**: Contribute to these docs via PR
+- **Emergency**: Contact the platform team directly

@@ -1,0 +1,385 @@
+---
+title: "Logging"
+description: "Unified logging with Winston, correlation IDs, and PII masking"
+---
+
+# Logging Module
+
+The logging module provides unified logging with environment presets, correlation ID tracking, and PII masking.
+
+## LoggerModule
+
+### Basic Setup
+
+```typescript
+import { LoggerModule } from '@vritti/api-sdk';
+
+@Module({
+  imports: [
+    LoggerModule.forRoot({
+      environment: 'development',
+      appName: 'my-api',
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### Full Configuration
+
+```typescript
+LoggerModule.forRoot({
+  // Environment preset
+  environment: 'production',  // development | staging | production | test
+  appName: 'vritti-api',
+
+  // Override preset defaults
+  level: 'warn',              // debug | log | warn | error
+  format: 'json',             // text | json
+
+  // File logging
+  enableFileLogger: true,
+  filePath: './logs',
+  maxFiles: '14d',            // Keep 14 days
+
+  // Correlation ID
+  enableCorrelationId: true,
+
+  // HTTP logging
+  enableHttpLogger: true,
+  httpLogger: {
+    enableRequestLog: false,  // Don't log requests in production
+    enableResponseLog: true,
+    slowRequestThreshold: 5000,  // Log slow requests > 5s
+  },
+})
+```
+
+## Environment Presets
+
+| Preset | Level | Format | File Log | Request Log | Response Log |
+|--------|-------|--------|----------|-------------|--------------|
+| `development` | debug | text | No | Yes | Yes |
+| `staging` | log | json | Yes | Yes | Yes |
+| `production` | warn | json | Yes | No | Yes |
+| `test` | error | json | No | No | No |
+
+## LoggerService
+
+### Basic Usage
+
+```typescript
+import { LoggerService } from '@vritti/api-sdk';
+
+@Injectable()
+export class UserService {
+  constructor(private logger: LoggerService) {
+    this.logger.setContext('UserService');
+  }
+
+  async createUser(email: string) {
+    this.logger.log(`Creating user: ${email}`);
+
+    try {
+      const user = await this.userRepo.create({ email });
+      this.logger.debug('User created', { userId: user.id });
+      return user;
+    } catch (error) {
+      this.logger.error('Failed to create user', error.stack);
+      throw error;
+    }
+  }
+}
+```
+
+### Methods
+
+| Method | Description | Example |
+|--------|-------------|---------|
+| `log(message, context?)` | Info level | General information |
+| `error(message, trace?, context?)` | Error level | Errors with stack trace |
+| `warn(message, context?)` | Warning level | Potential issues |
+| `debug(message, context?)` | Debug level | Development details |
+| `verbose(message, context?)` | Verbose level | Detailed tracing |
+
+### Structured Logging
+
+```typescript
+this.logger.logWithMetadata('log', 'User action', {
+  userId: 'usr_123',
+  action: 'login',
+  ip: request.ip,
+}, 'AuthService');
+```
+
+Output (JSON format):
+```json
+{
+  "timestamp": "2024-01-15T10:30:00.000Z",
+  "level": "info",
+  "context": "AuthService",
+  "message": "User action",
+  "metadata": {
+    "userId": "usr_123",
+    "action": "login",
+    "ip": "192.168.1.1"
+  },
+  "correlationId": "abc-123-def"
+}
+```
+
+### Child Loggers
+
+Create scoped loggers:
+
+```typescript
+const userLogger = this.logger.child('UserModule');
+userLogger.log('Processing user');  // Context: UserModule
+```
+
+## Correlation IDs
+
+Track requests across services with correlation IDs.
+
+### Automatic Generation
+
+The `CorrelationIdMiddleware` generates IDs automatically:
+
+```typescript
+// Incoming request without ID
+// → Generates: "550e8400-e29b-41d4-a716-446655440000"
+
+// Incoming request with x-correlation-id header
+// → Uses provided ID
+```
+
+### Manual Access
+
+```typescript
+import {
+  generateCorrelationId,
+  getCorrelationContext,
+  runWithCorrelationContext,
+} from '@vritti/api-sdk';
+
+// Get current correlation ID
+const correlationId = getCorrelationContext();
+
+// Run code with specific ID
+await runWithCorrelationContext('custom-id', async () => {
+  // All logs here will have correlationId: 'custom-id'
+  this.logger.log('Processing...');
+});
+```
+
+### Propagating IDs
+
+Pass correlation IDs to downstream services:
+
+```typescript
+@Injectable()
+export class ExternalService {
+  async callDownstream() {
+    const correlationId = getCorrelationContext();
+
+    return fetch('https://api.example.com/data', {
+      headers: {
+        'x-correlation-id': correlationId,
+      },
+    });
+  }
+}
+```
+
+## HTTP Logging
+
+### HttpLoggerInterceptor
+
+Logs HTTP requests and responses automatically:
+
+```typescript
+// Request log (if enabled)
+{
+  "level": "info",
+  "message": "Incoming request",
+  "method": "POST",
+  "url": "/api/users",
+  "headers": {
+    "content-type": "application/json",
+    "authorization": "[REDACTED]"  // PII masked
+  },
+  "correlationId": "abc-123"
+}
+
+// Response log
+{
+  "level": "info",
+  "message": "Request completed",
+  "method": "POST",
+  "url": "/api/users",
+  "statusCode": 201,
+  "duration": 145,
+  "correlationId": "abc-123"
+}
+```
+
+### Slow Request Detection
+
+Requests exceeding the threshold are logged as warnings:
+
+```typescript
+// slowRequestThreshold: 5000 (5 seconds)
+
+{
+  "level": "warn",
+  "message": "Slow request detected",
+  "method": "GET",
+  "url": "/api/reports/generate",
+  "duration": 7823,
+  "correlationId": "abc-123"
+}
+```
+
+## PII Masking
+
+Sensitive data is automatically masked:
+
+### Masked Headers
+
+- `authorization` → `[REDACTED]`
+- `x-api-key` → `[REDACTED]`
+- `cookie` → `[REDACTED]`
+
+### Masked Fields
+
+Configure additional fields:
+
+```typescript
+LoggerModule.forRoot({
+  piiFields: ['password', 'ssn', 'creditCard'],
+})
+```
+
+## File Logging
+
+### Configuration
+
+```typescript
+LoggerModule.forRoot({
+  enableFileLogger: true,
+  filePath: './logs',
+  maxFiles: '14d',       // Keep 14 days of logs
+  maxSize: '20m',        // 20MB per file
+})
+```
+
+### Output Files
+
+```
+logs/
+├── application-2024-01-15.log    # All logs
+├── application-2024-01-14.log
+├── error-2024-01-15.log          # Errors only
+└── error-2024-01-14.log
+```
+
+### Log Format
+
+File logs are JSON for easy parsing:
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","level":"info","context":"UserService","message":"User created","metadata":{"userId":"usr_123"},"correlationId":"abc-123"}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use appropriate log levels">
+    - `debug`: Development details, variable values
+    - `log`: Normal operations, request handling
+    - `warn`: Recoverable issues, deprecations
+    - `error`: Failures requiring attention
+  </Accordion>
+
+  <Accordion title="Include context">
+    Always set context for easier filtering:
+    ```typescript
+    this.logger.setContext('PaymentService');
+    ```
+  </Accordion>
+
+  <Accordion title="Use structured logging">
+    Pass metadata objects instead of string interpolation:
+    ```typescript
+    // Good
+    this.logger.logWithMetadata('log', 'Payment processed', {
+      orderId: order.id,
+      amount: order.total,
+    });
+
+    // Less useful
+    this.logger.log(`Payment ${orderId} processed for $${amount}`);
+    ```
+  </Accordion>
+
+  <Accordion title="Don't log sensitive data">
+    Never log passwords, tokens, or PII:
+    ```typescript
+    // Bad
+    this.logger.log(`User login: ${email}, password: ${password}`);
+
+    // Good
+    this.logger.log('User login attempt', { email });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Integration with External Services
+
+### Sending to Logging Services
+
+Configure Winston transports for external services:
+
+```typescript
+// Example: Send to Datadog
+import { createLogger, transports } from 'winston';
+
+// The LoggerService uses Winston internally
+// Configure additional transports via Winston's API
+```
+
+### Log Aggregation
+
+JSON format enables easy integration with:
+- Elasticsearch / ELK Stack
+- Datadog
+- Splunk
+- CloudWatch Logs
+- Grafana Loki
+
+## Debugging
+
+### Enable Debug Logs
+
+```bash
+# Environment variable
+LOG_LEVEL=debug
+
+# Or in configuration
+LoggerModule.forRoot({
+  level: 'debug',
+})
+```
+
+### Viewing Logs
+
+```bash
+# Development (text format)
+[2024-01-15 10:30:00] [INFO] [UserService] User created
+
+# Production (JSON format)
+{"timestamp":"2024-01-15T10:30:00.000Z","level":"info",...}
+
+# Parse JSON logs
+cat logs/application.log | jq '.message'
+```

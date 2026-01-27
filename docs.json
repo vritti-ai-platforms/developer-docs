@@ -1,15 +1,142 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Developer Knowledge Base",
-  "description": "Internal documentation for understanding feature implementations",
+  "name": "Vritti Developer Docs",
+  "description": "Internal developer documentation for Vritti SaaS Platform",
   "colors": {
     "primary": "#3B82F6",
     "light": "#F8FAFC",
     "dark": "#0F172A"
   },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "favicon": "/favicon.svg",
   "navigation": {
     "tabs": [
+      {
+        "tab": "Getting Started",
+        "groups": [
+          {
+            "group": "Welcome",
+            "pages": [
+              "getting-started/index",
+              "getting-started/ecosystem-overview",
+              "getting-started/tech-stack"
+            ]
+          },
+          {
+            "group": "Environment Setup",
+            "pages": [
+              "getting-started/prerequisites",
+              "getting-started/local-setup",
+              "getting-started/environment-variables",
+              "getting-started/running-locally"
+            ]
+          },
+          {
+            "group": "Agentic Development",
+            "pages": [
+              "getting-started/ai-assisted-coding",
+              "getting-started/claude-md-files",
+              "getting-started/prompt-patterns"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Architecture",
+        "groups": [
+          {
+            "group": "System Overview",
+            "pages": [
+              "architecture/overview",
+              "architecture/monorepo-structure",
+              "architecture/project-relationships"
+            ]
+          },
+          {
+            "group": "Backend Architecture",
+            "pages": [
+              "architecture/backend/nestjs-fastify",
+              "architecture/backend/module-structure",
+              "architecture/backend/guards-decorators",
+              "architecture/backend/multi-tenancy"
+            ]
+          },
+          {
+            "group": "Frontend Architecture",
+            "pages": [
+              "architecture/frontend/module-federation",
+              "architecture/frontend/micro-frontends",
+              "architecture/frontend/state-management",
+              "architecture/frontend/routing"
+            ]
+          },
+          {
+            "group": "Database",
+            "pages": [
+              "architecture/database/drizzle-orm",
+              "architecture/database/schema-overview",
+              "architecture/database/migrations",
+              "architecture/database/multi-tenant-schemas"
+            ]
+          },
+          {
+            "group": "Diagrams",
+            "pages": [
+              "architecture/diagrams/system-architecture",
+              "architecture/diagrams/auth-flow",
+              "architecture/diagrams/data-flow"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Projects",
+        "groups": [
+          {
+            "group": "Shared Libraries",
+            "pages": [
+              "projects/quantum-ui/overview",
+              "projects/quantum-ui/components",
+              "projects/quantum-ui/design-tokens",
+              "projects/quantum-ui/form-system",
+              "projects/quantum-ui/contributing",
+              "projects/api-sdk/overview",
+              "projects/api-sdk/auth-module",
+              "projects/api-sdk/drizzle-integration",
+              "projects/api-sdk/logging"
+            ]
+          },
+          {
+            "group": "Backend",
+            "pages": [
+              "projects/api-nexus/overview",
+              "projects/api-nexus/setup",
+              "projects/api-nexus/module-guide",
+              "projects/api-nexus/services",
+              "projects/api-nexus/testing"
+            ]
+          },
+          {
+            "group": "Frontend Applications",
+            "pages": [
+              "projects/web-nexus/overview",
+              "projects/web-nexus/setup",
+              "projects/web-nexus/federation-host",
+              "projects/auth/overview",
+              "projects/auth/setup",
+              "projects/auth/pages-flows",
+              "projects/landing/overview",
+              "projects/landing/setup",
+              "projects/slicingpie/overview",
+              "projects/slicingpie/setup"
+            ]
+          }
+        ]
+      },
       {
         "tab": "Features",
         "groups": [
@@ -20,9 +147,152 @@
           {
             "group": "Authentication",
             "pages": [
+              "features/auth/signup-login",
+              "features/auth/jwt-sessions",
+              "features/auth/token-refresh",
               "features/csrf",
               "features/passkeys",
               "features/mfa"
+            ]
+          },
+          {
+            "group": "OAuth",
+            "pages": [
+              "features/oauth/overview",
+              "features/oauth/google",
+              "features/oauth/microsoft"
+            ]
+          },
+          {
+            "group": "Onboarding",
+            "pages": [
+              "features/onboarding/flow-overview",
+              "features/onboarding/email-verification",
+              "features/onboarding/phone-verification",
+              "features/onboarding/password-setup",
+              "features/onboarding/2fa-setup"
+            ]
+          },
+          {
+            "group": "Communication",
+            "pages": [
+              "features/communication/email-brevo",
+              "features/communication/sms-twilio",
+              "features/communication/whatsapp",
+              "features/communication/sse-realtime"
+            ]
+          },
+          {
+            "group": "Multi-Tenancy",
+            "pages": [
+              "features/tenants/overview",
+              "features/tenants/tenant-isolation",
+              "features/tenants/tenant-resolution"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/introduction",
+              "api/authentication",
+              "api/error-handling"
+            ]
+          }
+        ],
+        "openapi": "openapi.json"
+      },
+      {
+        "tab": "Guidelines",
+        "groups": [
+          {
+            "group": "Code Standards",
+            "pages": [
+              "guidelines/code-style",
+              "guidelines/typescript-patterns",
+              "guidelines/naming-conventions",
+              "guidelines/file-structure"
+            ]
+          },
+          {
+            "group": "Frontend Development",
+            "pages": [
+              "guidelines/frontend/component-patterns",
+              "guidelines/frontend/styling-tailwind",
+              "guidelines/frontend/form-handling",
+              "guidelines/frontend/state-management",
+              "guidelines/frontend/error-handling"
+            ]
+          },
+          {
+            "group": "Backend Development",
+            "pages": [
+              "guidelines/backend/module-patterns",
+              "guidelines/backend/service-patterns",
+              "guidelines/backend/repository-patterns",
+              "guidelines/backend/dto-validation",
+              "guidelines/backend/error-handling"
+            ]
+          },
+          {
+            "group": "Testing",
+            "pages": [
+              "guidelines/testing/unit-tests",
+              "guidelines/testing/integration-tests",
+              "guidelines/testing/e2e-tests",
+              "guidelines/testing/test-utilities"
+            ]
+          },
+          {
+            "group": "Git & CI/CD",
+            "pages": [
+              "guidelines/git/branching-strategy",
+              "guidelines/git/commit-conventions",
+              "guidelines/git/pull-requests",
+              "guidelines/git/pipelines",
+              "guidelines/git/deployment"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Operations",
+        "groups": [
+          {
+            "group": "Deployment",
+            "pages": [
+              "operations/deployment/overview",
+              "operations/deployment/docker",
+              "operations/deployment/kubernetes",
+              "operations/deployment/environment-config"
+            ]
+          },
+          {
+            "group": "Database Operations",
+            "pages": [
+              "operations/database/migrations-guide",
+              "operations/database/backup-restore",
+              "operations/database/drizzle-studio"
+            ]
+          },
+          {
+            "group": "Monitoring",
+            "pages": [
+              "operations/monitoring/logging",
+              "operations/monitoring/health-checks",
+              "operations/monitoring/metrics"
+            ]
+          },
+          {
+            "group": "Troubleshooting",
+            "pages": [
+              "operations/troubleshooting/common-issues",
+              "operations/troubleshooting/debugging",
+              "operations/troubleshooting/performance"
             ]
           }
         ]

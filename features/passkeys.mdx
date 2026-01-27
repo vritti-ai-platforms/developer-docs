@@ -345,8 +345,19 @@ const getErrorMessage = (error: Error | null): string | null => {
   **Solution:** Use `authenticatorAttachment: undefined` to allow cross-platform authenticators, or guide users to set up passkeys on each device.
 </Accordion>
 
-## Related Concepts
+## Related Documentation
 
-- **MFA** - Passkeys can be used as second factor
-- **CSRF Protection** - Uses same HMAC key for OAuth state signing
-- **Session Management** - Passkey login creates standard session tokens
+<CardGroup cols={2}>
+  <Card title="MFA" icon="shield-check" href="/features/mfa">
+    Passkeys can be used as second factor
+  </Card>
+  <Card title="JWT Sessions" icon="key" href="/features/auth/jwt-sessions">
+    Passkey login creates standard session tokens
+  </Card>
+  <Card title="Signup & Login" icon="right-to-bracket" href="/features/auth/signup-login">
+    Core authentication flows
+  </Card>
+  <Card title="CSRF Protection" icon="lock" href="/features/csrf">
+    Uses same HMAC key for OAuth state signing
+  </Card>
+</CardGroup>

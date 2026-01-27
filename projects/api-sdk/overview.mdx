@@ -1,0 +1,313 @@
+---
+title: "api-sdk Overview"
+description: "NestJS SDK for building multi-tenant applications"
+---
+
+# @vritti/api-sdk
+
+**@vritti/api-sdk** is a NestJS SDK providing authentication, multi-tenant database routing, logging, and error handling for the Vritti backend.
+
+<Info>
+**Package Details**
+- Version: 0.1.7
+- Registry: npm (published)
+- Peer: NestJS 11, Fastify 5.6.2
+</Info>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Multi-Tenant Database" icon="database">
+    Automatic tenant context injection and database routing with Drizzle ORM
+  </Card>
+  <Card title="JWT Authentication" icon="lock">
+    Guards and decorators for authentication with refresh token support
+  </Card>
+  <Card title="Unified Logging" icon="file-lines">
+    Winston-based logging with correlation IDs and PII masking
+  </Card>
+  <Card title="RFC 7807 Errors" icon="triangle-exclamation">
+    Standardized error responses following RFC 7807 Problem Details
+  </Card>
+</CardGroup>
+
+## Installation
+
+```bash
+pnpm add @vritti/api-sdk
+```
+
+### Peer Dependencies
+
+```bash
+pnpm add @nestjs/common @nestjs/core @nestjs/config @nestjs/jwt fastify reflect-metadata rxjs
+```
+
+## Quick Start
+
+### 1. Configure the SDK
+
+```typescript
+// main.ts
+import { NestFactory } from '@nestjs/core';
+import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
+import { configureApiSdk } from '@vritti/api-sdk';
+
+// Configure global settings
+configureApiSdk({
+  jwt: {
+    accessTokenExpiry: '15m',
+    refreshTokenExpiry: '30d',
+  },
+  cookie: {
+    refreshCookieName: 'vritti_refresh',
+    refreshCookieSecure: true,
+  },
+});
+
+async function bootstrap() {
+  const app = await NestFactory.create<NestFastifyApplication>(
+    AppModule,
+    new FastifyAdapter()
+  );
+  await app.listen(3000);
+}
+```
+
+### 2. Import Modules
+
+```typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import {
+  AuthConfigModule,
+  DatabaseModule,
+  LoggerModule,
+} from '@vritti/api-sdk';
+import * as schema from './db/schema';
+import * as relations from './db/relations';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+
+    // Logging with environment preset
+    LoggerModule.forRoot({
+      environment: 'development',
+      appName: 'my-api',
+    }),
+
+    // JWT authentication
+    AuthConfigModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get('JWT_SECRET'),
+      }),
+    }),
+
+    // Multi-tenant database
+    DatabaseModule.forServer({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        primaryDb: {
+          host: config.get('DB_HOST'),
+          port: config.get('DB_PORT'),
+          username: config.get('DB_USER'),
+          password: config.get('DB_PASSWORD'),
+          database: config.get('DB_NAME'),
+          schema: 'public',
+        },
+        drizzleSchema: schema,
+        drizzleRelations: relations,
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### 3. Use Decorators
+
+```typescript
+// user.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import { Public, Onboarding, UserId, Tenant } from '@vritti/api-sdk';
+
+@Controller('users')
+export class UserController {
+  // Public endpoint - no auth required
+  @Public()
+  @Get('health')
+  health() {
+    return { status: 'ok' };
+  }
+
+  // Onboarding endpoint - limited auth
+  @Onboarding()
+  @Get('verify-status')
+  verifyStatus(@UserId() userId: string) {
+    return { userId, verified: true };
+  }
+
+  // Protected endpoint - full auth required
+  @Get('profile')
+  getProfile(
+    @UserId() userId: string,
+    @Tenant() tenant: TenantInfo
+  ) {
+    return { userId, tenantId: tenant.id };
+  }
+}
+```
+
+## Module Overview
+
+| Module | Purpose | Import |
+|--------|---------|--------|
+| `AuthConfigModule` | JWT + global auth guard | `AuthConfigModule.forRootAsync()` |
+| `DatabaseModule` | Multi-tenant DB routing | `DatabaseModule.forServer()` |
+| `LoggerModule` | Unified logging | `LoggerModule.forRoot()` |
+| `HttpModule` | CSRF protection | `HttpModule` |
+
+## Exports Overview
+
+### Authentication
+
+```typescript
+export {
+  // Decorators
+  Public,        // Bypass authentication
+  Onboarding,    // Onboarding token only
+  UserId,        // Inject user ID
+  SkipCsrf,      // Skip CSRF for webhooks
+
+  // Guards
+  VrittiAuthGuard,  // Main JWT guard
+  SseAuthGuard,     // SSE/EventSource guard
+
+  // Utilities
+  hashToken,
+  verifyTokenHash,
+};
+```
+
+### Database
+
+```typescript
+export {
+  // Module
+  DatabaseModule,
+
+  // Services
+  PrimaryDatabaseService,   // Tenant registry queries
+  TenantDatabaseService,    // Tenant DB connections
+  TenantContextService,     // Request-scoped tenant
+
+  // Base Classes
+  PrimaryBaseRepository,    // Primary DB CRUD
+  TenantBaseRepository,     // Tenant DB CRUD
+
+  // Decorators
+  Tenant,                   // Inject tenant info
+};
+```
+
+### Logging
+
+```typescript
+export {
+  LoggerModule,
+  LoggerService,
+  HttpLoggerInterceptor,
+  CorrelationIdMiddleware,
+  generateCorrelationId,
+};
+```
+
+### Exceptions
+
+```typescript
+export {
+  // RFC 7807 exceptions
+  BadRequestException,
+  UnauthorizedException,
+  ForbiddenException,
+  NotFoundException,
+  ConflictException,
+  UnprocessableEntityException,
+  TooManyRequestsException,
+  // ... and more
+
+  // Filter
+  HttpExceptionFilter,
+};
+```
+
+## Configuration
+
+### Global Configuration
+
+```typescript
+import { configureApiSdk, defineConfig } from '@vritti/api-sdk';
+
+const config = defineConfig({
+  cookie: {
+    refreshCookieName: 'vritti_refresh',
+    refreshCookieMaxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    refreshCookieSecure: true,
+    refreshCookieSameSite: 'strict',
+    refreshCookieDomain: '.vritti.cloud',
+  },
+  jwt: {
+    accessTokenExpiry: '15m',
+    refreshTokenExpiry: '30d',
+    onboardingTokenExpiry: '24h',
+    validateTokenBinding: true,
+  },
+  guard: {
+    tenantHeaderName: 'x-tenant-id',
+    authHeaderName: 'authorization',
+    tokenPrefix: 'Bearer',
+  },
+});
+
+configureApiSdk(config);
+```
+
+### Getting Configuration
+
+```typescript
+import { getConfig, getJwtExpiry, getRefreshCookieOptions } from '@vritti/api-sdk';
+
+const config = getConfig();
+const jwtExpiry = getJwtExpiry('access'); // '15m'
+const cookieOptions = getRefreshCookieOptions();
+```
+
+## Drizzle Re-exports
+
+For convenience, the SDK re-exports Drizzle ORM:
+
+```typescript
+// Use SDK's drizzle exports for consistent versions
+import { eq, and, or } from '@vritti/api-sdk/drizzle-orm';
+import { pgTable, text, timestamp } from '@vritti/api-sdk/drizzle-pg-core';
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Auth Module" href="/projects/api-sdk/auth-module">
+    Deep dive into authentication guards and decorators
+  </Card>
+  <Card title="Drizzle Integration" href="/projects/api-sdk/drizzle-integration">
+    Multi-tenant database patterns
+  </Card>
+  <Card title="Logging" href="/projects/api-sdk/logging">
+    Unified logging with correlation IDs
+  </Card>
+  <Card title="API Reference" href="/api/introduction">
+    Full API documentation
+  </Card>
+</CardGroup>

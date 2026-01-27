@@ -1,0 +1,362 @@
+---
+title: "Running Locally"
+description: "Start all Vritti services for local development"
+---
+
+# Running Locally
+
+This guide shows how to start all Vritti services for local development.
+
+## Quick Start
+
+For full-stack development, start services in this order:
+
+<Steps>
+  <Step title="Start Database">
+    ```bash
+    cd ~/Documents/Vritti/vritti-api-nexus
+    docker compose up -d postgres
+    ```
+  </Step>
+
+  <Step title="Start Backend">
+    ```bash
+    cd ~/Documents/Vritti/vritti-api-nexus
+    pnpm dev
+    # Running at http://localhost:3002
+    ```
+  </Step>
+
+  <Step title="Start Auth (in new terminal)">
+    ```bash
+    cd ~/Documents/Vritti/vritti-auth
+    pnpm dev
+    # Running at http://localhost:3001
+    ```
+  </Step>
+
+  <Step title="Start Web App (in new terminal)">
+    ```bash
+    cd ~/Documents/Vritti/vritti-web-nexus
+    pnpm dev:ssl
+    # Running at https://local.vrittiai.com:3000
+    ```
+  </Step>
+</Steps>
+
+## Service URLs
+
+| Service | URL | Purpose |
+|---------|-----|---------|
+| Web App | https://local.vrittiai.com:3000 | Main application |
+| Auth Remote | http://localhost:3001 | MF remote (internal) |
+| API | http://localhost:3002 | Backend API |
+| API Docs | http://localhost:3002/api/docs | Swagger UI |
+| Storybook | http://localhost:6006 | Component docs |
+| Drizzle Studio | http://localhost:4983 | Database UI |
+
+## Development Modes
+
+### Full Stack
+
+Run everything for complete local development:
+
+```bash
+# Terminal 1 - Database
+cd vritti-api-nexus && docker compose up postgres
+
+# Terminal 2 - Backend
+cd vritti-api-nexus && pnpm dev
+
+# Terminal 3 - Auth
+cd vritti-auth && pnpm dev
+
+# Terminal 4 - Web
+cd vritti-web-nexus && pnpm dev:ssl
+```
+
+### Frontend Only
+
+If backend is deployed elsewhere:
+
+```bash
+# Update .env
+VITE_API_BASE_URL=https://api.staging.vritti.cloud
+
+# Start frontend
+cd vritti-web-nexus && pnpm dev:ssl
+cd vritti-auth && pnpm dev
+```
+
+### Backend Only
+
+For API development:
+
+```bash
+cd vritti-api-nexus
+docker compose up -d postgres
+pnpm dev
+```
+
+### Component Development
+
+For quantum-ui development:
+
+```bash
+cd quantum-ui
+pnpm storybook
+# Opens at http://localhost:6006
+```
+
+## Using Scripts
+
+### Concurrent Startup (Recommended)
+
+Create a startup script `~/Documents/Vritti/start-dev.sh`:
+
+```bash
+#!/bin/bash
+
+# Start all services with tmux
+tmux new-session -d -s vritti
+
+# Pane 0: Database
+tmux send-keys -t vritti:0 'cd ~/Documents/Vritti/vritti-api-nexus && docker compose up postgres' Enter
+
+# Split and start API
+tmux split-window -h -t vritti:0
+tmux send-keys -t vritti:0.1 'sleep 5 && cd ~/Documents/Vritti/vritti-api-nexus && pnpm dev' Enter
+
+# Split and start Auth
+tmux split-window -v -t vritti:0.1
+tmux send-keys -t vritti:0.2 'sleep 8 && cd ~/Documents/Vritti/vritti-auth && pnpm dev' Enter
+
+# Split and start Web
+tmux split-window -v -t vritti:0.0
+tmux send-keys -t vritti:0.3 'sleep 10 && cd ~/Documents/Vritti/vritti-web-nexus && pnpm dev:ssl' Enter
+
+tmux attach -t vritti
+```
+
+Make it executable:
+```bash
+chmod +x ~/Documents/Vritti/start-dev.sh
+```
+
+## Database Operations
+
+### Start Database
+
+```bash
+cd vritti-api-nexus
+docker compose up -d postgres
+```
+
+### View Logs
+
+```bash
+docker compose logs -f postgres
+```
+
+### Open Drizzle Studio
+
+```bash
+cd vritti-api-nexus
+pnpm db:studio
+# Opens at http://localhost:4983
+```
+
+### Reset Database
+
+```bash
+cd vritti-api-nexus
+
+# Drop and recreate
+docker compose down -v
+docker compose up -d postgres
+
+# Push schema
+pnpm db:push
+```
+
+### Run Migrations
+
+```bash
+cd vritti-api-nexus
+
+# Generate migration from schema changes
+pnpm db:generate
+
+# Push to database
+pnpm db:push
+```
+
+## Hot Reload
+
+All services support hot reload:
+
+| Service | Type | Trigger |
+|---------|------|---------|
+| vritti-api-nexus | HMR | Save any `.ts` file |
+| vritti-web-nexus | HMR | Save any `.tsx` file |
+| vritti-auth | HMR | Save any `.tsx` file |
+| quantum-ui | HMR | Save any component file |
+
+## Debugging
+
+### VS Code Launch Configs
+
+Add to `.vscode/launch.json`:
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug API",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "restart": true
+    },
+    {
+      "name": "Debug Chrome",
+      "type": "chrome",
+      "request": "launch",
+      "url": "https://local.vrittiai.com:3000",
+      "webRoot": "${workspaceFolder}/vritti-web-nexus"
+    }
+  ]
+}
+```
+
+### Start API in Debug Mode
+
+```bash
+cd vritti-api-nexus
+pnpm dev:debug
+# Debugger listening on ws://127.0.0.1:9229
+```
+
+### Browser DevTools
+
+- React DevTools extension
+- TanStack Query DevTools (built-in)
+- Network tab for API inspection
+
+## Common Tasks
+
+### Test API Endpoint
+
+```bash
+# Health check
+curl http://localhost:3002/health
+
+# Get CSRF token
+curl http://localhost:3002/csrf/token
+
+# Login (example)
+curl -X POST http://localhost:3002/cloud-api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test@example.com", "password": "password123"}'
+```
+
+### Build for Production
+
+```bash
+# Build all
+cd quantum-ui && pnpm build
+cd api-sdk && pnpm build
+cd vritti-api-nexus && pnpm build
+cd vritti-web-nexus && pnpm build
+cd vritti-auth && pnpm build
+```
+
+### Run Tests
+
+```bash
+# Backend tests
+cd vritti-api-nexus && pnpm test
+
+# Component tests
+cd quantum-ui && pnpm test
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Port already in use">
+    ```bash
+    # Find process
+    lsof -i :3002
+
+    # Kill it
+    kill -9 <PID>
+    ```
+  </Accordion>
+
+  <Accordion title="Database connection failed">
+    ```bash
+    # Check if PostgreSQL is running
+    docker compose ps
+
+    # Restart if needed
+    docker compose restart postgres
+
+    # Check logs
+    docker compose logs postgres
+    ```
+  </Accordion>
+
+  <Accordion title="Module Federation fails">
+    Ensure services start in order:
+    - vritti-auth (port 3001)
+    - vritti-web-nexus (port 3000)
+
+    Check the remote URL in `.env`:
+    ```bash
+    VITE_AUTH_REMOTE_URL=http://localhost:3001
+    ```
+  </Accordion>
+
+  <Accordion title="SSL certificate errors">
+    ```bash
+    # Reinstall mkcert CA
+    mkcert -install
+
+    # Regenerate certificates
+    mkcert local.vrittiai.com localhost 127.0.0.1 ::1
+
+    # Restart browser
+    ```
+  </Accordion>
+
+  <Accordion title="CORS errors">
+    Check `CORS_ORIGINS` in backend `.env`:
+    ```bash
+    CORS_ORIGINS=https://local.vrittiai.com:3000,http://localhost:3000
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Stop All Services
+
+```bash
+# Stop Docker containers
+cd vritti-api-nexus
+docker compose down
+
+# Kill Node processes (if needed)
+pkill -f "node.*vritti"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="AI-Assisted Coding" icon="robot" href="/getting-started/ai-assisted-coding">
+    Use Claude Code for faster development
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture/overview">
+    Understand the system architecture
+  </Card>
+</CardGroup>

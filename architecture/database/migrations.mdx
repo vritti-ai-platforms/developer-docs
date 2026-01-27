@@ -1,0 +1,371 @@
+---
+title: Migrations
+description: Database migration workflow with Drizzle Kit
+---
+
+# Migrations
+
+Vritti uses **Drizzle Kit** for database migrations. Migrations are generated from schema changes and applied to the database in a controlled manner.
+
+## NPM Scripts
+
+```bash
+# Available migration commands in vritti-api-nexus
+pnpm db:generate   # Generate migration files from schema changes
+pnpm db:push       # Push migrations to database
+pnpm db:migrate    # Run pending migrations
+pnpm db:studio     # Launch Drizzle Studio (database GUI)
+pnpm db:reset      # Force push (DROP and recreate schema)
+pnpm db:drop       # DROP SCHEMA cloud CASCADE
+pnpm db:start      # Start local PostgreSQL (Docker)
+pnpm db:stop       # Stop local PostgreSQL
+```
+
+## Migration Workflow
+
+<Steps>
+  <Step title="Make Schema Changes">
+    Edit the schema files in `src/db/schema/`:
+
+    ```typescript
+    // src/db/schema/user.ts
+    export const users = cloudSchema.table('users', {
+      // ... existing columns ...
+
+      // Add new column
+      profilePictureUrl: varchar('profile_picture_url', { length: 512 }),
+    });
+    ```
+  </Step>
+  <Step title="Generate Migration">
+    ```bash
+    pnpm db:generate
+    ```
+
+    This creates a new migration file:
+    ```
+    src/db/migrations/
+    └── 20260126123456_add_profile_picture/
+        ├── migration.sql
+        └── snapshot.json
+    ```
+  </Step>
+  <Step title="Review Migration">
+    Check the generated SQL:
+
+    ```sql
+    -- migration.sql
+    ALTER TABLE "cloud"."users" ADD COLUMN "profile_picture_url" varchar(512);
+    ```
+  </Step>
+  <Step title="Apply Migration">
+    ```bash
+    # Development: Push directly
+    pnpm db:push
+
+    # Production: Run migration
+    pnpm db:migrate
+    ```
+  </Step>
+</Steps>
+
+## Configuration
+
+### drizzle.config.ts
+
+```typescript
+import { defineConfig } from 'drizzle-kit';
+
+export default defineConfig({
+  // PostgreSQL dialect
+  dialect: 'postgresql',
+
+  // Schema definition files
+  schema: './src/db/schema/index.ts',
+
+  // Where to output migrations
+  out: './src/db/migrations',
+
+  // Database connection
+  dbCredentials: {
+    // Use direct URL to bypass pgBouncer
+    url: process.env.PRIMARY_DB_DATABASE_DIRECT_URL!,
+  },
+
+  // Only manage 'cloud' schema
+  schemaFilter: ['cloud'],
+
+  // Show detailed output
+  verbose: true,
+
+  // Fail on warnings
+  strict: true,
+});
+```
+
+### Environment Variables
+
+```bash
+# For migrations (direct connection, no pooling)
+PRIMARY_DB_DATABASE_DIRECT_URL=postgresql://user:pass@localhost:5432/vritti?schema=cloud
+
+# For application (can use pgBouncer)
+DATABASE_URL=postgresql://user:pass@localhost:6432/vritti?schema=cloud
+```
+
+<Note>
+  Use `PRIMARY_DB_DATABASE_DIRECT_URL` for migrations to avoid pgBouncer transaction issues. Drizzle Kit needs a direct PostgreSQL connection.
+</Note>
+
+## Migration File Structure
+
+```
+src/db/migrations/
+├── 20260121090149_robust_demogoblin/
+│   ├── migration.sql      # SQL statements to run
+│   └── snapshot.json      # Schema state after migration
+└── 20260122075906_opposite_franklin_storm/
+    ├── migration.sql
+    └── snapshot.json
+```
+
+### Example Migration SQL
+
+```sql
+-- 20260121090149_robust_demogoblin/migration.sql
+
+-- Create schema
+CREATE SCHEMA IF NOT EXISTS "cloud";
+
+-- Create enums
+CREATE TYPE "cloud"."account_status" AS ENUM ('PENDING_VERIFICATION', 'ACTIVE', 'INACTIVE');
+CREATE TYPE "cloud"."tenant_status" AS ENUM ('ACTIVE', 'SUSPENDED', 'ARCHIVED');
+CREATE TYPE "cloud"."database_type" AS ENUM ('SHARED', 'DEDICATED');
+
+-- Create tables
+CREATE TABLE "cloud"."tenants" (
+    "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    "subdomain" varchar(63) NOT NULL UNIQUE,
+    "name" varchar(255) NOT NULL,
+    "db_type" "cloud"."database_type" NOT NULL DEFAULT 'DEDICATED',
+    "status" "cloud"."tenant_status" NOT NULL DEFAULT 'ACTIVE',
+    "created_at" timestamp NOT NULL DEFAULT now(),
+    "updated_at" timestamp NOT NULL DEFAULT now()
+);
+
+CREATE TABLE "cloud"."users" (
+    "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    "email" varchar(255) NOT NULL UNIQUE,
+    "phone" varchar(20),
+    "account_status" "cloud"."account_status" NOT NULL DEFAULT 'PENDING_VERIFICATION',
+    "created_at" timestamp NOT NULL DEFAULT now(),
+    "updated_at" timestamp NOT NULL DEFAULT now()
+);
+
+-- Create indexes
+CREATE INDEX "users_email_idx" ON "cloud"."users" ("email");
+```
+
+## Commands in Detail
+
+### Generate Migration
+
+```bash
+pnpm db:generate
+```
+
+- Compares current schema files to last snapshot
+- Generates SQL for the diff
+- Creates new migration folder with timestamp
+
+### Push (Development)
+
+```bash
+pnpm db:push
+```
+
+- Applies schema changes directly without migration files
+- Useful for rapid iteration in development
+- **Not recommended for production**
+
+### Migrate (Production)
+
+```bash
+pnpm db:migrate
+```
+
+- Runs pending migrations in order
+- Tracks applied migrations in `drizzle.__drizzle_migrations` table
+- Safe for production use
+
+### Studio
+
+```bash
+pnpm db:studio
+```
+
+Opens Drizzle Studio at `https://local.drizzle.studio`:
+
+- Visual database browser
+- Run queries
+- Edit data
+- View relationships
+
+### Reset (Development Only)
+
+```bash
+pnpm db:reset
+```
+
+- Drops and recreates the entire schema
+- **Destroys all data**
+- Only use in development
+
+### Drop Schema
+
+```bash
+pnpm db:drop
+```
+
+Runs:
+```sql
+DROP SCHEMA cloud CASCADE;
+```
+
+<Warning>
+  This permanently deletes all data. Only use in development.
+</Warning>
+
+## Local Database
+
+### Start Local PostgreSQL
+
+```bash
+pnpm db:start
+```
+
+Uses Docker Compose to start PostgreSQL:
+
+```yaml
+# local-db-compose.yml
+version: '3.8'
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: vritti
+      POSTGRES_PASSWORD: vritti
+      POSTGRES_DB: vritti
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+```
+
+### Stop Local PostgreSQL
+
+```bash
+pnpm db:stop
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Review Generated SQL" icon="eye">
+    Always review migration SQL before applying. Drizzle may generate unexpected changes.
+  </Card>
+  <Card title="Test Migrations Locally" icon="flask">
+    Run migrations on a local database first. Verify data integrity.
+  </Card>
+  <Card title="Backup Before Production" icon="database">
+    Always backup production database before running migrations.
+  </Card>
+  <Card title="Small, Incremental Changes" icon="stairs">
+    Make small schema changes. Easier to review and rollback.
+  </Card>
+</CardGroup>
+
+## Rollback Strategy
+
+Drizzle doesn't generate automatic rollbacks. For rollbacks:
+
+1. **Manual SQL**: Write a rollback migration
+2. **Restore from backup**: For complex rollbacks
+3. **Forward migration**: Fix issues in a new migration
+
+```typescript
+// Manual rollback migration
+// src/db/migrations/[timestamp]_rollback_profile_picture/migration.sql
+ALTER TABLE "cloud"."users" DROP COLUMN "profile_picture_url";
+```
+
+## CI/CD Integration
+
+```yaml
+# Example GitHub Actions workflow
+name: Database Migrations
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/db/schema/**'
+      - 'src/db/migrations/**'
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run migrations
+        run: pnpm db:migrate
+        env:
+          PRIMARY_DB_DATABASE_DIRECT_URL: ${{ secrets.DATABASE_URL }}
+```
+
+## Troubleshooting
+
+<Accordion title="Migration fails with 'relation already exists'">
+  The migration was partially applied. Options:
+  - Drop the table manually and retry
+  - Mark migration as applied in `drizzle.__drizzle_migrations`
+  - Use `db:push` to sync state
+</Accordion>
+
+<Accordion title="Schema drift detected">
+  Database state doesn't match migrations. Run:
+  ```bash
+  pnpm db:push --force
+  ```
+  This syncs the database with current schema (development only).
+</Accordion>
+
+<Accordion title="Connection timeout during migration">
+  Ensure you're using the direct connection URL, not pgBouncer:
+  ```bash
+  PRIMARY_DB_DATABASE_DIRECT_URL=postgresql://...?connect_timeout=30
+  ```
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Multi-Tenant Schemas" icon="layer-group" href="/architecture/database/multi-tenant-schemas">
+    Understand per-tenant databases
+  </Card>
+  <Card title="Drizzle Studio" icon="window" href="/operations/database/drizzle-studio">
+    Use the database GUI
+  </Card>
+</CardGroup>

@@ -1,0 +1,316 @@
+---
+title: "Environment Variables"
+description: "Configuration and environment variables for all Vritti projects"
+---
+
+# Environment Variables
+
+Each project requires specific environment variables for local development.
+
+## vritti-api-nexus
+
+Create `.env` in the project root:
+
+```bash
+# Database
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+DATABASE_USER=postgres
+DATABASE_PASSWORD=postgres
+DATABASE_NAME=vritti_dev
+DATABASE_SCHEMA=public
+DATABASE_SSL_MODE=disable
+
+# JWT
+JWT_SECRET=your-super-secret-jwt-key-min-32-chars
+JWT_ACCESS_EXPIRY=15m
+JWT_REFRESH_EXPIRY=30d
+JWT_ONBOARDING_EXPIRY=24h
+
+# Server
+PORT=3002
+NODE_ENV=development
+CORS_ORIGINS=https://local.vrittiai.com:3000,http://localhost:3000
+
+# Email (Brevo)
+BREVO_API_KEY=your-brevo-api-key
+BREVO_SENDER_EMAIL=noreply@vritti.cloud
+BREVO_SENDER_NAME=Vritti
+
+# SMS (Twilio)
+TWILIO_ACCOUNT_SID=your-twilio-sid
+TWILIO_AUTH_TOKEN=your-twilio-token
+TWILIO_PHONE_NUMBER=+1234567890
+
+# WhatsApp (Optional)
+WHATSAPP_PHONE_NUMBER_ID=your-whatsapp-id
+WHATSAPP_ACCESS_TOKEN=your-whatsapp-token
+
+# OAuth - Google
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_CALLBACK_URL=http://localhost:3002/cloud-api/auth/oauth/google/callback
+
+# OAuth - Microsoft
+MICROSOFT_CLIENT_ID=your-microsoft-client-id
+MICROSOFT_CLIENT_SECRET=your-microsoft-client-secret
+MICROSOFT_CALLBACK_URL=http://localhost:3002/cloud-api/auth/oauth/microsoft/callback
+
+# Passkeys
+WEBAUTHN_RP_NAME=Vritti
+WEBAUTHN_RP_ID=local.vrittiai.com
+WEBAUTHN_ORIGIN=https://local.vrittiai.com:3000
+
+# Logging
+LOG_LEVEL=debug
+LOG_FORMAT=text
+```
+
+### Required Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `DATABASE_HOST` | PostgreSQL host | `localhost` |
+| `DATABASE_PORT` | PostgreSQL port | `5432` |
+| `DATABASE_USER` | Database username | `postgres` |
+| `DATABASE_PASSWORD` | Database password | `postgres` |
+| `DATABASE_NAME` | Database name | `vritti_dev` |
+| `JWT_SECRET` | JWT signing secret (min 32 chars) | `your-super-secret-key` |
+| `PORT` | Server port | `3002` |
+
+### Optional Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `JWT_ACCESS_EXPIRY` | Access token TTL | `15m` |
+| `JWT_REFRESH_EXPIRY` | Refresh token TTL | `30d` |
+| `LOG_LEVEL` | Logging level | `debug` |
+| `LOG_FORMAT` | Log format (`text` or `json`) | `text` |
+
+---
+
+## vritti-web-nexus
+
+Create `.env` in the project root:
+
+```bash
+# API
+VITE_API_BASE_URL=http://localhost:3002
+VITE_API_VERSION=v1
+
+# Module Federation
+VITE_AUTH_REMOTE_URL=http://localhost:3001
+
+# Environment
+VITE_ENV=development
+
+# Feature Flags
+VITE_ENABLE_PASSKEYS=true
+VITE_ENABLE_MFA=true
+```
+
+### Variables Reference
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `VITE_API_BASE_URL` | Backend API URL | `http://localhost:3002` |
+| `VITE_AUTH_REMOTE_URL` | vritti-auth remote URL | `http://localhost:3001` |
+| `VITE_ENV` | Environment name | `development` |
+
+---
+
+## vritti-auth
+
+Create `.env` in the project root:
+
+```bash
+# API
+VITE_API_BASE_URL=http://localhost:3002
+
+# Environment
+VITE_ENV=development
+
+# WebAuthn
+VITE_WEBAUTHN_RP_ID=local.vrittiai.com
+```
+
+### Variables Reference
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `VITE_API_BASE_URL` | Backend API URL | `http://localhost:3002` |
+| `VITE_WEBAUTHN_RP_ID` | WebAuthn relying party ID | `local.vrittiai.com` |
+
+---
+
+## vritti-landing
+
+Create `.env.local` in the project root:
+
+```bash
+# API
+NEXT_PUBLIC_API_URL=http://localhost:3002
+
+# Analytics (Optional)
+NEXT_PUBLIC_GA_ID=G-XXXXXXXXXX
+
+# Contact Form
+NEXT_PUBLIC_CONTACT_EMAIL=contact@vritti.cloud
+```
+
+---
+
+## quantum-ui
+
+No environment variables required for development.
+
+For production builds, configure in CI/CD.
+
+---
+
+## api-sdk
+
+No environment variables required - configuration is done programmatically:
+
+```typescript
+import { configureApiSdk } from '@vritti/api-sdk';
+
+configureApiSdk({
+  jwt: {
+    accessTokenExpiry: '15m',
+    refreshTokenExpiry: '30d',
+  },
+  cookie: {
+    refreshCookieName: 'vritti_refresh',
+  },
+});
+```
+
+---
+
+## Docker Compose Variables
+
+When using Docker Compose, create `.env` in the vritti-api-nexus root:
+
+```bash
+# PostgreSQL
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=vritti_dev
+POSTGRES_PORT=5432
+
+# Redis (optional)
+REDIS_PORT=6379
+```
+
+---
+
+## Environment-Specific Configs
+
+### Development
+
+```bash
+NODE_ENV=development
+LOG_LEVEL=debug
+LOG_FORMAT=text
+```
+
+### Staging
+
+```bash
+NODE_ENV=staging
+LOG_LEVEL=log
+LOG_FORMAT=json
+DATABASE_SSL_MODE=require
+```
+
+### Production
+
+```bash
+NODE_ENV=production
+LOG_LEVEL=warn
+LOG_FORMAT=json
+DATABASE_SSL_MODE=require
+```
+
+---
+
+## Secrets Management
+
+<Warning>
+Never commit `.env` files to version control. Add them to `.gitignore`.
+</Warning>
+
+### Local Development
+
+- Use `.env` files (gitignored)
+- Copy from `.env.example` templates
+
+### CI/CD
+
+- Use GitHub Secrets for sensitive values
+- Inject via environment in workflows
+
+### Production
+
+- Use secrets management service (AWS Secrets Manager, Vault)
+- Environment variables in container orchestration
+
+---
+
+## Validating Configuration
+
+### Backend
+
+The API validates required environment variables on startup:
+
+```bash
+cd vritti-api-nexus
+pnpm dev
+
+# If missing variables, you'll see:
+# Error: JWT_SECRET environment variable is required
+```
+
+### Frontend
+
+Missing Vite variables won't cause errors but features may not work:
+
+```typescript
+// Check in browser console
+console.log(import.meta.env.VITE_API_BASE_URL);
+```
+
+---
+
+## Quick Reference
+
+<Tabs>
+  <Tab title="Backend (.env)">
+    ```bash
+    DATABASE_HOST=localhost
+    DATABASE_PORT=5432
+    DATABASE_USER=postgres
+    DATABASE_PASSWORD=postgres
+    DATABASE_NAME=vritti_dev
+    JWT_SECRET=your-secret-key-at-least-32-characters-long
+    PORT=3002
+    NODE_ENV=development
+    ```
+  </Tab>
+  <Tab title="Frontend (.env)">
+    ```bash
+    VITE_API_BASE_URL=http://localhost:3002
+    VITE_AUTH_REMOTE_URL=http://localhost:3001
+    VITE_ENV=development
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Next Steps
+
+<Card title="Running Locally" icon="play" href="/getting-started/running-locally">
+  Start all services for development
+</Card>
