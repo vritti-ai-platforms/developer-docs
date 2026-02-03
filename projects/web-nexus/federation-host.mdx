@@ -1,57 +1,29 @@
 ---
-title: "Federation Host Configuration"
-description: "Module Federation setup for vritti-web-nexus host application"
+title: "Setting Up Module Federation"
+description: "Module Federation configuration for vritti-web-nexus"
 ---
 
-## Overview
+This guide shows how to set up Module Federation in the vritti-web-nexus host application.
 
-vritti-web-nexus uses Module Federation 2.0 with runtime registration to dynamically load micro-frontends. This enables adding new remotes without rebuilding the host.
+For Module Federation concepts, architecture, and patterns, see [Module Federation](/architecture/frontend/module-federation).
 
-## Architecture
+## Quick Setup
 
-```mermaid
-flowchart TB
-    subgraph Host["vritti-web-nexus"]
-        Bootstrap[bootstrap.tsx]
-        Registry[Remote Registry]
-        Loader[loadRemote]
-        Router[React Router]
-    end
+### 1. Configure RSBuild
 
-    subgraph Runtime["@module-federation/runtime"]
-        Register[registerRemotes]
-        Load[loadRemote]
-        Share[Shared Scope]
-    end
-
-    subgraph Remotes["Remote Applications"]
-        Auth[vritti-auth<br/>mf-manifest.json]
-        Future[Future Remotes...]
-    end
-
-    Bootstrap --> Register
-    Register --> Registry
-    Loader --> Load
-    Load --> Auth
-    Load --> Future
-    Share --> Auth
-    Share --> Future
-```
-
-## Rsbuild Configuration
-
-The host configuration in `rsbuild.config.ts`:
+The Module Federation plugin is configured in `rsbuild.config.ts`:
 
 ```typescript
+import { defineConfig } from '@rsbuild/core';
+import { pluginReact } from '@rsbuild/plugin-react';
 import { pluginModuleFederation } from '@module-federation/rsbuild-plugin';
 
 export default defineConfig({
   plugins: [
+    pluginReact(),
     pluginModuleFederation({
       name: 'vritti_nexus_host',
-      remotes: {
-        // Runtime registration - no build-time remotes
-      },
+      remotes: {}, // Runtime registration
       shared: {
         react: {
           singleton: true,
@@ -82,14 +54,16 @@ export default defineConfig({
       },
     }),
   ],
+  server: {
+    port: 3012,
+    host: 'local.vrittiai.com',
+  },
 });
 ```
 
-## Runtime Registration
+### 2. Define Remote Configuration
 
-### Remote Configuration
-
-Define remotes in `src/config/remotes.config.ts`:
+Create `src/config/remotes.config.ts`:
 
 ```typescript
 export interface RemoteConfig {
@@ -109,18 +83,22 @@ export const ALL_REMOTES: RemoteConfig[] = [
 ];
 ```
 
-### Bootstrap Registration
+### 3. Register Remotes in Bootstrap
 
-Register remotes before rendering in `src/bootstrap.tsx`:
+Update `src/bootstrap.tsx` to register remotes before rendering:
 
 ```typescript
 import { registerRemotes } from '@module-federation/runtime';
+import { createRoot } from 'react-dom/client';
+import { StrictMode } from 'react';
+import { configureQuantumUI } from '@vritti/quantum-ui';
 import { ALL_REMOTES } from './config/remotes.config';
+import quantumUIConfig from './config/quantum-ui.config';
 
-// Configure quantum-ui first (session recovery)
+// Configure quantum-ui (for session recovery)
 configureQuantumUI(quantumUIConfig);
 
-// Register all remotes
+// Register all remotes at startup
 registerRemotes(
   ALL_REMOTES.map((remote) => ({
     name: remote.name,
@@ -128,20 +106,32 @@ registerRemotes(
   }))
 );
 
-// Now render the app
+// Render the app
 const root = createRoot(document.getElementById('root')!);
-root.render(<App />);
+root.render(
+  <StrictMode>
+    <App />
+  </StrictMode>
+);
 ```
 
-## Loading Remote Modules
+### 4. Create RemoteRoutes Component
 
-### RemoteRoutes Component
-
-The `src/utils/RemoteRoutes.tsx` component handles dynamic loading:
+Create `src/utils/RemoteRoutes.tsx` to load remote modules:
 
 ```typescript
 import { loadRemote } from '@module-federation/runtime';
+import { useEffect, useState } from 'react';
+import { RouteObject, useRoutes } from 'react-router-dom';
+import { MicrofrontendSkeletonFullPage } from '@vritti/quantum-ui';
 
+interface RemoteRoutesProps {
+  remoteName: string;
+  moduleName: string;
+  dataKey?: string;
+}
+
+// Cache loaded modules
 const moduleCache = new Map<string, unknown>();
 
 async function loadRemoteModule(remoteName: string, moduleName: string) {
@@ -169,24 +159,44 @@ export function RemoteRoutes({
   useEffect(() => {
     loadRemoteModule(remoteName, moduleName)
       .then((module) => {
-        // Extract routes using dataKey if provided
         const routeData = dataKey ? module[dataKey] : module;
         setRoutes(routeData);
       })
       .catch(setError);
   }, [remoteName, moduleName, dataKey]);
 
-  if (error) return <ErrorFallback error={error} />;
-  if (!routes) return <LoadingSkeleton />;
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen">
+        <h2 className="text-2xl font-bold mb-4">Failed to load {remoteName}</h2>
+        <p className="text-gray-600 mb-4">{error.message}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-blue-600 text-white rounded"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!routes) {
+    return <MicrofrontendSkeletonFullPage />;
+  }
 
   return <>{useRoutes(routes)}</>;
 }
 ```
 
-### Usage in Routes
+### 5. Use RemoteRoutes in Routes
+
+Update `src/routes.tsx` to conditionally load remote modules:
 
 ```typescript
-// src/routes.tsx
+import { RouteObject } from 'react-router-dom';
+import { RemoteRoutes } from './utils/RemoteRoutes';
+import { LoadingPage } from './pages/LoadingPage';
+
 const isCloud = window.location.hostname.startsWith('cloud.');
 
 export const routes: RouteObject[] = [
@@ -207,122 +217,22 @@ if (isCloud) {
 }
 ```
 
-## Shared Dependencies
-
-### Singleton Strategy
-
-Critical dependencies are shared as singletons to ensure only one instance exists:
-
-| Dependency | Why Singleton? |
-|------------|----------------|
-| `react` | React context requires single instance |
-| `react-dom` | DOM reconciliation |
-| `react-router-dom` | Router context sharing |
-| `@tanstack/react-query` | Shared query cache |
-| `@vritti/quantum-ui` | Design system consistency |
-| `axios` | Interceptor configuration |
-
-### Eager Loading
-
-Setting `eager: true` means the host loads these dependencies immediately rather than waiting for a remote to request them:
-
-```typescript
-shared: {
-  react: {
-    singleton: true,
-    eager: true,  // Load immediately with host
-  },
-}
-```
-
-## Module Federation Manifest
-
-Each remote exposes an `mf-manifest.json` file:
-
-```json
-{
-  "id": "vritti_auth",
-  "name": "vritti_auth",
-  "metaData": {
-    "name": "vritti_auth",
-    "type": "app",
-    "buildInfo": {
-      "buildVersion": "1.0.0"
-    },
-    "remoteEntry": {
-      "name": "vritti_auth.js",
-      "path": "static/js/vritti_auth.js"
-    },
-    "publicPath": "http://local.vrittiai.com:3001/"
-  },
-  "exposes": [
-    {
-      "id": "vritti_auth:routes",
-      "name": "./routes",
-      "path": "./src/routes.tsx",
-      "assets": { ... }
-    }
-  ],
-  "shared": [ ... ]
-}
-```
-
-## Error Handling
-
-### Load Failures
-
-Handle module load failures gracefully:
-
-```typescript
-function RemoteRoutes({ remoteName, moduleName }: Props) {
-  const [error, setError] = useState<Error | null>(null);
-
-  if (error) {
-    return (
-      <div className="error-container">
-        <h2>Failed to load {remoteName}</h2>
-        <p>{error.message}</p>
-        <Button onClick={() => window.location.reload()}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
-
-  // ... rest of component
-}
-```
-
-### Version Mismatches
-
-If shared dependency versions don't match:
-
-```typescript
-shared: {
-  react: {
-    singleton: true,
-    strictVersion: true,  // Throw error on mismatch
-    requiredVersion: '^19.2.0',
-  },
-}
-```
-
 ## Adding New Remotes
 
-### Step 1: Create Remote Configuration
+To add a new remote application:
+
+### Step 1: Add to Remote Config
 
 ```typescript
-// remotes.config.ts
+// src/config/remotes.config.ts
 export const ALL_REMOTES: RemoteConfig[] = [
-  // Existing
   {
     name: 'VrittiAuth',
     entry: 'http://local.vrittiai.com:3001/mf-manifest.json',
     exposedModule: 'routes',
   },
-  // New remote
   {
-    name: 'VrittiDashboard',
+    name: 'VrittiDashboard', // New remote
     entry: 'http://local.vrittiai.com:3003/mf-manifest.json',
     exposedModule: 'routes',
   },
@@ -332,7 +242,7 @@ export const ALL_REMOTES: RemoteConfig[] = [
 ### Step 2: Add Routes
 
 ```typescript
-// routes.tsx
+// src/routes.tsx
 if (isCloud) {
   routes.push(
     {
@@ -347,96 +257,79 @@ if (isCloud) {
 }
 ```
 
-### Step 3: Configure Remote
+## Development Workflow
 
-The remote must expose its routes:
+Start the remote application first, then the host:
 
-```typescript
-// Remote's rsbuild.config.ts
-pluginModuleFederation({
-  name: 'vritti_dashboard',
-  exposes: {
-    './routes': './src/routes.tsx',
-  },
-  shared: {
-    // Same shared config as host
-  },
-})
+```bash
+# Terminal 1: Start remote
+cd vritti-auth
+pnpm dev
+# Manifest: http://local.vrittiai.com:3001/mf-manifest.json
+
+# Terminal 2: Start host
+cd vritti-web-nexus
+pnpm dev
+# App: http://local.vrittiai.com:3012
 ```
 
-## Performance Considerations
-
-### Caching
-
-Modules are cached after first load:
-
-```typescript
-const moduleCache = new Map<string, unknown>();
-
-// Subsequent loads hit cache
-if (moduleCache.has(cacheKey)) {
-  return moduleCache.get(cacheKey);
-}
-```
-
-### Loading State
-
-Show skeleton while loading:
-
-```typescript
-<Suspense fallback={<MicrofrontendSkeletonFullPage />}>
-  <RemoteRoutes ... />
-</Suspense>
-```
-
-### Minimum Display Time
-
-Prevent flash of loading state:
-
-```typescript
-// Wait at least 500ms to show content
-await Promise.all([
-  loadRemoteModule(remoteName, moduleName),
-  new Promise(resolve => setTimeout(resolve, 500)),
-]);
-```
+Verify the integration:
+1. Open http://local.vrittiai.com:3012
+2. Navigate to `/login` (or other auth routes)
+3. Routes should load from the remote
 
 ## Debugging
 
-### Console Logging
+### Check Module Loading
 
-Enable verbose logging:
+Add logging to see when modules load:
 
 ```typescript
-console.log(`[MF] Loading: ${remoteName}/${moduleName}`);
-console.log(`[MF] Loaded:`, module);
-console.log(`[MF] Routes:`, extractedRoutes);
+async function loadRemoteModule(remoteName: string, moduleName: string) {
+  console.log(`[MF] Loading: ${remoteName}/${moduleName}`);
+
+  const module = await loadRemote(`${remoteName}/${moduleName}`);
+
+  console.log(`[MF] Loaded:`, module);
+  return module;
+}
 ```
 
-### Network Tab
+### Network Inspection
 
-Check for:
-- `mf-manifest.json` loaded successfully
-- Remote entry JS file loaded
+In browser DevTools Network tab, verify:
+- `mf-manifest.json` loads successfully (200 OK)
+- Remote entry JS file loads
 - No 404 errors on chunks
 
-### React DevTools
+### Common Issues
 
-Verify shared contexts are the same instance across host and remotes.
+**Manifest not loading:**
+- Ensure remote app is running
+- Check `/etc/hosts` has `127.0.0.1 local.vrittiai.com`
+- Verify manifest URL is accessible
 
-## Related Documentation
+**React hooks error:**
+- Ensure `singleton: true` for React in both host and remote configs
+- Verify same React version in both `package.json` files
+
+**Module not found:**
+- Add `eager: true` to shared dependencies
+- Ensure package is installed in both applications
+
+## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Web Nexus Overview" icon="house" href="/projects/web-nexus/overview">
-    Project overview
+  <Card title="Module Federation" icon="cubes" href="/architecture/frontend/module-federation">
+    Learn about Module Federation architecture and patterns
+  </Card>
+  <Card title="Micro-Frontends" icon="puzzle-piece" href="/architecture/frontend/micro-frontends">
+    Understand micro-frontend patterns
   </Card>
   <Card title="vritti-auth" icon="user-lock" href="/projects/auth/overview">
-    Auth remote configuration
+    Configure the auth remote application
   </Card>
-  <Card title="Module Federation" icon="cubes" href="/architecture/frontend/module-federation">
-    Architecture documentation
-  </Card>
-  <Card title="Micro-frontends" icon="puzzle-piece" href="/architecture/frontend/micro-frontends">
-    Micro-frontend patterns
+  <Card title="Web Nexus Overview" icon="house" href="/projects/web-nexus/overview">
+    Back to project overview
   </Card>
 </CardGroup>

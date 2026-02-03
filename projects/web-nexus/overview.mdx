@@ -3,8 +3,6 @@ title: "Web Nexus Overview"
 description: "Module Federation host application for Vritti micro-frontends"
 ---
 
-## Overview
-
 <Info>
 **Project:** vritti-web-nexus
 **Type:** Host Application (Module Federation)
@@ -84,6 +82,52 @@ vritti-web-nexus/
 └── package.json
 ```
 
+## Environment Variables
+
+<Warning>
+Rsbuild requires the `PUBLIC_` prefix for environment variables to be accessible in browser code.
+</Warning>
+
+Environment variables are exposed via `import.meta.env` (not `process.env`):
+
+| Variable | Type | Purpose | Example |
+|----------|------|---------|---------|
+| `PUBLIC_VRITTI_AUTH_PORT` | string | Auth remote port (local dev) | `3001` |
+| `PUBLIC_VRITTI_CLOUD_PORT` | string | Cloud remote port (local dev) | `3002` |
+| `PUBLIC_MF_BASE_URL` | string | MF base URL (production) | `https://mf.vrittiai.com` |
+
+### Type Declarations
+
+Type declarations are in `src/env.d.ts`:
+
+```typescript
+interface ImportMetaEnv {
+  // Module Federation remote ports (local development)
+  readonly PUBLIC_VRITTI_AUTH_PORT?: string;
+  readonly PUBLIC_VRITTI_CLOUD_PORT?: string;
+
+  // Module Federation base URL (production)
+  readonly PUBLIC_MF_BASE_URL?: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+```
+
+### Type-Safe Access
+
+For dynamic key access, use a helper function:
+
+```typescript
+const getEnvVar = (key: string): string | undefined => {
+  return (import.meta.env as Record<string, string | undefined>)[key];
+};
+
+// Usage
+const authPort = getEnvVar('PUBLIC_VRITTI_AUTH_PORT');
+```
+
 ## Key Features
 
 ### Runtime Module Registration
@@ -136,18 +180,74 @@ The host wraps all content with essential providers:
 
 ## Remote Configuration
 
-Remotes are defined in `src/config/remotes.config.ts`:
+Remotes are defined in `src/config/remotes.config.ts` with environment-driven URLs:
 
 ```typescript
+/**
+ * Builds the remote entry URL based on environment variables
+ * - Local mode: Uses PUBLIC_*_PORT for port-based routing
+ * - Production mode: Uses PUBLIC_MF_BASE_URL for path-based routing
+ */
+const buildRemoteEntry = (config: {
+  portEnvVar: string;    // e.g., 'PUBLIC_VRITTI_AUTH_PORT'
+  prodPath: string;      // e.g., 'auth-microfrontend'
+}): string => {
+  const { protocol, host } = getEnvironmentConfig();
+
+  // Check if port environment variable is defined
+  const remotePort = getEnvVar(config.portEnvVar);
+
+  if (remotePort) {
+    // Local: port-based routing
+    return `${protocol}://${host}:${remotePort}/mf-manifest.json`;
+  } else {
+    // Production: path-based routing
+    const mfBaseUrl = import.meta.env.PUBLIC_MF_BASE_URL || `${protocol}://${host}`;
+    return `${mfBaseUrl}/${config.prodPath}/mf-manifest.json`;
+  }
+};
+
 export const ALL_REMOTES: RemoteConfig[] = [
   {
     name: 'VrittiAuth',
-    entry: process.env.PUBLIC_VRITTI_AUTH_ENTRY ||
-           'http://local.vrittiai.com:3001/mf-manifest.json',
+    entry: buildRemoteEntry({
+      portEnvVar: 'PUBLIC_VRITTI_AUTH_PORT',
+      prodPath: 'auth-microfrontend',
+    }),
     exposedModule: 'routes',
   },
 ];
 ```
+
+<Info>
+**Local example**: With `PUBLIC_VRITTI_AUTH_PORT=3001` → `https://local.vrittiai.com:3001/mf-manifest.json`
+
+**Production example**: With `PUBLIC_MF_BASE_URL=https://mf.vrittiai.com` → `https://mf.vrittiai.com/auth-microfrontend/mf-manifest.json`
+</Info>
+
+### Configuration Best Practices
+
+<Steps>
+  <Step title="Dynamic Protocol Detection">
+    Auto-detect HTTP/HTTPS from `window.location.protocol` instead of hardcoding
+  </Step>
+  <Step title="Environment-Based Routing">
+    - **Local mode**: Port-based routing when `PUBLIC_*_PORT` is defined
+    - **Production mode**: Path-based routing when `PUBLIC_MF_BASE_URL` is defined
+  </Step>
+  <Step title="Type-Safe Access">
+    Use `getEnvVar()` helper for dynamic environment variable access
+  </Step>
+  <Step title="SSR-Safe Fallbacks">
+    Handle `window` being undefined during build with fallback values
+  </Step>
+</Steps>
+
+**Key Benefits**:
+- No hardcoded protocols or hosts
+- Seamless transition between local and production
+- Automatic HTTPS support based on host protocol
+- Type-safe environment variable access
 
 ## Shared Dependencies
 

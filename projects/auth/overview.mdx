@@ -3,8 +3,6 @@ title: "Auth Overview"
 description: "Authentication and onboarding micro-frontend for Vritti"
 ---
 
-## Overview
-
 <Info>
 **Project:** vritti-auth
 **Type:** Remote Application (Module Federation)
@@ -152,6 +150,111 @@ export const authRoutes: RouteObject[] = [
   },
 ];
 ```
+
+## Rsbuild Configuration
+
+vritti-auth uses optimized Rsbuild configuration patterns for efficient builds and Module Federation setup.
+
+### Shared Dependencies
+
+Shared dependencies are extracted to a constant for reusability:
+
+```typescript
+const SHARED_DEPENDENCIES = {
+  react: {
+    singleton: true,
+    requiredVersion: '^19.2.0',
+    eager: true,
+  },
+  'react-dom': {
+    singleton: true,
+    requiredVersion: '^19.2.0',
+    eager: true,
+  },
+  'react-router-dom': {
+    singleton: true,
+    requiredVersion: '^7.2.0',
+  },
+  '@vritti/quantum-ui': {
+    singleton: true,
+    requiredVersion: '^0.2.7',
+  },
+  '@tanstack/react-query': {
+    singleton: true,
+    requiredVersion: '^5.66.1',
+  },
+} as const;
+```
+
+This ensures:
+- **Singleton behavior**: Only one version loaded across host and remotes
+- **Version requirements**: Enforces compatible versions
+- **Eager loading**: Critical dependencies (React) load immediately
+
+### Custom Plugins with Proper Typing
+
+Custom Rsbuild plugins are typed with `RsbuildPlugin` interface:
+
+```typescript
+import type { RsbuildPlugin } from '@rsbuild/core';
+
+const manifestMessagePlugin: RsbuildPlugin = {
+  name: 'plugin-manifest-message',
+  setup: (api) => {
+    api.onAfterStartDevServer(({ port }) => {
+      const protocol = useHttps ? 'https' : 'http';
+      api.logger.info(`➜  Manifest: ${protocol}://${host}:${port}/mf-manifest.json`);
+    });
+  },
+};
+```
+
+**Benefits**:
+- Type-safe plugin development
+- Auto-completion in IDE
+- Compile-time error checking
+
+### Environment Configuration
+
+Environment variables are extracted and cached:
+
+```typescript
+const useHttps = process.env.USE_HTTPS === 'true';
+const host = 'local.vrittiai.com';
+const protocol = useHttps ? 'https' : 'http';
+const port = 3001;
+```
+
+### Import Optimization
+
+Optimize imports for better tree-shaking:
+
+```typescript
+// ❌ Bad: Imports entire fs module
+import fs from 'node:fs';
+const cert = fs.readFileSync('./certs/file.pem');
+
+// ✅ Good: Specific import reduces bundle size
+import { readFileSync } from 'node:fs';
+const cert = readFileSync('./certs/file.pem');
+```
+
+### Configuration Best Practices
+
+<Steps>
+  <Step title="Extract Constants">
+    Move shared dependencies and reusable configuration to constants at the top of the file
+  </Step>
+  <Step title="Type Custom Plugins">
+    Always type custom plugins with `RsbuildPlugin` for type safety
+  </Step>
+  <Step title="Cache Environment Values">
+    Extract and cache environment-derived values (protocol, host) to avoid repeated calculations
+  </Step>
+  <Step title="Optimize Imports">
+    Use specific imports instead of wildcard imports for better tree-shaking
+  </Step>
+</Steps>
 
 ## Authentication Features
 

@@ -3,8 +3,6 @@ title: Setup Guide
 description: Local development setup for vritti-api-nexus
 ---
 
-# Setup Guide
-
 This guide covers setting up vritti-api-nexus for local development.
 
 ## Prerequisites
@@ -89,7 +87,16 @@ This guide covers setting up vritti-api-nexus for local development.
 
 ## Environment Variables
 
-### Database Configuration
+<Info>
+**Best Practice:** All environment variables are extracted into an `ENV` constant in `src/main.ts` for centralized configuration management.
+</Info>
+
+Environment variables can be accessed:
+- **In main.ts**: Via the `ENV` constant
+- **In modules/services**: Via `ConfigService.getOrThrow<T>('VARIABLE_NAME')`
+
+<Tabs>
+  <Tab title="Database Configuration">
 
 ```bash
 # Primary Database (Cloud Schema)
@@ -104,8 +111,8 @@ PRIMARY_DB_SSL_MODE=disable  # disable for local, require for production
 # Direct URL for Drizzle migrations
 PRIMARY_DB_DATABASE_DIRECT_URL=postgresql://postgres:postgres@localhost:5432/vritti
 ```
-
-### Authentication
+  </Tab>
+  <Tab title="Authentication">
 
 ```bash
 # JWT Configuration
@@ -120,8 +127,8 @@ REFRESH_TOKEN_ROTATION_DAYS=7
 COOKIE_SECRET=your-cookie-signing-secret
 CSRF_HMAC_KEY=your-csrf-hmac-secret-key
 ```
-
-### OAuth Providers
+  </Tab>
+  <Tab title="OAuth Providers">
 
 ```bash
 # Google OAuth
@@ -134,8 +141,8 @@ MICROSOFT_CLIENT_ID=your-microsoft-client-id
 MICROSOFT_CLIENT_SECRET=your-microsoft-client-secret
 MICROSOFT_REDIRECT_URI=https://cloud.local.vrittiai.com:3012/onboarding/oauth-success
 ```
-
-### Communication Services
+  </Tab>
+  <Tab title="Communication Services">
 
 ```bash
 # Brevo (Email)
@@ -149,16 +156,16 @@ WHATSAPP_ACCESS_TOKEN=your-access-token
 WHATSAPP_APP_SECRET=your-app-secret
 WHATSAPP_VERIFY_TOKEN=your-webhook-verify-token
 ```
-
-### WebAuthn (Passkeys)
+  </Tab>
+  <Tab title="WebAuthn (Passkeys)">
 
 ```bash
 WEBAUTHN_RP_NAME=Vritti
 WEBAUTHN_RP_ID=local.vrittiai.com
 WEBAUTHN_ORIGIN=https://cloud.local.vrittiai.com:3012
 ```
-
-### Logging
+  </Tab>
+  <Tab title="Logging">
 
 ```bash
 LOG_PROVIDER=winston  # default or winston
@@ -167,6 +174,8 @@ LOG_FILE_PATH=./logs
 LOG_MAX_FILES=14
 MASK_PII=true
 ```
+  </Tab>
+</Tabs>
 
 ## npm Scripts
 
@@ -242,6 +251,74 @@ pnpm test --watch
 # Generate coverage report
 pnpm test --coverage
 ```
+
+## Starting the Application
+
+<Steps>
+  <Step title="Ensure PostgreSQL is Running">
+    ```bash
+    pnpm db:start
+    # Check it's running
+    docker ps | grep vritti-postgres
+    ```
+  </Step>
+
+  <Step title="Choose HTTP or HTTPS Mode">
+    <Tabs>
+      <Tab title="HTTP Mode">
+        ```bash
+        # Run with default settings (USE_HTTPS=false in .env)
+        pnpm dev
+        ```
+
+        **Access at**: `http://local.vrittiai.com:3000`
+      </Tab>
+
+      <Tab title="HTTPS Mode">
+        ```bash
+        # Set USE_HTTPS=true in .env, then run
+        pnpm dev
+        ```
+
+        **Access at**: `https://local.vrittiai.com:3000`
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Verify Server is Running">
+    Check the following endpoints:
+
+    | Endpoint | Purpose |
+    |----------|---------|
+    | `/health` | Health check |
+    | `/api/docs` | Swagger UI |
+    | `/csrf-token` | CSRF token endpoint |
+
+    Example:
+    ```bash
+    curl https://local.vrittiai.com:3000/health
+    ```
+  </Step>
+</Steps>
+
+### Protocol Detection
+
+The server automatically detects the protocol based on the `USE_HTTPS` environment variable:
+
+```typescript
+// In main.ts
+const ENV = {
+  useHttps: process.env.USE_HTTPS === 'true',
+  // ...
+};
+
+const protocol = ENV.useHttps ? 'https' : 'http';
+const baseUrl = `${protocol}://${ENV.host}:${ENV.port}`;
+```
+
+<Warning>
+**Frontend-Backend Protocol Matching:** If you run the frontend (vritti-web-nexus) on HTTPS, you MUST run the backend on HTTPS as well to avoid mixed content errors.
+</Warning>
 
 ## API Documentation
 
@@ -335,7 +412,7 @@ Add these entries to `/etc/hosts` for local subdomain routing:
   <Card title="Module Guide" icon="cubes" href="/projects/api-nexus/module-guide">
     Understand each NestJS module
   </Card>
-  <Card title="Service Patterns" icon="layer-group" href="/projects/api-nexus/services">
+  <Card title="Service Patterns" icon="layer-group" href="/architecture/backend/service-patterns">
     Learn service layer patterns
   </Card>
 </CardGroup>

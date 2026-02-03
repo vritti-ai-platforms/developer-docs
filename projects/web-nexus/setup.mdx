@@ -79,18 +79,36 @@ mv local.vrittiai.com+5-key.pem local.vrittiai.com+4-key.pem
 
 ## Step 4: Environment Configuration
 
+<Warning>
+**Important:** Rsbuild requires the `PUBLIC_` prefix for environment variables to be accessible in browser code.
+</Warning>
+
 Create a `.env` file in the project root:
 
 ```bash
-# API Configuration
+# API Configuration (for proxy)
 REACT_API_HOST=http://localhost:3000
 
-# Remote Entry Points (optional overrides)
-PUBLIC_VRITTI_AUTH_ENTRY=http://local.vrittiai.com:3001/mf-manifest.json
+# Module Federation Remote Ports (local development)
+# These enable port-based routing: http://local.vrittiai.com:{PORT}/mf-manifest.json
+PUBLIC_VRITTI_AUTH_PORT=3001
+# PUBLIC_VRITTI_CLOUD_PORT=3002  # Uncomment when adding cloud remote
+
+# Module Federation Base URL (production)
+# When deployed, use path-based routing: https://mf.vrittiai.com/{path}/mf-manifest.json
+# PUBLIC_MF_BASE_URL=https://mf.vrittiai.com
 
 # HTTPS Mode (optional)
 USE_HTTPS=false
 ```
+
+### Environment-Driven Configuration
+
+The application automatically detects the environment based on which variables are defined:
+
+- **Local mode**: When `PUBLIC_*_PORT` variables are defined, uses port-based routing
+- **Production mode**: When `PUBLIC_MF_BASE_URL` is defined (and port variables are not), uses path-based routing
+- **Protocol detection**: Automatically uses HTTP or HTTPS based on the host application's protocol
 
 ## Step 5: Start Development Server
 
@@ -117,19 +135,58 @@ USE_HTTPS=false
 
 ## Running with Remotes
 
-To see the full application with auth pages, start vritti-auth first:
+<Warning>
+**Protocol Matching Requirement:** The host and all remotes MUST use the same protocol (HTTP or HTTPS).
+</Warning>
+
+To see the full application with auth pages, start remotes first, then the host:
+
+### HTTP Mode (Default)
 
 ```bash
-# Terminal 1: Start auth remote
+# Terminal 1: Start auth remote on port 3001
 cd ../vritti-auth
 pnpm dev
 
-# Terminal 2: Start host
+# Terminal 2: Start host on port 3012
 cd ../vritti-web-nexus
 pnpm dev:cloud
 ```
 
-The host will automatically load auth routes from the remote.
+**Access at**: http://cloud.local.vrittiai.com:3012
+
+### HTTPS Mode
+
+```bash
+# Terminal 1: Start auth remote with HTTPS
+cd ../vritti-auth
+USE_HTTPS=true pnpm dev
+
+# Terminal 2: Start host with HTTPS
+cd ../vritti-web-nexus
+pnpm dev:cloud-ssl
+```
+
+**Access at**: https://cloud.local.vrittiai.com:3012
+
+### Port Requirements
+
+| Service | Port | Environment Variable | Purpose |
+|---------|------|---------------------|---------|
+| vritti-auth | 3001 | `PUBLIC_VRITTI_AUTH_PORT` | Auth microfrontend |
+| vritti-web-nexus | 3012 | - | Host application |
+
+### Troubleshooting Protocol Mismatch
+
+If you see loading errors:
+
+1. **Check browser console** for mixed content warnings
+2. **Verify protocol match**:
+   - Host on HTTP → Remote must be HTTP
+   - Host on HTTPS → Remote must be HTTPS
+3. **Check manifest URL** in network tab:
+   - Should be `{protocol}://local.vrittiai.com:3001/mf-manifest.json`
+4. **Verify environment variables** in `.env` file
 
 ## Available Scripts
 

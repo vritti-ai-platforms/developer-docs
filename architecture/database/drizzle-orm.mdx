@@ -3,8 +3,6 @@ title: Drizzle ORM
 description: Why we chose Drizzle and how it's configured
 ---
 
-# Drizzle ORM
-
 Vritti uses **Drizzle ORM** for database access. Drizzle provides type-safe SQL queries with excellent TypeScript integration and a lightweight runtime.
 
 ## Why Drizzle Over Prisma?
@@ -341,13 +339,405 @@ import { eq, and, or } from '@vritti/api-sdk/drizzle-orm';
 import { pgTable, varchar, uuid } from '@vritti/api-sdk/drizzle-pg-core';
 ```
 
+## Using DatabaseModule
+
+The `@vritti/api-sdk` provides `DatabaseModule` for multi-tenant database management. It offers two configuration modes depending on your application type.
+
+### Server Mode (HTTP APIs)
+
+For HTTP APIs that need tenant routing and the primary database:
+
+```typescript
+import { DatabaseModule } from '@vritti/api-sdk';
+import * as schema from './db/schema';
+import * as relations from './db/relations';
+
+@Module({
+  imports: [
+    DatabaseModule.forServer({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        // Primary database (tenant registry)
+        primaryDb: {
+          host: config.get('DB_HOST'),
+          port: config.get('DB_PORT'),
+          username: config.get('DB_USER'),
+          password: config.get('DB_PASSWORD'),
+          database: config.get('DB_NAME'),
+          schema: 'public',
+          sslMode: 'disable',
+        },
+
+        // Drizzle schema and relations
+        drizzleSchema: schema,
+        drizzleRelations: relations,
+
+        // Connection settings
+        connectionCacheTTL: 300000,  // 5 minutes
+        maxConnections: 10,
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### Microservice Mode
+
+For message-based services (RabbitMQ workers) that don't need the primary database:
+
+```typescript
+DatabaseModule.forMicroservice({
+  useFactory: () => ({
+    drizzleSchema: schema,
+    drizzleRelations: relations,
+    // No primary DB - tenant info comes from messages
+  }),
+})
+```
+
+### Database Services
+
+The `DatabaseModule` provides three services:
+
+**PrimaryDatabaseService** - Access to primary database (tenant registry):
+```typescript
+import { PrimaryDatabaseService } from '@vritti/api-sdk';
+
+@Injectable()
+export class TenantService {
+  constructor(private primaryDb: PrimaryDatabaseService) {}
+
+  async getTenantBySubdomain(subdomain: string) {
+    return this.primaryDb.getTenantInfo(subdomain);
+  }
+
+  // Access Drizzle client directly
+  async customQuery() {
+    const db = this.primaryDb.drizzleClient;
+    return db.query.tenants.findMany({
+      where: eq(tenants.status, 'ACTIVE'),
+    });
+  }
+}
+```
+
+| Method | Description |
+|--------|-------------|
+| `getTenantInfo(identifier)` | Get tenant by ID or subdomain |
+| `clearTenantCache(identifier)` | Clear cached tenant config |
+| `clearAllCaches()` | Clear all tenant caches |
+| `drizzleClient` | Raw Drizzle client access |
+
+**TenantDatabaseService** - Request-scoped tenant database connections:
+```typescript
+import { TenantDatabaseService } from '@vritti/api-sdk';
+
+@Injectable()
+export class UserService {
+  constructor(private tenantDb: TenantDatabaseService) {}
+
+  async findUsers() {
+    const db = await this.tenantDb.getConnection();
+    return db.query.users.findMany();
+  }
+}
+```
+
+Features:
+- Connection pooling per tenant
+- Automatic cleanup of idle connections
+- Supports SHARED and DEDICATED schemas
+
+**TenantContextService** - Request-scoped tenant state:
+```typescript
+import { TenantContextService } from '@vritti/api-sdk';
+
+@Injectable()
+export class AuditService {
+  constructor(private tenantContext: TenantContextService) {}
+
+  async logAction(action: string) {
+    const tenant = this.tenantContext.getTenant();
+    console.log(`[${tenant.subdomain}] ${action}`);
+  }
+}
+```
+
+| Method | Description |
+|--------|-------------|
+| `setTenant(info)` | Set tenant (called by interceptor) |
+| `getTenant()` | Get tenant (throws if not set) |
+| `hasTenant()` | Check if tenant is set |
+| `getTenantIdSafe()` | Get tenant ID or null |
+| `getTenantSubdomainSafe()` | Get subdomain or null |
+| `clearTenant()` | Clear tenant context |
+
+## Base Repository Classes
+
+The `@vritti/api-sdk` provides base repository classes that abstract common CRUD operations and provide type-safe data access.
+
+### PrimaryBaseRepository
+
+For querying the primary database (tenant registry, global data):
+
+```typescript
+import { PrimaryBaseRepository, PrimaryDatabaseService } from '@vritti/api-sdk';
+import { tenants } from './db/schema';
+
+@Injectable()
+export class TenantRepository extends PrimaryBaseRepository<typeof tenants> {
+  constructor(database: PrimaryDatabaseService) {
+    super(database, tenants);
+  }
+
+  // Custom methods
+  async findBySubdomain(subdomain: string) {
+    return this.model.findFirst({
+      where: { subdomain },
+    });
+  }
+
+  async findActiveWithUsers() {
+    return this.model.findMany({
+      where: { status: 'ACTIVE' },
+      with: { users: true },
+    });
+  }
+}
+```
+
+### TenantBaseRepository
+
+For querying tenant-specific databases:
+
+```typescript
+import { TenantBaseRepository, TenantDatabaseService } from '@vritti/api-sdk';
+import { users } from './db/schema';
+
+@Injectable()
+export class UserRepository extends TenantBaseRepository<typeof users> {
+  constructor(database: TenantDatabaseService) {
+    super(database, users);
+  }
+
+  // Queries automatically use current tenant's database
+  async findByEmail(email: string) {
+    return this.model.findFirst({
+      where: { email },
+      with: { profile: true },
+    });
+  }
+
+  async findActiveUsers() {
+    return this.model.findMany({
+      where: { status: 'ACTIVE' },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+}
+```
+
+### Base Repository Methods
+
+Both base classes provide these CRUD methods:
+
+```typescript
+// Create
+create(data: TInsert): Promise<TSelect>
+
+// Read
+findById(id: string): Promise<TSelect | undefined>
+findOne(where: WhereFilter): Promise<TSelect | undefined>
+findMany(options?): Promise<TSelect[]>
+count(where?): Promise<number>
+exists(where): Promise<boolean>
+
+// Update
+update(id: string, data: Partial<TInsert>): Promise<TSelect>
+updateMany(where: WhereFilter, data: Partial<TInsert>): Promise<{ count: number }>
+
+// Delete
+delete(id: string): Promise<TSelect>
+deleteMany(where: WhereFilter): Promise<{ count: number }>
+```
+
+### Accessing the Drizzle Model
+
+For complex queries, access the Drizzle relational model directly:
+
+```typescript
+// Using relational API (recommended)
+async findWithRelations() {
+  return this.model.findMany({
+    where: { status: 'ACTIVE' },
+    with: {
+      profile: true,
+      orders: {
+        where: { status: 'PENDING' },
+        limit: 10,
+      },
+    },
+  });
+}
+
+// Using raw Drizzle client for complex queries
+async complexQuery() {
+  const db = this.db;
+  return db
+    .select()
+    .from(users)
+    .leftJoin(orders, eq(users.id, orders.userId))
+    .where(and(
+      eq(users.status, 'ACTIVE'),
+      gt(orders.total, 100)
+    ));
+}
+```
+
+## Multi-Tenant Database Patterns
+
+Vritti supports two multi-tenancy patterns:
+
+### Shared Schema Pattern
+
+Multiple tenants in the same database, different PostgreSQL schemas:
+
+```
+Database: vritti_production
+├── tenant_acme (schema)
+│   ├── users
+│   ├── orders
+│   └── products
+├── tenant_globex (schema)
+│   ├── users
+│   ├── orders
+│   └── products
+```
+
+**Pros:**
+- Lower infrastructure costs
+- Easier to manage (single database)
+- Simpler backup/restore
+
+**Cons:**
+- Shared resources (CPU, memory, connections)
+- Less isolation between tenants
+- Harder to scale individual tenants
+
+### Dedicated Database Pattern
+
+Each tenant has a separate database:
+
+```
+├── vritti_acme (database)
+│   └── public (schema)
+│       ├── users
+│       ├── orders
+│       └── products
+├── vritti_globex (database)
+│   └── public (schema)
+│       ├── users
+│       ├── orders
+│       └── products
+```
+
+**Pros:**
+- Complete resource isolation
+- Easy to scale individual tenants
+- Better security boundaries
+- Can backup/restore individual tenants
+
+**Cons:**
+- Higher infrastructure costs
+- More complex management
+- Connection pooling per database
+
+### Tenant Configuration
+
+Tenant database config is stored in the primary database's `tenantDatabaseConfigs` table:
+
+```typescript
+// Primary DB - tenantDatabaseConfigs table
+{
+  tenantId: 'ten_123',
+  type: 'SHARED',         // or 'DEDICATED'
+  host: 'localhost',
+  port: 5432,
+  database: 'vritti_production',
+  schema: 'tenant_acme',  // For SHARED type
+  username: 'app_user',
+  password: 'encrypted...',  // Encrypted with EncryptionService
+  sslMode: 'disable',
+  connectionPoolSize: 10,
+}
+```
+
+### Schema Registry
+
+For type-safe Drizzle clients, augment the schema registry:
+
+```typescript
+// src/db/schema-registry.ts
+declare module '@vritti/api-sdk' {
+  interface SchemaRegistry {
+    schema: typeof import('./schema');
+  }
+}
+
+export {};
+```
+
+This enables full TypeScript inference:
+
+```typescript
+// db.query.users is now fully typed
+const user = await db.query.users.findFirst({
+  where: { email },
+  with: { profile: true },
+});
+// user.profile is typed correctly
+```
+
+## Connection Pooling and Caching
+
+The `DatabaseModule` implements intelligent connection pooling:
+
+**Connection Caching:**
+- Tenant database connections are cached based on tenant ID
+- Cache TTL is configurable (default: 5 minutes)
+- Idle connections are automatically cleaned up
+
+**Pool Configuration:**
+```typescript
+DatabaseModule.forServer({
+  useFactory: (config) => ({
+    primaryDb: { /* ... */ },
+    connectionCacheTTL: 300000,  // 5 minutes
+    maxConnections: 10,           // Per tenant pool size
+  }),
+})
+```
+
+**Best Practices:**
+- Configure `connectionCacheTTL` based on traffic patterns
+- Set `maxConnections` based on expected concurrent requests
+- Monitor connection pool metrics
+- Use read replicas for read-heavy workloads
+
 ## Next Steps
 
 <CardGroup cols={2}>
+  <Card title="Service Patterns" icon="layer-group" href="/architecture/backend/service-patterns">
+    Learn repository and service patterns
+  </Card>
   <Card title="Schema Overview" icon="table" href="/architecture/database/schema-overview">
     See all database tables
   </Card>
   <Card title="Migrations" icon="code-branch" href="/architecture/database/migrations">
     Learn migration workflow
+  </Card>
+  <Card title="Multi-Tenancy" icon="building" href="/architecture/backend/multi-tenancy">
+    Deep dive into tenant isolation
   </Card>
 </CardGroup>

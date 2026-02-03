@@ -1,21 +1,34 @@
 ---
-title: "Auth Module"
-description: "JWT authentication, guards, and decorators in api-sdk"
+title: "Getting Started with Auth Module"
+description: "Quick start guide for using @vritti/api-sdk authentication features"
 ---
 
-# Auth Module
+The `@vritti/api-sdk` provides JWT authentication with guards, decorators, and utilities for securing NestJS applications.
 
-The auth module provides JWT authentication with guards, decorators, and utilities for securing NestJS applications.
+For authentication concepts, guard behavior, and security patterns, see [Guards & Decorators](/architecture/backend/guards-decorators).
 
-## AuthConfigModule
+## Installation
 
-Configures JWT verification and registers the global auth guard.
+The `@vritti/api-sdk` package includes all authentication dependencies:
+
+```bash
+npm install @vritti/api-sdk
+```
+
+## Basic Setup
+
+### 1. Configure AuthConfigModule
+
+Import and configure the `AuthConfigModule` in your app module:
 
 ```typescript
+import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthConfigModule } from '@vritti/api-sdk';
 
 @Module({
   imports: [
+    ConfigModule.forRoot(),
     AuthConfigModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -27,269 +40,115 @@ import { AuthConfigModule } from '@vritti/api-sdk';
 export class AppModule {}
 ```
 
-### Options
+This automatically registers the global `VrittiAuthGuard` which protects all routes by default.
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `secret` | `string` | JWT signing secret (required) |
-
-## Decorators
-
-### @Public()
-
-Bypasses authentication entirely. Use for health checks, public APIs.
+### 2. Use Decorators in Controllers
 
 ```typescript
-import { Public } from '@vritti/api-sdk';
-
-@Controller('health')
-export class HealthController {
-  @Public()
-  @Get()
-  check() {
-    return { status: 'ok' };
-  }
-}
-```
-
-### @Onboarding()
-
-Requires an onboarding token (`type: 'onboarding'`). Skips tenant validation.
-
-```typescript
-import { Onboarding } from '@vritti/api-sdk';
-
-@Controller('onboarding')
-export class OnboardingController {
-  @Onboarding()
-  @Post('verify-email')
-  verifyEmail(@Body() dto: VerifyEmailDto, @UserId() userId: string) {
-    // User is partially authenticated (onboarding token)
-  }
-}
-```
-
-### @UserId()
-
-Extracts the authenticated user ID from the JWT.
-
-```typescript
-import { UserId } from '@vritti/api-sdk';
-
-@Get('profile')
-getProfile(@UserId() userId: string) {
-  return this.userService.findById(userId);
-}
-```
-
-### @SkipCsrf()
-
-Skips CSRF validation. Use for webhook endpoints.
-
-```typescript
-import { SkipCsrf } from '@vritti/api-sdk';
-
-@Controller('webhooks')
-export class WebhookController {
-  @SkipCsrf()
-  @Post('stripe')
-  handleStripe(@Body() payload: any) {
-    // No CSRF check for external webhooks
-  }
-}
-```
-
-### @Tenant()
-
-Injects the tenant info for the current request.
-
-```typescript
-import { Tenant } from '@vritti/api-sdk';
+import { Controller, Get, Post, Body } from '@nestjs/common';
+import { Public, Onboarding, UserId, Tenant } from '@vritti/api-sdk';
 import type { TenantInfo } from '@vritti/api-sdk';
 
-@Get('data')
-getData(@Tenant() tenant: TenantInfo) {
-  console.log(tenant.id, tenant.subdomain);
+@Controller('users')
+export class UserController {
+  // Public endpoint - no authentication required
+  @Public()
+  @Get('health')
+  health() {
+    return { status: 'ok' };
+  }
+
+  // Onboarding endpoint - requires onboarding token
+  @Onboarding()
+  @Post('verify-email')
+  verifyEmail(@UserId() userId: string, @Body() dto: VerifyEmailDto) {
+    return this.userService.verifyEmail(userId, dto);
+  }
+
+  // Protected endpoint - requires access token
+  @Get('profile')
+  getProfile(@UserId() userId: string, @Tenant() tenant: TenantInfo) {
+    return this.userService.getProfile(userId, tenant.id);
+  }
 }
 ```
 
-## Guards
+## Common Decorators
 
-### VrittiAuthGuard
+| Decorator | Purpose | Example Use Case |
+|-----------|---------|------------------|
+| `@Public()` | Bypass authentication | Health checks, public APIs |
+| `@Onboarding()` | Require onboarding token | Email verification, password setup |
+| `@UserId()` | Extract authenticated user ID | Get current user's data |
+| `@Tenant()` | Inject tenant information | Multi-tenant operations |
+| `@SkipCsrf()` | Skip CSRF validation | Webhook endpoints |
 
-The main authentication guard. Automatically applied globally.
+## SSE Authentication
 
-**Validation Flow:**
-
-1. Check `@Public()` → skip all validation
-2. Check `@Onboarding()` → require onboarding token, skip tenant
-3. Regular endpoints → require access token
-4. Validate JWT signature, expiry, and `nbf` claim
-5. Optional: Validate refresh token binding
-6. CSRF validation for POST/PUT/DELETE/PATCH
-7. Extract and validate tenant from headers
-
-**Error Responses:**
-
-| Status | Condition |
-|--------|-----------|
-| 401 | Invalid/expired token |
-| 401 | Tenant not found or inactive |
-| 403 | CSRF token invalid |
-
-### SseAuthGuard
-
-For Server-Sent Events endpoints where token is passed via query param.
+For Server-Sent Events endpoints, use `SseAuthGuard` with token in query params:
 
 ```typescript
-import { SseAuthGuard, Public } from '@vritti/api-sdk';
+import { Controller, Sse, Query, UseGuards } from '@nestjs/common';
+import { Public, SseAuthGuard } from '@vritti/api-sdk';
 
 @Controller('events')
 export class EventsController {
   @Public()  // Bypass global guard
-  @UseGuards(SseAuthGuard)  // Use SSE guard
+  @UseGuards(SseAuthGuard)  // Use SSE-specific guard
   @Sse('stream')
   stream(@Query('token') token: string) {
-    // Token validated from ?token=<jwt>
     return this.eventsService.getStream();
   }
 }
 ```
 
-**Differences from VrittiAuthGuard:**
-- Token from query param (`?token=<jwt>`)
-- Sets CORS headers first
-- No CSRF validation
-
-## Token Types
-
-### Access Token
-
-Short-lived token for API requests.
-
-```typescript
-{
-  sub: 'usr_123',           // User ID
-  type: 'access',           // Token type
-  tenantId: 'ten_456',      // Tenant ID
-  email: 'user@example.com',
-  iat: 1234567890,
-  exp: 1234568790,          // 15 minutes
-  nbf: 1234567890
-}
-```
-
-### Refresh Token
-
-Long-lived token stored in httpOnly cookie.
-
-```typescript
-{
-  sub: 'usr_123',
-  type: 'refresh',
-  jti: 'unique-token-id',   // For revocation
-  iat: 1234567890,
-  exp: 1237159890           // 30 days
-}
-```
-
-### Onboarding Token
-
-Limited token for onboarding flow.
-
-```typescript
-{
-  sub: 'usr_123',
-  type: 'onboarding',
-  email: 'user@example.com',
-  iat: 1234567890,
-  exp: 1234654290           // 24 hours
-}
-```
+Client connects with: `GET /events/stream?token=<jwt>`
 
 ## Token Utilities
 
-### hashToken
-
-Creates a SHA-256 hash of a token for storage.
+The SDK provides utilities for token hashing and verification:
 
 ```typescript
-import { hashToken } from '@vritti/api-sdk';
+import { hashToken, verifyTokenHash } from '@vritti/api-sdk';
 
+// Hash a token for storage
 const hash = hashToken(refreshToken);
-// Store hash in database for token binding validation
-```
+await this.sessionRepository.update(sessionId, { refreshTokenHash: hash });
 
-### verifyTokenHash
-
-Compares a token against its hash (constant-time).
-
-```typescript
-import { verifyTokenHash } from '@vritti/api-sdk';
-
+// Verify a token against its hash
 const isValid = verifyTokenHash(refreshToken, storedHash);
-```
-
-## Token Binding
-
-Token binding links refresh tokens to access tokens for additional security.
-
-### How it Works
-
-1. On login, hash the refresh token
-2. Store hash in user's session record
-3. Include hash in access token payload
-4. On protected requests, verify access token's hash matches current refresh token
-
-### Implementation
-
-```typescript
-// On login
-const refreshToken = generateRefreshToken();
-const accessToken = jwt.sign({
-  sub: userId,
-  type: 'access',
-  rtHash: hashToken(refreshToken), // Binding
-});
-
-// In guard (automatic with validateTokenBinding: true)
-const storedHash = await getStoredRefreshTokenHash(userId);
-if (payload.rtHash !== storedHash) {
-  throw new UnauthorizedException('Token binding mismatch');
-}
 ```
 
 ## CSRF Protection
 
-CSRF validation is automatic for state-changing requests (POST, PUT, DELETE, PATCH).
+CSRF validation is automatic for POST, PUT, DELETE, and PATCH requests.
 
-### Token Flow
+**Client Flow:**
+1. Fetch token: `GET /csrf/token`
+2. Include in header: `x-csrf-token: <token>`
 
-1. Client fetches CSRF token: `GET /csrf/token`
-2. Client includes token in header: `x-csrf-token: <token>`
-3. Guard validates token on mutations
-
-### Skip CSRF
-
-Use `@SkipCsrf()` for webhooks:
-
+**Skip for webhooks:**
 ```typescript
 @SkipCsrf()
-@Post('webhook/payment')
-handlePayment() { }
+@Post('webhook/stripe')
+handleStripeWebhook(@Body() payload: any) {
+  // External webhooks can't provide CSRF tokens
+}
 ```
 
 ## Configuration
 
-Configure auth behavior via `configureApiSdk`:
+Configure authentication behavior using `configureApiSdk`:
 
 ```typescript
+import { configureApiSdk } from '@vritti/api-sdk';
+
 configureApiSdk({
   jwt: {
     accessTokenExpiry: '15m',
     refreshTokenExpiry: '30d',
     onboardingTokenExpiry: '24h',
-    validateTokenBinding: true,  // Enable token binding
+    validateTokenBinding: true,
   },
   guard: {
     tenantHeaderName: 'x-tenant-id',
@@ -299,46 +158,41 @@ configureApiSdk({
 });
 ```
 
-## Error Handling
+## Quick Reference
 
-Auth errors follow RFC 7807:
+### Token Types
 
-```typescript
-// 401 Unauthorized
-{
-  type: 'https://vritti.cloud/errors/unauthorized',
-  title: 'Unauthorized',
-  status: 401,
-  detail: 'Token has expired',
-  instance: '/api/users/profile'
-}
+The SDK uses three token types:
 
-// 403 Forbidden
-{
-  type: 'https://vritti.cloud/errors/forbidden',
-  title: 'Forbidden',
-  status: 403,
-  detail: 'Invalid CSRF token',
-  instance: '/api/users/update'
-}
-```
+| Token | Lifetime | Purpose |
+|-------|----------|---------|
+| Access | 15 minutes | API requests |
+| Refresh | 30 days | Token refresh |
+| Onboarding | 24 hours | Onboarding flow |
 
-## Best Practices
+For detailed token structures and security patterns, see [Guards & Decorators - Token Types](/architecture/backend/guards-decorators#token-types).
 
-<AccordionGroup>
-  <Accordion title="Use @Public() sparingly">
-    Only use for truly public endpoints. Health checks, CSRF token endpoint, and public content are valid use cases.
-  </Accordion>
+### Guard Behavior
 
-  <Accordion title="Always validate tenant context">
-    For multi-tenant operations, ensure tenant context is validated. The guard does this automatically unless using `@Onboarding()`.
-  </Accordion>
+| Decorator | Token Required | Tenant Validated | CSRF Checked |
+|-----------|----------------|------------------|--------------|
+| `@Public()` | ❌ | ❌ | ❌ |
+| `@Onboarding()` | ✅ (onboarding) | ❌ | ✅ |
+| None (default) | ✅ (access) | ✅ | ✅ |
 
-  <Accordion title="Enable token binding in production">
-    Token binding adds security by linking access and refresh tokens. Enable with `validateTokenBinding: true`.
-  </Accordion>
+## Next Steps
 
-  <Accordion title="Use @SkipCsrf() only for webhooks">
-    External services (Stripe, Twilio) can't provide CSRF tokens. Use webhook secrets for validation instead.
-  </Accordion>
-</AccordionGroup>
+<CardGroup cols={2}>
+  <Card title="Guards & Decorators" icon="shield" href="/architecture/backend/guards-decorators">
+    Learn about authentication flow, token binding, and security patterns
+  </Card>
+  <Card title="Service Patterns" icon="layer-group" href="/architecture/backend/service-patterns">
+    Understand how to structure services with authentication
+  </Card>
+  <Card title="Multi-Tenancy" icon="building" href="/architecture/backend/multi-tenancy">
+    Learn about tenant context and isolation
+  </Card>
+  <Card title="Error Handling" icon="exclamation-triangle" href="/architecture/backend/guards-decorators#error-handling">
+    See authentication error responses
+  </Card>
+</CardGroup>

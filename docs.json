@@ -62,6 +62,7 @@
 						"pages": [
 							"architecture/backend/nestjs-fastify",
 							"architecture/backend/module-structure",
+							"architecture/backend/service-patterns",
 							"architecture/backend/guards-decorators",
 							"architecture/backend/multi-tenancy"
 						]
@@ -98,13 +99,18 @@
 				"tab": "Projects",
 				"groups": [
 					{
-						"group": "Shared Libraries",
+						"group": "@vritti/quantum-ui",
 						"pages": [
 							"projects/quantum-ui/overview",
 							"projects/quantum-ui/components",
 							"projects/quantum-ui/design-tokens",
 							"projects/quantum-ui/form-system",
-							"projects/quantum-ui/contributing",
+							"projects/quantum-ui/contributing"
+						]
+					},
+					{
+						"group": "@vritti/api-sdk",
+						"pages": [
 							"projects/api-sdk/overview",
 							"projects/api-sdk/auth-module",
 							"projects/api-sdk/drizzle-integration",
@@ -112,7 +118,7 @@
 						]
 					},
 					{
-						"group": "Backend",
+						"group": "vritti-api-nexus",
 						"pages": [
 							"projects/api-nexus/overview",
 							"projects/api-nexus/setup",
@@ -122,16 +128,31 @@
 						]
 					},
 					{
-						"group": "Frontend Applications",
+						"group": "vritti-web-nexus",
 						"pages": [
 							"projects/web-nexus/overview",
 							"projects/web-nexus/setup",
-							"projects/web-nexus/federation-host",
+							"projects/web-nexus/federation-host"
+						]
+					},
+					{
+						"group": "vritti-auth",
+						"pages": [
 							"projects/auth/overview",
 							"projects/auth/setup",
-							"projects/auth/pages-flows",
+							"projects/auth/pages-flows"
+						]
+					},
+					{
+						"group": "vritti-landing",
+						"pages": [
 							"projects/landing/overview",
-							"projects/landing/setup",
+							"projects/landing/setup"
+						]
+					},
+					{
+						"group": "slicingpie",
+						"pages": [
 							"projects/slicingpie/overview",
 							"projects/slicingpie/setup"
 						]

@@ -129,6 +129,95 @@ Standalone mode requires the backend API to be running for authentication to wor
 | `format` | `pnpm format` | Format code |
 | `check` | `pnpm check` | Full code quality check |
 
+## Starting the Application
+
+vritti-auth can run in two modes: **standalone** or **integrated with host**.
+
+<Steps>
+  <Step title="Ensure Backend is Running">
+    ```bash
+    # In vritti-api-nexus directory
+    pnpm dev
+    # API should be accessible at http://local.vrittiai.com:3000
+    ```
+  </Step>
+
+  <Step title="Choose Development Mode">
+    <Tabs>
+      <Tab title="Standalone HTTP">
+        ```bash
+        pnpm dev
+        ```
+        **Access at**: http://local.vrittiai.com:3001/login
+
+        **Use case**: Isolated development and testing of auth flows
+      </Tab>
+
+      <Tab title="Standalone HTTPS">
+        ```bash
+        pnpm dev:ssl
+        ```
+        **Access at**: https://local.vrittiai.com:3001/login
+
+        **Use case**: Testing WebAuthn/Passkey features (requires HTTPS)
+      </Tab>
+
+      <Tab title="Integrated with Host">
+        ```bash
+        # Terminal 1: Start auth remote
+        pnpm dev
+
+        # Terminal 2: Start host application
+        cd ../vritti-web-nexus
+        pnpm dev:cloud
+        ```
+        **Access at**: http://cloud.local.vrittiai.com:3012/login
+
+        **Use case**: Testing full integration with host application
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Verify Server is Running">
+    Check the following:
+
+    | Check | URL | Expected |
+    |-------|-----|----------|
+    | Manifest | http://local.vrittiai.com:3001/mf-manifest.json | JSON response |
+    | Login page | http://local.vrittiai.com:3001/login | Login form |
+    | API proxy | http://local.vrittiai.com:3001/api/health | Health check response |
+  </Step>
+</Steps>
+
+### Protocol Detection
+
+The server automatically detects the protocol based on the `USE_HTTPS` environment variable:
+
+```typescript
+// In rsbuild.config.ts
+const useHttps = process.env.USE_HTTPS === 'true';
+const protocol = useHttps ? 'https' : 'http';
+```
+
+<Warning>
+**Protocol Matching**: When running with vritti-web-nexus (host), both applications MUST use the same protocol (HTTP or HTTPS) to avoid mixed content errors.
+</Warning>
+
+### Port and Access URLs
+
+| Mode | Port | Access URL |
+|------|------|------------|
+| Standalone HTTP | 3001 | http://local.vrittiai.com:3001 |
+| Standalone HTTPS | 3001 | https://local.vrittiai.com:3001 |
+| Integrated HTTP | 3001 + 3012 | http://cloud.local.vrittiai.com:3012 |
+| Integrated HTTPS | 3001 + 3012 | https://cloud.local.vrittiai.com:3012 |
+
+**Important Notes**:
+- Auth remote always runs on port **3001**
+- Host application (vritti-web-nexus) runs on port **3012**
+- Manifest URL: `{protocol}://local.vrittiai.com:3001/mf-manifest.json`
+- WebAuthn/Passkey features require **HTTPS mode**
+
 ## Build Configuration
 
 The `rsbuild.config.ts` configures:

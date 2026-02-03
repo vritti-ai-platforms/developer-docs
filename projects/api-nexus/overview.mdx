@@ -3,8 +3,6 @@ title: API Nexus Overview
 description: Main backend API for the Vritti SaaS platform
 ---
 
-# API Nexus
-
 **vritti-api-nexus** is the main backend API gateway for the Vritti SaaS platform. Built with NestJS 11 and Fastify 5, it provides a secure, scalable, multi-tenant API for all frontend applications.
 
 ## Technology Stack
@@ -142,6 +140,168 @@ Server-Sent Events (SSE) for real-time verification status updates during onboar
 - **PII Masking**: Automatic masking of emails, phone numbers
 - **Correlation IDs**: Request tracking across services
 - **File Rotation**: Daily log rotation with configurable retention
+
+## Configuration Patterns
+
+<Info>
+These patterns were implemented to improve maintainability, testability, and readability of the codebase.
+</Info>
+
+### Environment Variable Extraction
+
+Extract all environment variables into a single `ENV` constant at the top of `main.ts`:
+
+```typescript
+// ============================================================================
+// Environment Configuration
+// ============================================================================
+
+const ENV = {
+  nodeEnv: process.env.NODE_ENV,
+  useHttps: process.env.USE_HTTPS === 'true',
+  logProvider: process.env.LOG_PROVIDER || 'winston',
+  port: process.env.PORT ?? 3000,
+  host: 'local.vrittiai.com',
+  refreshCookieName: process.env.REFRESH_COOKIE_NAME ?? 'vritti_refresh',
+  refreshCookieDomain: process.env.REFRESH_COOKIE_DOMAIN,
+} as const;
+
+const protocol = ENV.useHttps ? 'https' : 'http';
+const baseUrl = `${protocol}://${ENV.host}:${ENV.port}`;
+```
+
+**Benefits**:
+- Centralized configuration management
+- Easy to test and mock
+- Clear overview of all environment dependencies
+- Type-safe access with `as const`
+
+### Configuration Object Separation
+
+Separate configuration by concern (CORS, Swagger, etc.):
+
+```typescript
+// ============================================================================
+// CORS Configuration
+// ============================================================================
+
+const CORS_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:3001',
+  `http://${ENV.host}:3012`,
+  `https://${ENV.host}:3012`,
+];
+
+const CORS_CONFIG = {
+  origin: CORS_ORIGINS,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+};
+```
+
+**Benefits**:
+- Easy to modify CORS settings
+- Reusable across different environments
+- Clear separation of concerns
+
+### Function Extraction
+
+Extract reusable configuration logic into functions:
+
+```typescript
+// ============================================================================
+// Configuration Functions
+// ============================================================================
+
+function configureApiSdkSettings() {
+  configureApiSdk({
+    cookie: {
+      refreshCookieName: ENV.refreshCookieName,
+      refreshCookieSecure: ENV.nodeEnv === 'production',
+      // ...
+    },
+    // ...
+  });
+}
+
+function createSwaggerConfig() {
+  return new DocumentBuilder()
+    .setTitle('Vritti Cloud API')
+    .setDescription('Internal API for Vritti SaaS Platform')
+    // ...
+    .build();
+}
+```
+
+**Benefits**:
+- Simplified bootstrap function
+- Testable configuration logic
+- Easier to maintain and update
+
+## Code Organization Best Practices
+
+The `main.ts` file follows a clear structure with section dividers:
+
+<Steps>
+  <Step title="Environment Configuration">
+    Extract all environment variables to `ENV` constant with derived values
+  </Step>
+  <Step title="CORS Configuration">
+    Define allowed origins and CORS settings separately
+  </Step>
+  <Step title="Configuration Functions">
+    Extract complex configuration logic into dedicated functions
+  </Step>
+  <Step title="Bootstrap Function">
+    Simplified bootstrap that delegates to helper functions
+  </Step>
+</Steps>
+
+**Example Structure**:
+
+```typescript
+// ============================================================================
+// Environment Configuration
+// ============================================================================
+const ENV = { /* ... */ };
+const protocol = /* ... */;
+
+// ============================================================================
+// CORS Configuration
+// ============================================================================
+const CORS_ORIGINS = [ /* ... */ ];
+const CORS_CONFIG = { /* ... */ };
+
+// ============================================================================
+// Configuration Functions
+// ============================================================================
+function configureApiSdkSettings() { /* ... */ }
+function createSwaggerConfig() { /* ... */ }
+
+// ============================================================================
+// Bootstrap Function
+// ============================================================================
+async function bootstrap() {
+  // Step 1: Configure API SDK
+  configureApiSdkSettings();
+
+  // Step 2: Create app
+  const app = await NestFactory.create(/* ... */);
+
+  // Step 3: Register middleware
+  await app.register(/* ... */);
+
+  // Step 4: Start server
+  await app.listen(ENV.port, '0.0.0.0');
+}
+```
+
+**Benefits**:
+- Clear visual separation with section dividers
+- Logical grouping of related code
+- Easy to navigate and maintain
+- Simplified bootstrap function with numbered steps
 
 ## API Routes
 

@@ -1,100 +1,30 @@
 ---
-title: Service Patterns
-description: Service layer architecture and patterns in vritti-api-nexus
+title: Service Implementations
+description: Key service implementations in vritti-api-nexus
 ---
 
-# Service Patterns
+This guide shows specific service implementations in vritti-api-nexus. For general service patterns and architectural guidelines, see the [Service Layer Patterns](/architecture/backend/service-patterns) documentation.
 
-This guide covers the service layer architecture, patterns, and best practices used in vritti-api-nexus.
+## Overview
 
-## Layered Architecture
+vritti-api-nexus implements the following key services:
 
-```mermaid
-flowchart TB
-    subgraph Controller["Controller Layer"]
-        C["Controllers"]
-        C1["• HTTP request handling"]
-        C2["• DTO validation"]
-        C3["• Response transformation"]
-    end
+- **AuthService** - User authentication and session management
+- **OnboardingService** - User registration and verification flow
+- **UserService** - User profile and account management
+- **TenantService** - Tenant provisioning and configuration
+- **SessionService** - Session lifecycle management
 
-    subgraph Service["Service Layer"]
-        S["Services"]
-        S1["• Business logic"]
-        S2["• Transaction coordination"]
-        S3["• Cross-repository operations"]
-    end
+All services follow the [layered architecture pattern](/architecture/backend/service-patterns#layered-architecture) with clear separation between controllers, services, and repositories.
 
-    subgraph Repository["Repository Layer"]
-        R["Repositories"]
-        R1["• Data access"]
-        R2["• Query building"]
-        R3["• Drizzle ORM operations"]
-    end
+## Example Service Implementations
 
-    subgraph DB["Database"]
-        D[("PostgreSQL")]
-    end
+### AuthService
 
-    Controller --> Service
-    Service --> Repository
-    Repository --> DB
-```
-
-## Service Structure
-
-### Standard Service Pattern
+Handles user authentication with multiple dependencies:
 
 ```typescript
-// user.service.ts
-import { Injectable } from '@nestjs/common';
-import { UserRepository } from './user.repository';
-import { CreateUserDto, UpdateUserDto } from './dto';
-
-@Injectable()
-export class UserService {
-  constructor(private readonly userRepository: UserRepository) {}
-
-  async findById(id: string) {
-    const user = await this.userRepository.findById(id);
-    if (!user) {
-      throw new NotFoundException(`User ${id} not found`);
-    }
-    return user;
-  }
-
-  async findByEmail(email: string) {
-    return this.userRepository.findByEmail(email);
-  }
-
-  async create(dto: CreateUserDto) {
-    // Check for existing user
-    const existing = await this.userRepository.findByEmail(dto.email);
-    if (existing) {
-      throw new ConflictException('Email already registered');
-    }
-
-    // Business logic
-    const user = await this.userRepository.create({
-      ...dto,
-      accountStatus: 'PENDING_VERIFICATION',
-      onboardingStep: 'EMAIL_VERIFICATION',
-    });
-
-    return user;
-  }
-
-  async update(id: string, dto: UpdateUserDto) {
-    await this.findById(id); // Throws if not found
-    return this.userRepository.update(id, dto);
-  }
-}
-```
-
-### Service with Multiple Dependencies
-
-```typescript
-// auth.service.ts
+// src/auth/auth.service.ts
 @Injectable()
 export class AuthService {
   constructor(
@@ -105,7 +35,7 @@ export class AuthService {
   ) {}
 
   async login(dto: LoginDto) {
-    // 1. Find user
+    // 1. Find and validate user
     const user = await this.userService.findByEmail(dto.email);
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
@@ -122,389 +52,278 @@ export class AuthService {
       return { requiresMfa: true, userId: user.id };
     }
 
-    // 4. Create session and tokens
+    // 4. Create session and generate tokens
     const session = await this.sessionService.create(user.id, 'CLOUD');
     const tokens = await this.jwtService.generateTokens(user, session);
 
     return { user, tokens };
   }
+
+  async logout(userId: string, sessionId: string) {
+    await this.sessionService.revoke(sessionId, userId);
+    return { success: true };
+  }
+
+  private async verifyPassword(password: string, hash: string): Promise<boolean> {
+    return bcrypt.compare(password, hash);
+  }
 }
 ```
 
-## Repository Pattern
+**Key Patterns Used:**
+- Multiple dependency injection (UserService, SessionService, JwtAuthService)
+- Explicit error handling with domain-specific exceptions
+- Business logic separated from HTTP concerns
+- Private helper methods for internal operations
 
-### Base Repository
+### OnboardingService
+
+Manages user registration and verification with event emission:
 
 ```typescript
-// base.repository.ts
-export abstract class BaseRepository<T> {
-  constructor(
-    protected readonly db: PrimaryDatabaseService,
-    protected readonly table: PgTableWithColumns<T>,
-  ) {}
-
-  async findById(id: string): Promise<T | null> {
-    const [result] = await this.db.select()
-      .from(this.table)
-      .where(eq(this.table.id, id))
-      .limit(1);
-    return result ?? null;
-  }
-
-  async create(data: Partial<T>): Promise<T> {
-    const [result] = await this.db.insert(this.table)
-      .values(data)
-      .returning();
-    return result;
-  }
-
-  async update(id: string, data: Partial<T>): Promise<T> {
-    const [result] = await this.db.update(this.table)
-      .set({ ...data, updatedAt: new Date() })
-      .where(eq(this.table.id, id))
-      .returning();
-    return result;
-  }
-
-  async delete(id: string): Promise<void> {
-    await this.db.delete(this.table)
-      .where(eq(this.table.id, id));
-  }
-}
-```
-
-### Domain Repository
-
-```typescript
-// user.repository.ts
-@Injectable()
-export class UserRepository extends BaseRepository<typeof users> {
-  constructor(db: PrimaryDatabaseService) {
-    super(db, users);
-  }
-
-  // Custom queries
-  async findByEmail(email: string) {
-    const [user] = await this.db.select()
-      .from(users)
-      .where(eq(users.email, email.toLowerCase()))
-      .limit(1);
-    return user ?? null;
-  }
-
-  async findActiveUsers(limit = 100, offset = 0) {
-    return this.db.select()
-      .from(users)
-      .where(eq(users.accountStatus, 'ACTIVE'))
-      .limit(limit)
-      .offset(offset);
-  }
-
-  async updateOnboardingStep(userId: string, step: OnboardingStep) {
-    return this.update(userId, { onboardingStep: step });
-  }
-}
-```
-
-## Shared Services
-
-### EmailService
-
-Integration with Brevo for transactional emails.
-
-```typescript
-// services/email.service.ts
-@Injectable()
-export class EmailService {
-  private readonly client: TransactionalEmailsApi;
-
-  constructor(private readonly configService: ConfigService) {
-    const apiKey = this.configService.get('BREVO_API_KEY');
-    this.client = new TransactionalEmailsApi();
-    this.client.setApiKey(TransactionalEmailsApiApiKeys.apiKey, apiKey);
-  }
-
-  async sendVerificationEmail(email: string, otp: string) {
-    await this.client.sendTransacEmail({
-      sender: {
-        email: this.configService.get('SENDER_EMAIL'),
-        name: this.configService.get('SENDER_NAME'),
-      },
-      to: [{ email }],
-      subject: 'Verify your email',
-      htmlContent: `Your verification code is: <strong>${otp}</strong>`,
-    });
-  }
-
-  async sendWelcomeEmail(email: string, name: string) {
-    await this.client.sendTransacEmail({
-      sender: { /* ... */ },
-      to: [{ email }],
-      templateId: 1, // Brevo template ID
-      params: { name },
-    });
-  }
-}
-```
-
-### WhatsAppService
-
-Integration with WhatsApp Cloud API.
-
-```typescript
-// services/whatsapp.service.ts
-@Injectable()
-export class WhatsAppService {
-  private readonly baseUrl = 'https://graph.facebook.com/v18.0';
-
-  constructor(private readonly configService: ConfigService) {}
-
-  async sendVerificationMessage(phone: string, otp: string) {
-    const phoneNumberId = this.configService.get('WHATSAPP_PHONE_NUMBER_ID');
-    const accessToken = this.configService.get('WHATSAPP_ACCESS_TOKEN');
-
-    await axios.post(
-      `${this.baseUrl}/${phoneNumberId}/messages`,
-      {
-        messaging_product: 'whatsapp',
-        to: phone,
-        type: 'template',
-        template: {
-          name: 'verification_code',
-          language: { code: 'en' },
-          components: [
-            {
-              type: 'body',
-              parameters: [{ type: 'text', text: otp }],
-            },
-          ],
-        },
-      },
-      {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      },
-    );
-  }
-
-  verifyWebhookSignature(payload: string, signature: string): boolean {
-    const appSecret = this.configService.get('WHATSAPP_APP_SECRET');
-    const expectedSignature = crypto
-      .createHmac('sha256', appSecret)
-      .update(payload)
-      .digest('hex');
-    return `sha256=${expectedSignature}` === signature;
-  }
-}
-```
-
-### EncryptionService
-
-For encrypting sensitive data like database credentials.
-
-```typescript
-// services/encryption.service.ts
-@Injectable()
-export class EncryptionService {
-  private readonly algorithm = 'aes-256-gcm';
-  private readonly key: Buffer;
-
-  constructor(configService: ConfigService) {
-    this.key = Buffer.from(configService.get('ENCRYPTION_KEY'), 'hex');
-  }
-
-  encrypt(plaintext: string): string {
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv(this.algorithm, this.key, iv);
-
-    let encrypted = cipher.update(plaintext, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-
-    const authTag = cipher.getAuthTag().toString('hex');
-
-    return `${iv.toString('hex')}:${authTag}:${encrypted}`;
-  }
-
-  decrypt(ciphertext: string): string {
-    const [ivHex, authTagHex, encrypted] = ciphertext.split(':');
-
-    const iv = Buffer.from(ivHex, 'hex');
-    const authTag = Buffer.from(authTagHex, 'hex');
-
-    const decipher = crypto.createDecipheriv(this.algorithm, this.key, iv);
-    decipher.setAuthTag(authTag);
-
-    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-
-    return decrypted;
-  }
-}
-```
-
-## Error Handling
-
-### Custom Exceptions
-
-```typescript
-// Common NestJS exceptions
-throw new BadRequestException('Invalid input');
-throw new UnauthorizedException('Invalid credentials');
-throw new ForbiddenException('Access denied');
-throw new NotFoundException('Resource not found');
-throw new ConflictException('Resource already exists');
-
-// Custom domain exceptions
-export class OtpExpiredException extends BadRequestException {
-  constructor() {
-    super('OTP has expired. Please request a new one.');
-  }
-}
-
-export class MaxAttemptsExceededException extends BadRequestException {
-  constructor() {
-    super('Maximum verification attempts exceeded.');
-  }
-}
-```
-
-### Error Response Format
-
-All errors follow RFC 7807 Problem Details:
-
-```json
-{
-  "type": "https://vrittiai.com/errors/validation",
-  "title": "Validation Error",
-  "status": 400,
-  "detail": "Email is required",
-  "instance": "/cloud-api/auth/signup",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "correlationId": "abc123"
-}
-```
-
-## Event-Driven Communication
-
-### Emitting Events
-
-```typescript
-// onboarding.service.ts
+// src/onboarding/onboarding.service.ts
 @Injectable()
 export class OnboardingService {
-  constructor(private readonly eventEmitter: EventEmitter2) {}
+  constructor(
+    private readonly userRepository: UserRepository,
+    private readonly otpService: OtpService,
+    private readonly emailService: EmailService,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
 
   async verifyEmail(userId: string, otp: string) {
-    // ... verification logic
+    // 1. Validate OTP
+    const isValid = await this.otpService.verify(userId, otp, 'EMAIL');
+    if (!isValid) {
+      throw new BadRequestException('Invalid or expired OTP');
+    }
 
-    // Emit event for listeners
+    // 2. Update user status
+    await this.userRepository.update(userId, {
+      emailVerified: true,
+      currentOnboardingStep: 'SET_PASSWORD',
+    });
+
+    // 3. Emit event for listeners
     this.eventEmitter.emit('verification.completed', {
       userId,
       type: 'email',
       timestamp: new Date(),
     });
+
+    return { success: true, nextStep: 'SET_PASSWORD' };
+  }
+
+  async sendVerificationEmail(email: string, userId: string) {
+    const otp = await this.otpService.generate(userId, 'EMAIL');
+    await this.emailService.sendVerificationEmail(email, otp);
+    return { success: true };
   }
 }
 ```
 
-### Listening for Events
+**Key Patterns Used:**
+- [Event-driven communication](/architecture/backend/service-patterns#event-driven-communication) for decoupled notifications
+- OTP service for verification code management
+- Status tracking through onboarding steps
+- Integration with shared EmailService
+
+### UserService
+
+Standard CRUD service with business rules:
 
 ```typescript
-// verification-event.listener.ts
+// src/users/user.service.ts
 @Injectable()
-export class VerificationEventListener {
-  constructor(private readonly sseService: SseConnectionService) {}
+export class UserService {
+  constructor(
+    private readonly userRepository: UserRepository,
+  ) {}
 
-  @OnEvent('verification.completed')
-  handleVerificationCompleted(payload: VerificationEvent) {
-    // Broadcast to SSE clients
-    this.sseService.broadcast(payload.userId, {
-      type: 'VERIFICATION_COMPLETE',
-      method: payload.type,
+  async findById(id: string) {
+    const user = await this.userRepository.findById(id);
+    if (!user) {
+      throw new NotFoundException(`User ${id} not found`);
+    }
+    return user;
+  }
+
+  async findByEmail(email: string) {
+    return this.userRepository.findByEmail(email);
+  }
+
+  async create(dto: CreateUserDto) {
+    // Business rule: Check for duplicates
+    const existing = await this.userRepository.findByEmail(dto.email);
+    if (existing) {
+      throw new ConflictException('Email already registered');
+    }
+
+    // Business logic: Set initial state
+    const user = await this.userRepository.create({
+      ...dto,
+      accountStatus: 'PENDING_VERIFICATION',
+      currentOnboardingStep: 'EMAIL_VERIFICATION',
+    });
+
+    return user;
+  }
+
+  async update(id: string, dto: UpdateUserDto) {
+    await this.findById(id); // Validates existence
+    return this.userRepository.update(id, dto);
+  }
+}
+```
+
+**Key Patterns Used:**
+- Single repository dependency
+- Existence validation before operations
+- Business rules enforced in service layer
+- Explicit error handling
+
+## Shared Services
+
+vritti-api-nexus provides shared services that can be used across modules:
+
+### EmailService
+
+Brevo integration for transactional emails. See [Service Patterns - EmailService](/architecture/backend/service-patterns#emailservice) for details.
+
+**Usage in api-nexus:**
+```typescript
+await this.emailService.sendVerificationEmail(email, otp);
+await this.emailService.sendWelcomeEmail(email, name);
+```
+
+### WhatsAppService
+
+WhatsApp Cloud API integration. See [Service Patterns - WhatsAppService](/architecture/backend/service-patterns#whatsappservice) for details.
+
+**Usage in api-nexus:**
+```typescript
+await this.whatsAppService.sendVerificationMessage(phone, otp);
+const isValid = this.whatsAppService.verifyWebhookSignature(payload, signature);
+```
+
+### EncryptionService
+
+AES-256-GCM encryption for sensitive data. See [Service Patterns - EncryptionService](/architecture/backend/service-patterns#encryptionservice) for details.
+
+**Usage in api-nexus:**
+```typescript
+const encrypted = this.encryptionService.encrypt(plaintext);
+const decrypted = this.encryptionService.decrypt(ciphertext);
+```
+
+## Repository Implementations
+
+vritti-api-nexus repositories extend base classes from `@vritti/api-sdk`:
+
+### UserRepository
+
+```typescript
+// src/users/user.repository.ts
+@Injectable()
+export class UserRepository extends PrimaryBaseRepository<typeof users> {
+  constructor(database: PrimaryDatabaseService) {
+    super(database, users);
+  }
+
+  async findByEmail(email: string) {
+    return this.model.findFirst({
+      where: { email: email.toLowerCase() },
     });
   }
+
+  async findActiveUsers(limit = 100, offset = 0) {
+    return this.model.findMany({
+      where: { accountStatus: 'ACTIVE' },
+      limit,
+      offset,
+    });
+  }
+
+  async updateOnboardingStep(userId: string, step: OnboardingStep) {
+    return this.update(userId, { currentOnboardingStep: step });
+  }
 }
 ```
 
-## Transaction Management
+For repository patterns and base class methods, see [Service Patterns - Repository Pattern](/architecture/backend/service-patterns#repository-pattern).
 
-### Using Drizzle Transactions
+## Testing Services
+
+Service tests should mock dependencies and focus on business logic:
 
 ```typescript
-// tenant.service.ts
-async createTenantWithDatabase(dto: CreateTenantDto) {
-  return this.db.transaction(async (tx) => {
-    // Create tenant
-    const [tenant] = await tx.insert(tenants)
-      .values({ subdomain: dto.subdomain, name: dto.name })
-      .returning();
+describe('AuthService', () => {
+  let service: AuthService;
+  let userService: jest.Mocked<UserService>;
+  let sessionService: jest.Mocked<SessionService>;
 
-    // Create database config
-    await tx.insert(tenantDatabaseConfigs)
-      .values({
-        tenantId: tenant.id,
-        dbHost: dto.dbHost,
-        dbPort: dto.dbPort,
-        // ... other fields
-      });
+  beforeEach(async () => {
+    const module = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        {
+          provide: UserService,
+          useValue: { findByEmail: jest.fn() },
+        },
+        {
+          provide: SessionService,
+          useValue: { create: jest.fn() },
+        },
+        {
+          provide: JwtAuthService,
+          useValue: { generateTokens: jest.fn() },
+        },
+      ],
+    }).compile();
 
-    return tenant;
+    service = module.get<AuthService>(AuthService);
+    userService = module.get(UserService);
+    sessionService = module.get(SessionService);
   });
-}
+
+  it('should login user with valid credentials', async () => {
+    const user = { id: 'usr_123', email: 'test@example.com', passwordHash: 'hash' };
+    userService.findByEmail.mockResolvedValue(user);
+
+    const result = await service.login({
+      email: 'test@example.com',
+      password: 'password',
+    });
+
+    expect(result).toHaveProperty('tokens');
+    expect(sessionService.create).toHaveBeenCalled();
+  });
+
+  it('should throw UnauthorizedException for invalid credentials', async () => {
+    userService.findByEmail.mockResolvedValue(null);
+
+    await expect(
+      service.login({ email: 'test@example.com', password: 'wrong' })
+    ).rejects.toThrow(UnauthorizedException);
+  });
+});
 ```
 
-## Best Practices
+For comprehensive testing guidance, see the [Testing Guide](/projects/api-nexus/testing).
+
+## Related Documentation
 
 <CardGroup cols={2}>
-  <Card title="Single Responsibility" icon="bullseye">
-    Each service handles one domain. `AuthService` handles auth, not user creation.
+  <Card title="Service Patterns" icon="layer-group" href="/architecture/backend/service-patterns">
+    Layered architecture and service design patterns
   </Card>
-  <Card title="Dependency Injection" icon="syringe">
-    Always inject dependencies via constructor. Never instantiate directly.
+  <Card title="Repository Pattern" icon="database" href="/architecture/backend/service-patterns#repository-pattern">
+    Base repository classes and query patterns
   </Card>
-  <Card title="Repository Abstraction" icon="database">
-    Services never access the database directly. Always go through repositories.
+  <Card title="Error Handling" icon="exclamation-triangle" href="/architecture/backend/service-patterns#error-handling-patterns">
+    Custom exceptions and error responses
   </Card>
-  <Card title="Explicit Errors" icon="exclamation-triangle">
-    Throw specific exceptions. `NotFoundException` not generic `Error`.
-  </Card>
-</CardGroup>
-
-### Anti-Patterns to Avoid
-
-<Warning>
-  **Don't do this:**
-
-  ```typescript
-  // ❌ Accessing DB directly in service
-  async findUser(id: string) {
-    return this.db.select().from(users).where(eq(users.id, id));
-  }
-
-  // ❌ Catching all errors silently
-  try {
-    await this.userService.create(dto);
-  } catch (e) {
-    // Swallowed error
-  }
-
-  // ❌ Business logic in controller
-  @Post()
-  async create(@Body() dto: CreateDto) {
-    if (dto.email.includes('test')) {
-      throw new BadRequestException('Test emails not allowed');
-    }
-    return this.service.create(dto);
-  }
-  ```
-</Warning>
-
-## Next Steps
-
-<CardGroup cols={2}>
   <Card title="Testing Guide" icon="flask" href="/projects/api-nexus/testing">
-    Write tests for your services
-  </Card>
-  <Card title="Guards & Decorators" icon="shield" href="/architecture/backend/guards-decorators">
-    Learn about authentication guards
+    How to test services and repositories
   </Card>
 </CardGroup>
