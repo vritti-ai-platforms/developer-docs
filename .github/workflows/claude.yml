@@ -12,7 +12,6 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
-  id-token: write
 
 jobs:
   claude-interactive:
@@ -28,7 +27,8 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: "--max-turns 10"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: "--max-turns 15 --dangerously-skip-permissions"
 
   claude-auto-review:
     if: github.event_name == 'pull_request'
@@ -41,11 +41,9 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
-            Review this PR. Focus on:
-            - Bugs and logic errors
-            - Security vulnerabilities
-            - Code quality and readability
-            - Potential performance issues
-            Post a clear, structured review.
-          claude_args: "--max-turns 5"
+            Review this pull request and post your review as a PR comment using gh pr comment.
+            Focus on bugs, security issues, code quality, and performance.
+            Be concise and actionable.
+          claude_args: "--max-turns 10 --dangerously-skip-permissions"
