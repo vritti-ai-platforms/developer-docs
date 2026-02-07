@@ -1,75 +1,265 @@
 ---
-title: "Authentication"
-description: "How to authenticate with the Vritti API"
+title: "API Authentication Reference"
+icon: "key"
+description: "Quick reference for all auth, MFA, OAuth, and onboarding endpoints"
 ---
 
-The Vritti API uses JWT (JSON Web Tokens) for authentication. Most endpoints require a valid access token.
+## Auth Types
 
-## Obtaining Tokens
+| Type | Header / Mechanism |
+|------|--------------------|
+| **Public** | No authentication required |
+| **Bearer (Cloud)** | `Authorization: Bearer <accessToken>` -- CLOUD session |
+| **Bearer (Onboarding)** | `Authorization: Bearer <onboardingToken>` -- ONBOARDING session |
+| **Public (cookie)** | httpOnly refresh cookie sent automatically, no Bearer header |
+| **Query param token** | JWT passed as `?token=<jwt>` (for SSE / EventSource) |
 
-### Login
-```bash
-POST /cloud-api/auth/login
-Content-Type: application/json
+## Response Patterns
 
-{
-  "email": "user@example.com",
-  "password": "your-password"
-}
-```
-
-Response:
-```json
+<CodeGroup>
+```json Successful Auth
 {
   "accessToken": "eyJhbG...",
-  "refreshToken": "eyJhbG...",
-  "tokenType": "Bearer",
   "expiresIn": 3600
 }
+// + httpOnly refresh cookie set by server
 ```
 
-## Using Tokens
-
-Include the access token in the `Authorization` header:
-
-```bash
-GET /cloud-api/users
-Authorization: Bearer eyJhbG...
-```
-
-## Token Refresh
-
-Access tokens expire after 1 hour. Use the refresh token to obtain new tokens:
-
-```bash
-POST /cloud-api/auth/refresh
-Content-Type: application/json
-
-{
-  "refreshToken": "eyJhbG..."
-}
-```
-
-## CSRF Protection
-
-For browser-based requests, include a CSRF token:
-
-1. Get a CSRF token: `GET /csrf/token`
-2. Include in requests: `X-CSRF-Token: <token>`
-
-## Multi-Factor Authentication
-
-If MFA is enabled, login returns an MFA challenge:
-
-```json
+```json MFA Required
 {
   "requiresMfa": true,
   "mfaChallenge": {
     "sessionId": "mfa_abc123",
-    "availableMethods": ["totp", "sms"],
-    "defaultMethod": "totp"
+    "availableMethods": ["totp", "sms", "passkey"],
+    "defaultMethod": "totp",
+    "maskedPhone": "+1****7890"
   }
 }
 ```
 
-Complete MFA verification at `/cloud-api/auth/mfa/verify-totp` or `/cloud-api/auth/mfa/sms/verify`.
+```json Onboarding Required
+{
+  "requiresOnboarding": true,
+  "onboardingStep": "EMAIL_VERIFICATION"
+}
+```
+
+```json Error (RFC 9457)
+{
+  "title": "Validation Error",
+  "status": 400,
+  "detail": "Request validation failed",
+  "errors": [
+    { "field": "email", "message": "Invalid email format" }
+  ]
+}
+```
+</CodeGroup>
+
+---
+
+## Core Auth
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/cloud-api/auth/signup` | Public | Create account |
+| `POST` | `/cloud-api/auth/login` | Public | Email/password login |
+| `POST` | `/cloud-api/auth/logout` | Bearer (Cloud) | Logout current session |
+| `POST` | `/cloud-api/auth/logout-all` | Bearer (Cloud) | Logout all sessions |
+| `GET` | `/cloud-api/auth/me` | Public | Auth status check |
+| `GET` | `/cloud-api/auth/token` | Public | Token recovery (cookie) |
+| `POST` | `/cloud-api/auth/refresh` | Public (cookie) | Refresh access token |
+| `POST` | `/cloud-api/auth/forgot-password` | Public | Request password reset |
+| `POST` | `/cloud-api/auth/verify-reset-otp` | Public | Verify reset OTP |
+| `POST` | `/cloud-api/auth/reset-password` | Public | Reset password |
+
+### Signup
+
+```bash
+POST /cloud-api/auth/signup
+Content-Type: application/json
+
+{ "email": "user@example.com", "password": "SecureP@ss1" }
+```
+
+### Login
+
+```bash
+POST /cloud-api/auth/login
+Content-Type: application/json
+
+{ "email": "user@example.com", "password": "SecureP@ss1" }
+```
+
+Returns `{ accessToken, expiresIn }`, or an MFA challenge, or an onboarding redirect.
+
+### Refresh
+
+```bash
+POST /cloud-api/auth/refresh
+# No body -- reads httpOnly refresh cookie automatically
+```
+
+### Password Reset Flow
+
+```bash
+# 1. Request reset
+POST /cloud-api/auth/forgot-password
+{ "email": "user@example.com" }
+
+# 2. Verify OTP from email
+POST /cloud-api/auth/verify-reset-otp
+{ "email": "user@example.com", "otp": "123456" }
+
+# 3. Set new password (with token from step 2)
+POST /cloud-api/auth/reset-password
+{ "token": "reset_token", "newPassword": "NewSecureP@ss1" }
+```
+
+---
+
+## OAuth
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/cloud-api/auth/oauth/:provider` | Public | Initiate OAuth (redirects) |
+| `GET` | `/cloud-api/auth/oauth/:provider/callback` | Public | OAuth callback |
+| `GET` | `/cloud-api/auth/oauth/:provider/link` | Bearer (Onboarding) | Link OAuth to account |
+
+Supported providers: `google`, `microsoft`, `facebook`, `twitter`, `apple`.
+
+```bash
+# Initiate -- browser navigates here, server redirects to provider
+GET /cloud-api/auth/oauth/google
+
+# Callback -- provider redirects back here
+GET /cloud-api/auth/oauth/google/callback?code=...&state=...
+
+# Link during onboarding
+GET /cloud-api/auth/oauth/google/link
+Authorization: Bearer <onboardingToken>
+```
+
+---
+
+## MFA Verification
+
+These endpoints complete MFA during login. The `sessionId` comes from the `mfaChallenge` returned by `/auth/login`.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/cloud-api/auth/mfa/verify-totp` | Public | Verify TOTP code |
+| `POST` | `/cloud-api/auth/mfa/sms/send` | Public | Send SMS OTP |
+| `POST` | `/cloud-api/auth/mfa/sms/verify` | Public | Verify SMS OTP |
+| `POST` | `/cloud-api/auth/mfa/passkey/start` | Public | Start passkey MFA |
+| `POST` | `/cloud-api/auth/mfa/passkey/verify` | Public | Verify passkey MFA |
+
+```bash
+# TOTP
+POST /cloud-api/auth/mfa/verify-totp
+{ "sessionId": "mfa_abc123", "code": "123456" }
+
+# SMS -- send then verify
+POST /cloud-api/auth/mfa/sms/send
+{ "sessionId": "mfa_abc123" }
+
+POST /cloud-api/auth/mfa/sms/verify
+{ "sessionId": "mfa_abc123", "code": "123456" }
+
+# Passkey -- start then verify
+POST /cloud-api/auth/mfa/passkey/start
+{ "sessionId": "mfa_abc123" }
+# Returns WebAuthn options
+
+POST /cloud-api/auth/mfa/passkey/verify
+{ "sessionId": "mfa_abc123", "credential": { ... } }
+```
+
+All successful MFA verifications return `{ accessToken, expiresIn }`.
+
+---
+
+## Passkey Login (Passwordless)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/cloud-api/auth/passkey/start` | Public | Start passkey login |
+| `POST` | `/cloud-api/auth/passkey/verify` | Public | Verify passkey login |
+
+```bash
+# 1. Get WebAuthn challenge
+POST /cloud-api/auth/passkey/start
+{}
+
+# 2. Submit signed credential
+POST /cloud-api/auth/passkey/verify
+{ "credential": { "id": "...", "response": { ... } } }
+```
+
+---
+
+## Onboarding
+
+All onboarding endpoints require **Bearer (Onboarding)** auth unless noted.
+
+### Status & Flow
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/cloud-api/onboarding/status` | Get current onboarding status |
+| `POST` | `/cloud-api/onboarding/start` | Start onboarding flow |
+
+### Email Verification
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/cloud-api/onboarding/verify-email` | Verify email OTP |
+| `POST` | `/cloud-api/onboarding/resend-email-otp` | Resend email OTP |
+
+### Password
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/cloud-api/onboarding/set-password` | Set password |
+
+### Mobile Verification
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/cloud-api/onboarding/mobile-verification/initiate` | Bearer (Onboarding) | Start mobile verification |
+| `GET` | `/cloud-api/onboarding/mobile-verification/status` | Bearer (Onboarding) | Poll verification status |
+| `POST` | `/cloud-api/onboarding/mobile-verification/verify-otp` | Bearer (Onboarding) | Verify mobile OTP |
+| `POST` | `/cloud-api/onboarding/mobile-verification/resend` | Bearer (Onboarding) | Resend mobile verification |
+| `GET` | `/cloud-api/onboarding/mobile-verification/events` | Query param token | SSE verification events |
+
+```bash
+# SSE stream (EventSource can't set headers, so token is a query param)
+GET /cloud-api/onboarding/mobile-verification/events?token=<jwt>
+```
+
+### 2FA Setup
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/cloud-api/onboarding/2fa/totp/setup` | Setup TOTP (returns QR URI + secret) |
+| `POST` | `/cloud-api/onboarding/2fa/totp/verify` | Verify TOTP setup |
+| `POST` | `/cloud-api/onboarding/2fa/passkey/setup` | Setup passkey (returns WebAuthn options) |
+| `POST` | `/cloud-api/onboarding/2fa/passkey/verify` | Verify passkey setup |
+| `POST` | `/cloud-api/onboarding/2fa/skip` | Skip 2FA setup |
+| `GET` | `/cloud-api/onboarding/2fa/status` | Get 2FA setup status |
+
+---
+
+## Using Tokens
+
+```bash
+# Cloud session -- standard API access
+GET /cloud-api/users
+Authorization: Bearer <accessToken>
+
+# Onboarding session -- onboarding endpoints only
+POST /cloud-api/onboarding/verify-email
+Authorization: Bearer <onboardingToken>
+```
+
+Access tokens are short-lived. Use `POST /cloud-api/auth/refresh` (with the httpOnly cookie) to get a new access token without re-authenticating.

@@ -1,0 +1,403 @@
+---
+title: "Auth System Overview"
+description: "Database schema, token configuration, enums, and session architecture for Vritti's authentication system"
+icon: "lock"
+---
+
+## Overview
+
+The Vritti auth system is built on PostgreSQL (schema `cloud`), Drizzle ORM, and NestJS with JWT-based sessions. This page documents the database tables, enums, token configuration, and session types that form the foundation of authentication and authorization.
+
+**Source files referenced:**
+
+| File | Purpose |
+|------|---------|
+| `api-nexus/src/db/schema/enums.ts` | Drizzle enum definitions |
+| `api-nexus/src/db/schema/user.ts` | Users table |
+| `api-nexus/src/db/schema/auth.ts` | Sessions, OAuth providers, OAuth states |
+| `api-nexus/src/db/schema/verification.ts` | Email/mobile verifications, 2FA, password resets |
+| `api-nexus/src/db/schema/relations.ts` | Drizzle relation definitions |
+| `api-nexus/src/db/schema/cloud-schema.ts` | PostgreSQL schema (`cloud`) |
+| `api-nexus/src/config/jwt.config.ts` | JWT factory, token types, token payloads, expiry config |
+
+---
+
+## Enums
+
+All enums are defined in `api-nexus/src/db/schema/enums.ts` using `cloudSchema.enum()` and live in the `cloud` PostgreSQL schema.
+
+```typescript
+// Account status
+export const accountStatusEnum = cloudSchema.enum('AccountStatus', [
+  'PENDING_VERIFICATION',
+  'ACTIVE',
+  'INACTIVE',
+]);
+
+// Onboarding step
+export const onboardingStepEnum = cloudSchema.enum('OnboardingStep', [
+  'EMAIL_VERIFICATION',
+  'SET_PASSWORD',
+  'MOBILE_VERIFICATION',
+  'TWO_FACTOR_SETUP',
+  'COMPLETE',
+]);
+
+// Session type
+export const sessionTypeEnum = cloudSchema.enum('SessionType', [
+  'ONBOARDING',
+  'CLOUD',
+]);
+
+// OAuth provider
+export const oauthProviderTypeEnum = cloudSchema.enum('OAuthProviderType', [
+  'GOOGLE',
+  'MICROSOFT',
+  'APPLE',
+  'FACEBOOK',
+  'X',
+]);
+
+// Two-factor method
+export const twoFactorMethodEnum = cloudSchema.enum('TwoFactorMethod', [
+  'TOTP',
+  'PASSKEY',
+]);
+
+// Mobile verification method
+export const verificationMethodEnum = cloudSchema.enum('VerificationMethod', [
+  'WHATSAPP_QR',
+  'SMS_QR',
+  'MANUAL_OTP',
+]);
+```
+
+Each enum also has a corresponding TypeScript type export (e.g., `AccountStatus`, `SessionType`) and a runtime values object (e.g., `AccountStatusValues`, `SessionTypeValues`).
+
+---
+
+## Database Tables
+
+All tables use `cloudSchema.table()` which places them in the PostgreSQL `cloud` schema.
+
+### `users`
+
+Core user entity. Defined in `api-nexus/src/db/schema/user.ts`.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| `id` | uuid | PK | `defaultRandom()` |
+| `email` | varchar(255) | NOT NULL, UNIQUE | -- |
+| `passwordHash` | varchar(255) | nullable | -- |
+| `firstName` | varchar(100) | nullable | -- |
+| `lastName` | varchar(100) | nullable | -- |
+| `phone` | varchar(20) | nullable | -- |
+| `phoneCountry` | varchar(5) | nullable | -- |
+| `profilePictureUrl` | text | nullable | -- |
+| `locale` | varchar(10) | nullable | -- |
+| `timezone` | varchar(50) | nullable | -- |
+| `accountStatus` | `AccountStatus` enum | NOT NULL | `'PENDING_VERIFICATION'` |
+| `onboardingStep` | `OnboardingStep` enum | NOT NULL | `'EMAIL_VERIFICATION'` |
+| `hasPassword` | boolean | -- | `false` |
+| `emailVerified` | boolean | NOT NULL | `false` |
+| `phoneVerified` | boolean | NOT NULL | `false` |
+| `createdAt` | timestamp(tz) | NOT NULL | `now()` |
+| `updatedAt` | timestamp(tz) | NOT NULL | `now()`, auto-updates |
+| `lastLoginAt` | timestamp(tz) | nullable | -- |
+| `emailVerifiedAt` | timestamp(tz) | nullable | -- |
+| `phoneVerifiedAt` | timestamp(tz) | nullable | -- |
+
+### `sessions`
+
+Tracks active user sessions with access and refresh tokens. Defined in `api-nexus/src/db/schema/auth.ts`.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| `id` | uuid | PK | `defaultRandom()` |
+| `userId` | uuid | NOT NULL, FK -> `users.id` (cascade) | -- |
+| `type` | `SessionType` enum | NOT NULL | `'CLOUD'` |
+| `accessToken` | varchar(2048) | NOT NULL, UNIQUE | -- |
+| `refreshToken` | varchar(2048) | UNIQUE, nullable | -- |
+| `tokenType` | varchar(50) | NOT NULL | `'Bearer'` |
+| `ipAddress` | varchar(45) | nullable | -- |
+| `userAgent` | text | nullable | -- |
+| `isActive` | boolean | NOT NULL | `true` |
+| `accessTokenExpiresAt` | timestamp(tz) | NOT NULL | -- |
+| `refreshTokenExpiresAt` | timestamp(tz) | nullable | -- |
+| `createdAt` | timestamp(tz) | NOT NULL | `now()` |
+| `updatedAt` | timestamp(tz) | NOT NULL | `now()`, auto-updates |
+
+**Indexes:**
+
+| Name | Columns |
+|------|---------|
+| `sessions_user_id_active_idx` | `userId`, `isActive` |
+| `sessions_access_token_idx` | `accessToken` |
+| `sessions_refresh_token_idx` | `refreshToken` |
+
+### `oauth_providers`
+
+Links external OAuth providers to user accounts. Defined in `api-nexus/src/db/schema/auth.ts`.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| `id` | uuid | PK | `defaultRandom()` |
+| `userId` | uuid | NOT NULL, FK -> `users.id` (cascade) | -- |
+| `provider` | `OAuthProviderType` enum | NOT NULL | -- |
+| `providerId` | varchar(255) | NOT NULL | -- |
+| `email` | varchar(255) | nullable | -- |
+| `displayName` | varchar(255) | nullable | -- |
+| `profilePictureUrl` | text | nullable | -- |
+| `accessToken` | text | nullable | -- |
+| `refreshToken` | text | nullable | -- |
+| `tokenExpiresAt` | timestamp(tz) | nullable | -- |
+| `createdAt` | timestamp(tz) | NOT NULL | `now()` |
+| `updatedAt` | timestamp(tz) | NOT NULL | `now()`, auto-updates |
+
+**Unique constraint:** `(provider, providerId)`
+
+### `oauth_states`
+
+CSRF protection for OAuth flows. Defined in `api-nexus/src/db/schema/auth.ts`.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| `id` | uuid | PK | `defaultRandom()` |
+| `stateToken` | varchar(512) | NOT NULL, UNIQUE | -- |
+| `provider` | `OAuthProviderType` enum | NOT NULL | -- |
+| `userId` | uuid | nullable | -- |
+| `codeVerifier` | varchar(255) | NOT NULL | -- |
+| `expiresAt` | timestamp(tz) | NOT NULL | -- |
+| `createdAt` | timestamp(tz) | NOT NULL | `now()` |
+
+### `email_verifications`
+
+Tracks OTP for email verification. Defined in `api-nexus/src/db/schema/verification.ts`.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| `id` | uuid | PK | `defaultRandom()` |
+| `userId` | uuid | NOT NULL, FK -> `users.id` (cascade) | -- |
+| `email` | varchar(255) | NOT NULL | -- |
+| `otp` | varchar(255) | NOT NULL | -- |
+| `attempts` | integer | NOT NULL | `0` |
+| `isVerified` | boolean | NOT NULL | `false` |
+| `expiresAt` | timestamp(tz) | NOT NULL | -- |
+| `createdAt` | timestamp(tz) | NOT NULL | `now()` |
+| `verifiedAt` | timestamp(tz) | nullable | -- |
+
+### `mobile_verifications`
+
+Tracks OTP and QR verification for phone numbers. Defined in `api-nexus/src/db/schema/verification.ts`.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| `id` | uuid | PK | `defaultRandom()` |
+| `userId` | uuid | NOT NULL, FK -> `users.id` (cascade) | -- |
+| `phone` | varchar(20) | nullable | -- |
+| `phoneCountry` | varchar(5) | nullable | -- |
+| `method` | `VerificationMethod` enum | NOT NULL | -- |
+| `otp` | varchar(255) | nullable | -- |
+| `attempts` | integer | NOT NULL | `0` |
+| `isVerified` | boolean | NOT NULL | `false` |
+| `qrCode` | text | nullable | -- |
+| `qrScannedAt` | timestamp(tz) | nullable | -- |
+| `qrVerificationId` | varchar(255) | UNIQUE, nullable | -- |
+| `expiresAt` | timestamp(tz) | NOT NULL | -- |
+| `createdAt` | timestamp(tz) | NOT NULL | `now()` |
+| `verifiedAt` | timestamp(tz) | nullable | -- |
+
+### `two_factor_auth`
+
+Stores 2FA configuration per user. Defined in `api-nexus/src/db/schema/verification.ts`.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| `id` | uuid | PK | `defaultRandom()` |
+| `userId` | uuid | NOT NULL, FK -> `users.id` (cascade) | -- |
+| `method` | `TwoFactorMethod` enum | NOT NULL | -- |
+| `isActive` | boolean | NOT NULL | `true` |
+| `totpSecret` | varchar(255) | nullable | -- |
+| `totpBackupCodes` | text | nullable | -- |
+| `passkeyCredentialId` | varchar(255) | UNIQUE, nullable | -- |
+| `passkeyPublicKey` | text | nullable | -- |
+| `passkeyCounter` | integer | nullable | -- |
+| `passkeyTransports` | varchar(255) | nullable | -- |
+| `createdAt` | timestamp(tz) | NOT NULL | `now()` |
+| `updatedAt` | timestamp(tz) | NOT NULL | `now()`, auto-updates |
+| `lastUsedAt` | timestamp(tz) | nullable | -- |
+
+### `password_resets`
+
+Tracks OTP for forgot password flow. Defined in `api-nexus/src/db/schema/verification.ts`.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| `id` | uuid | PK | `defaultRandom()` |
+| `userId` | uuid | NOT NULL, FK -> `users.id` (cascade) | -- |
+| `email` | varchar(255) | NOT NULL | -- |
+| `otp` | varchar(255) | NOT NULL | -- |
+| `resetToken` | varchar(255) | nullable | -- |
+| `attempts` | integer | NOT NULL | `0` |
+| `isVerified` | boolean | NOT NULL | `false` |
+| `isUsed` | boolean | NOT NULL | `false` |
+| `expiresAt` | timestamp(tz) | NOT NULL | -- |
+| `createdAt` | timestamp(tz) | NOT NULL | `now()` |
+| `verifiedAt` | timestamp(tz) | nullable | -- |
+| `usedAt` | timestamp(tz) | nullable | -- |
+
+---
+
+## Relations
+
+Defined in `api-nexus/src/db/schema/relations.ts` using `defineRelations` from `@vritti/api-sdk/drizzle-orm`.
+
+```typescript
+users: {
+  emailVerifications: r.many.emailVerifications(),
+  mobileVerifications: r.many.mobileVerifications(),
+  twoFactorAuth: r.many.twoFactorAuth(),
+  oauthProviders: r.many.oauthProviders(),
+  sessions: r.many.sessions(),
+},
+
+sessions:          { user: r.one.users({ from: sessions.userId, to: users.id }) },
+oauthProviders:    { user: r.one.users({ from: oauthProviders.userId, to: users.id }) },
+emailVerifications:{ user: r.one.users({ from: emailVerifications.userId, to: users.id }) },
+mobileVerifications:{ user: r.one.users({ from: mobileVerifications.userId, to: users.id }) },
+twoFactorAuth:     { user: r.one.users({ from: twoFactorAuth.userId, to: users.id }) },
+```
+
+A user has many email verifications, mobile verifications, two-factor auth entries, OAuth providers, and sessions. Each child record references back to one user.
+
+---
+
+## Token Configuration
+
+Defined in `api-nexus/src/config/jwt.config.ts`.
+
+### JWT Module Factory
+
+```typescript
+export const jwtConfigFactory = (configService: ConfigService): JwtModuleOptions => ({
+  secret: configService.getOrThrow<string>('JWT_SECRET'),
+  signOptions: {
+    issuer: 'vritti-api',
+  },
+});
+```
+
+### Token Types
+
+```typescript
+export enum TokenType {
+  ONBOARDING = 'onboarding',
+  ACCESS = 'access',
+  REFRESH = 'refresh',
+  PASSWORD_RESET = 'password_reset',
+}
+```
+
+### Token Expiry
+
+```typescript
+export const getTokenExpiry = (configService: ConfigService): TokenExpiry => ({
+  ONBOARDING: '24h',                                                          // hardcoded
+  ACCESS: (configService.get<string>('JWT_ACCESS_EXPIRY') ?? '15m'),          // env or default
+  REFRESH: (configService.get<string>('JWT_REFRESH_EXPIRY') ?? '30d'),        // env or default
+  PASSWORD_RESET: '15m',                                                       // hardcoded
+});
+```
+
+| Token Type | Default Expiry | Source |
+|------------|---------------|--------|
+| `ONBOARDING` | 24h | Hardcoded |
+| `ACCESS` | 15m | `JWT_ACCESS_EXPIRY` env var, fallback `'15m'` |
+| `REFRESH` | 30d | `JWT_REFRESH_EXPIRY` env var, fallback `'30d'` |
+| `PASSWORD_RESET` | 15m | Hardcoded |
+
+### Token Payloads
+
+```typescript
+export interface AccessTokenPayload {
+  userId: string;
+  type: TokenType.ACCESS;
+  /** SHA-256 hash of bound refresh token */
+  refreshTokenHash: string;
+}
+
+export interface OnboardingTokenPayload {
+  userId: string;
+  type: TokenType.ONBOARDING;
+  /** SHA-256 hash of bound refresh token */
+  refreshTokenHash: string;
+}
+```
+
+Both payloads bind the access/onboarding token to its corresponding refresh token via a SHA-256 hash stored in `refreshTokenHash`.
+
+### Password Hashing
+
+Password hashing uses Argon2id via `EncryptionService` from `@vritti/api-sdk`. OTPs are also hashed before storage.
+
+---
+
+## Session Types
+
+| Type | When Created | Token Expiry | Purpose |
+|------|-------------|--------------|---------|
+| `ONBOARDING` | During signup and OAuth for users who have not completed onboarding | 24h (onboarding token) | Grants access to onboarding-only endpoints |
+| `CLOUD` | After login or onboarding completion | Access: 15m, Refresh: 30d | Full authenticated API access |
+
+An `ONBOARDING` session is promoted to `CLOUD` when the user finishes all onboarding steps (email verification, password setup, mobile verification, 2FA setup).
+
+---
+
+## Environment Variables
+
+### Required
+
+| Variable | Description |
+|----------|-------------|
+| `JWT_SECRET` | Secret key for signing JWTs |
+| `CSRF_HMAC_KEY` | HMAC key for OAuth state signing |
+
+### Optional (with defaults)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JWT_ACCESS_EXPIRY` | `'15m'` | Access token lifetime |
+| `JWT_REFRESH_EXPIRY` | `'30d'` | Refresh token lifetime |
+| `REFRESH_COOKIE_NAME` | -- | Name of the refresh token cookie |
+| `REFRESH_COOKIE_DOMAIN` | -- | Domain for the refresh token cookie |
+
+### OAuth Provider Variables
+
+Each OAuth provider requires its own set of credentials:
+
+| Provider | Client ID | Client Secret | Callback URL |
+|----------|-----------|---------------|-------------|
+| Google | `GOOGLE_CLIENT_ID` | `GOOGLE_CLIENT_SECRET` | `GOOGLE_CALLBACK_URL` |
+| Microsoft | `MICROSOFT_CLIENT_ID` | `MICROSOFT_CLIENT_SECRET` | `MICROSOFT_CALLBACK_URL` |
+| Apple | `APPLE_CLIENT_ID` | `APPLE_CLIENT_SECRET` | `APPLE_CALLBACK_URL` |
+| Facebook | `FACEBOOK_CLIENT_ID` | `FACEBOOK_CLIENT_SECRET` | `FACEBOOK_CALLBACK_URL` |
+| X (Twitter) | `X_CLIENT_ID` | `X_CLIENT_SECRET` | `X_CALLBACK_URL` |
+
+---
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Signup & Login" icon="right-to-bracket" href="/features/auth/signup-login">
+    Core authentication flows for registration and credential-based login
+  </Card>
+  <Card title="JWT Sessions" icon="key" href="/features/auth/jwt-sessions">
+    Token structure, session management, and token binding
+  </Card>
+  <Card title="Token Refresh" icon="rotate" href="/features/auth/token-refresh">
+    Access token renewal, refresh token rotation, and session extension
+  </Card>
+  <Card title="Onboarding Flow" icon="list-check" href="/features/onboarding/flow-overview">
+    Multi-step user onboarding process
+  </Card>
+</CardGroup>

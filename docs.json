@@ -89,7 +89,6 @@
 						"group": "Diagrams",
 						"pages": [
 							"architecture/diagrams/system-architecture",
-							"architecture/diagrams/auth-flow",
 							"architecture/diagrams/data-flow"
 						]
 					}
@@ -165,33 +164,13 @@
 					{
 						"group": "Authentication",
 						"pages": [
+							"features/auth/overview",
 							"features/auth/signup-login",
-							"features/auth/jwt-sessions",
-							"features/auth/token-refresh",
-							"features/csrf",
-							"features/passkeys",
-							"features/mfa"
-						]
-					},
-					{
-						"group": "OAuth",
-						"pages": [
-							"features/oauth/overview",
-							"features/oauth/google",
-							"features/oauth/microsoft",
-							"features/oauth/facebook",
-							"features/oauth/twitter",
-							"features/oauth/apple"
-						]
-					},
-					{
-						"group": "Onboarding",
-						"pages": [
-							"features/onboarding/flow-overview",
-							"features/onboarding/email-verification",
-							"features/onboarding/phone-verification",
-							"features/onboarding/password-setup",
-							"features/onboarding/2fa-setup"
+							"features/auth/oauth",
+							"features/auth/mfa-passkeys",
+							"features/auth/sessions-tokens",
+							"features/auth/onboarding",
+							"features/auth/frontend"
 						]
 					},
 					{
