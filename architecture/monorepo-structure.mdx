@@ -21,22 +21,35 @@ Vritti uses a multi-repo approach with a workspace configuration that links all 
 │   ├── src/database/
 │   └── package.json              # @vritti/api-sdk
 │
-├── vritti-api-nexus/              # Main backend API
+├── api-nexus/                     # Platform backend API
 │   ├── src/
 │   ├── src/db/schema/
 │   └── package.json
 │
-├── vritti-web-nexus/              # Frontend host app
+├── cloud-server/                  # Cloud product backend API
+│   ├── src/
+│   ├── src/db/schema/
+│   └── package.json
+│
+├── web-nexus/                     # Frontend host app (Module Federation)
 │   ├── src/
 │   └── package.json
 │
-├── vritti-auth/                   # Auth micro-frontend
+├── cloud-microfrontend/           # Cloud dashboard micro-frontend
 │   ├── src/
 │   └── package.json
 │
-├── vritti-landing/                # Next.js landing page
+├── cloud-web/                     # Standalone auth + account web app
+│   ├── src/
+│   └── package.json
+│
+├── landing/                       # Next.js landing page
 │   ├── app/
 │   └── package.json
+│
+├── infrastructure/                # Terraform + Docker infrastructure
+│   ├── terraform/
+│   └── docker/
 │
 ├── slicingpie/                    # Admin dashboard
 │   ├── src/
@@ -72,8 +85,9 @@ These packages are published to npm and consumed by other projects:
     ```
 
     **Consumers:**
-    - vritti-web-nexus
-    - vritti-auth
+    - web-nexus
+    - cloud-web
+    - cloud-microfrontend
     - slicingpie
   </Tab>
   <Tab title="@vritti/api-sdk">
@@ -84,7 +98,7 @@ These packages are published to npm and consumed by other projects:
     /api-sdk
 
     # Package name
-    @vritti/api-sdk@0.1.x
+    @vritti/api-sdk@0.2.x
 
     # Key exports
     - AuthConfigModule (JWT guards, decorators)
@@ -94,45 +108,71 @@ These packages are published to npm and consumed by other projects:
     ```
 
     **Consumers:**
-    - vritti-api-nexus
-    - Future microservices
+    - api-nexus
+    - cloud-server
   </Tab>
 </Tabs>
 
 ### Backend Services
 
-<Card title="vritti-api-nexus" icon="server">
-  **Main API Gateway**
+<CardGroup cols={2}>
+  <Card title="api-nexus" icon="server">
+    **Platform API Gateway**
 
-  The primary backend handling all API requests. Implements multi-tenant database routing, authentication, and business logic.
+    The primary backend handling auth, tenant management, users, and onboarding flows.
 
-  ```
-  /vritti-api-nexus
-  ├── src/
-  │   ├── db/
-  │   │   ├── schema/         # Drizzle ORM schemas
-  │   │   └── migrations/     # Database migrations
-  │   ├── auth/               # Authentication module
-  │   ├── tenants/            # Tenant management
-  │   ├── users/              # User management
-  │   ├── onboarding/         # Registration flow
-  │   └── mfa/                # Multi-factor auth
-  └── drizzle.config.ts       # Migration config
-  ```
+    ```
+    /api-nexus
+    ├── src/
+    │   ├── db/
+    │   │   ├── schema/         # Drizzle ORM schemas
+    │   │   └── migrations/     # Database migrations
+    │   ├── modules/
+    │   │   └── cloud-api/      # All API modules
+    │   │       ├── auth/       # Authentication
+    │   │       ├── onboarding/ # Verification flows
+    │   │       ├── tenant/     # Multi-tenant management
+    │   │       └── user/       # User management
+    │   └── services/           # Shared services
+    └── drizzle.config.ts
+    ```
 
-  **Ports:** 3000 (API), 3000/api/docs (Swagger)
-</Card>
+    **Port:** 3000 (API), 3000/api/docs (Swagger)
+  </Card>
+  <Card title="cloud-server" icon="cloud">
+    **Cloud Product API**
+
+    Backend for the cloud dashboard — companies, deployments, AI chat, and admin APIs.
+
+    ```
+    /cloud-server
+    ├── src/
+    │   ├── db/
+    │   │   ├── schema/         # Drizzle ORM schemas
+    │   │   └── migrations/     # Database migrations
+    │   ├── modules/
+    │   │   ├── cloud-api/      # Cloud product routes
+    │   │   ├── admin-api/      # Admin routes
+    │   │   ├── companies/      # Company management
+    │   │   └── ai-chat/        # AI chat features
+    │   └── services/           # Shared services
+    └── drizzle.config.ts
+    ```
+
+    **Port:** 3000 (API), 3000/api/docs (Swagger)
+  </Card>
+</CardGroup>
 
 ### Frontend Applications
 
 <CardGroup cols={2}>
-  <Card title="vritti-web-nexus" icon="window">
+  <Card title="web-nexus" icon="window">
     **Host Application**
 
-    Module Federation host that loads remote micro-frontends.
+    Module Federation host that loads remote micro-frontends at runtime.
 
     ```
-    /vritti-web-nexus
+    /web-nexus
     ├── src/
     │   ├── config/remotes.config.ts
     │   ├── utils/RemoteRoutes.tsx
@@ -142,13 +182,30 @@ These packages are published to npm and consumed by other projects:
 
     **Port:** 3012
   </Card>
-  <Card title="vritti-auth" icon="fingerprint">
-    **Auth Micro-Frontend**
+  <Card title="cloud-microfrontend" icon="chart-bar">
+    **Cloud Dashboard Remote**
 
-    Handles login, signup, onboarding, and MFA flows.
+    Module Federation remote serving the cloud product dashboard.
 
     ```
-    /vritti-auth
+    /cloud-microfrontend
+    ├── src/
+    │   ├── features/
+    │   ├── pages/
+    │   ├── hooks/
+    │   └── routes.tsx
+    └── rsbuild.config.ts
+    ```
+
+    **Port:** 3002
+  </Card>
+  <Card title="cloud-web" icon="fingerprint">
+    **Auth + Account Web App**
+
+    Standalone auth and account management app. Also exposed as a Module Federation remote for the host.
+
+    ```
+    /cloud-web
     ├── src/
     │   ├── pages/
     │   ├── context/
@@ -158,20 +215,20 @@ These packages are published to npm and consumed by other projects:
 
     **Port:** 3001
   </Card>
-  <Card title="vritti-landing" icon="globe">
+  <Card title="landing" icon="globe">
     **Marketing Site**
 
     Next.js 15 application for public-facing pages.
 
     ```
-    /vritti-landing
+    /landing
     ├── app/
     │   ├── page.tsx
     │   └── layout.tsx
     └── next.config.ts
     ```
 
-    **Port:** 3002
+    **Port:** 3003
   </Card>
   <Card title="slicingpie" icon="chart-pie">
     **Admin Dashboard**
@@ -185,9 +242,23 @@ These packages are published to npm and consumed by other projects:
     └── rsbuild.config.ts
     ```
 
-    **Port:** 3003
+    **Port:** 3004
   </Card>
 </CardGroup>
+
+### Infrastructure
+
+<Card title="infrastructure" icon="server">
+  **Infrastructure as Code**
+
+  Terraform and Docker configuration for all environments.
+
+  ```
+  /infrastructure
+  ├── terraform/         # Cloud infrastructure definitions
+  └── docker/            # Docker Compose files for local dev
+  ```
+</Card>
 
 ### Documentation
 
@@ -219,10 +290,13 @@ The `vritti.code-workspace` file configures VS Code for multi-project developmen
   "folders": [
     { "path": "quantum-ui", "name": "quantum-ui" },
     { "path": "api-sdk", "name": "api-sdk" },
-    { "path": "vritti-api-nexus", "name": "api-nexus" },
-    { "path": "vritti-web-nexus", "name": "web-nexus" },
-    { "path": "vritti-auth", "name": "auth" },
-    { "path": "vritti-landing", "name": "landing" },
+    { "path": "api-nexus", "name": "api-nexus" },
+    { "path": "cloud-server", "name": "cloud-server" },
+    { "path": "web-nexus", "name": "web-nexus" },
+    { "path": "cloud-microfrontend", "name": "cloud-microfrontend" },
+    { "path": "cloud-web", "name": "cloud-web" },
+    { "path": "landing", "name": "landing" },
+    { "path": "infrastructure", "name": "infrastructure" },
     { "path": "slicingpie", "name": "slicingpie" },
     { "path": "developer-docs", "name": "docs" }
   ],
@@ -242,7 +316,7 @@ All projects use **pnpm** for dependency management:
 
 ```bash
 # Install dependencies in a project
-cd vritti-api-nexus
+cd api-nexus
 pnpm install
 
 # Link local packages during development
@@ -261,11 +335,13 @@ Each project uses appropriate build tools:
 |---------|------------|-------------|
 | quantum-ui | tsup | tsup.config.ts |
 | api-sdk | tsup | tsup.config.ts |
-| vritti-api-nexus | NestJS CLI | nest-cli.json |
-| vritti-web-nexus | RSBuild | rsbuild.config.ts |
-| vritti-auth | RSBuild | rsbuild.config.ts |
-| vritti-landing | Next.js | next.config.ts |
-| slicingpie | RSBuild | rsbuild.config.ts |
+| api-nexus | NestJS CLI | nest-cli.json |
+| cloud-server | NestJS CLI | nest-cli.json |
+| web-nexus | Rsbuild | rsbuild.config.ts |
+| cloud-microfrontend | Rsbuild | rsbuild.config.ts |
+| cloud-web | Rsbuild | rsbuild.config.ts |
+| landing | Next.js | next.config.ts |
+| slicingpie | Rsbuild | rsbuild.config.ts |
 
 ## Environment Files
 

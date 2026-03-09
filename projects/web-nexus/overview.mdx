@@ -4,13 +4,13 @@ description: "Module Federation host application for Vritti micro-frontends"
 ---
 
 <Info>
-**Project:** vritti-web-nexus
+**Project:** web-nexus
 **Type:** Host Application (Module Federation)
 **Port:** 3012
 **Host:** local.vrittiai.com
 </Info>
 
-vritti-web-nexus is the main host application in Vritti's micro-frontend architecture. It orchestrates and dynamically loads remote micro-frontends (like vritti-auth) using Module Federation with runtime registration.
+web-nexus is the main host application in Vritti's micro-frontend architecture. It orchestrates and dynamically loads remote micro-frontends (cloud-web, cloud-microfrontend) using Module Federation with runtime registration.
 
 ## What It Does
 
@@ -36,15 +36,15 @@ vritti-web-nexus is the main host application in Vritti's micro-frontend archite
 
 ```mermaid
 flowchart TB
-    subgraph Host["vritti-web-nexus (Host)"]
+    subgraph Host["web-nexus (Host)"]
         Router[React Router]
         Providers[Provider Stack]
         RemoteLoader[RemoteRoutes Loader]
     end
 
     subgraph Remotes["Remote Micro-frontends"]
-        Auth[vritti-auth :3001]
-        Future[Future Remotes...]
+        CloudWeb[cloud-web :3001]
+        CloudMF[cloud-microfrontend :3002]
     end
 
     subgraph Shared["Shared Dependencies"]
@@ -54,17 +54,17 @@ flowchart TB
     end
 
     Router --> RemoteLoader
-    RemoteLoader --> Auth
-    RemoteLoader --> Future
+    RemoteLoader --> CloudWeb
+    RemoteLoader --> CloudMF
     Providers --> Shared
-    Auth --> Shared
-    Future --> Shared
+    CloudWeb --> Shared
+    CloudMF --> Shared
 ```
 
 ## Project Structure
 
 ```
-vritti-web-nexus/
+web-nexus/
 ├── src/
 │   ├── index.tsx              # Dynamic bootstrap loader
 │   ├── bootstrap.tsx          # Main entry with remote registration
@@ -92,8 +92,8 @@ Environment variables are exposed via `import.meta.env` (not `process.env`):
 
 | Variable | Type | Purpose | Example |
 |----------|------|---------|---------|
-| `PUBLIC_VRITTI_AUTH_PORT` | string | Auth remote port (local dev) | `3001` |
-| `PUBLIC_VRITTI_CLOUD_PORT` | string | Cloud remote port (local dev) | `3002` |
+| `PUBLIC_VRITTI_AUTH_PORT` | string | cloud-web remote port (local dev) | `3001` |
+| `PUBLIC_VRITTI_CLOUD_PORT` | string | cloud-microfrontend port (local dev) | `3002` |
 | `PUBLIC_MF_BASE_URL` | string | MF base URL (production) | `https://mf.vrittiai.com` |
 
 ### Type Declarations
@@ -132,7 +132,7 @@ const authPort = getEnvVar('PUBLIC_VRITTI_AUTH_PORT');
 
 ### Runtime Module Registration
 
-Unlike build-time module federation, vritti-web-nexus uses runtime registration:
+Unlike build-time module federation, web-nexus uses runtime registration:
 
 ```typescript
 // bootstrap.tsx
@@ -140,8 +140,12 @@ import { registerRemotes } from '@module-federation/runtime';
 
 registerRemotes([
   {
-    name: 'VrittiAuth',
+    name: 'CloudWeb',
     entry: 'http://local.vrittiai.com:3001/mf-manifest.json',
+  },
+  {
+    name: 'CloudMicrofrontend',
+    entry: 'http://local.vrittiai.com:3002/mf-manifest.json',
   },
 ]);
 ```
@@ -159,7 +163,7 @@ const isCloud = window.location.hostname.startsWith('cloud.');
 if (isCloud) {
   routes.push({
     path: '/*',
-    element: <RemoteRoutes remoteName="VrittiAuth" moduleName="routes" />,
+    element: <RemoteRoutes remoteName="CloudWeb" moduleName="routes" />,
   });
 }
 ```
@@ -190,7 +194,7 @@ Remotes are defined in `src/config/remotes.config.ts` with environment-driven UR
  */
 const buildRemoteEntry = (config: {
   portEnvVar: string;    // e.g., 'PUBLIC_VRITTI_AUTH_PORT'
-  prodPath: string;      // e.g., 'auth-microfrontend'
+  prodPath: string;      // e.g., 'cloud-web'
 }): string => {
   const { protocol, host } = getEnvironmentConfig();
 
@@ -209,10 +213,18 @@ const buildRemoteEntry = (config: {
 
 export const ALL_REMOTES: RemoteConfig[] = [
   {
-    name: 'VrittiAuth',
+    name: 'CloudWeb',
     entry: buildRemoteEntry({
       portEnvVar: 'PUBLIC_VRITTI_AUTH_PORT',
-      prodPath: 'auth-microfrontend',
+      prodPath: 'cloud-web',
+    }),
+    exposedModule: 'routes',
+  },
+  {
+    name: 'CloudMicrofrontend',
+    entry: buildRemoteEntry({
+      portEnvVar: 'PUBLIC_VRITTI_CLOUD_PORT',
+      prodPath: 'cloud-microfrontend',
     }),
     exposedModule: 'routes',
   },
@@ -222,7 +234,7 @@ export const ALL_REMOTES: RemoteConfig[] = [
 <Info>
 **Local example**: With `PUBLIC_VRITTI_AUTH_PORT=3001` → `https://local.vrittiai.com:3001/mf-manifest.json`
 
-**Production example**: With `PUBLIC_MF_BASE_URL=https://mf.vrittiai.com` → `https://mf.vrittiai.com/auth-microfrontend/mf-manifest.json`
+**Production example**: With `PUBLIC_MF_BASE_URL=https://mf.vrittiai.com` → `https://mf.vrittiai.com/cloud-web/mf-manifest.json`
 </Info>
 
 ### Configuration Best Practices
@@ -305,10 +317,10 @@ export default {
   <Card title="Federation Host" icon="sitemap" href="/projects/web-nexus/federation-host">
     Module Federation configuration
   </Card>
-  <Card title="vritti-auth" icon="user-lock" href="/projects/auth/overview">
-    Authentication micro-frontend
+  <Card title="cloud-web" icon="user-lock" href="/projects/cloud-web/overview">
+    Auth + account micro-frontend
   </Card>
-  <Card title="Module Federation" icon="cubes" href="/architecture/frontend/module-federation">
-    Architecture overview
+  <Card title="cloud-microfrontend" icon="chart-bar" href="/projects/cloud-microfrontend/overview">
+    Cloud dashboard micro-frontend
   </Card>
 </CardGroup>

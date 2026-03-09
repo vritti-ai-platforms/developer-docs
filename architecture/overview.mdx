@@ -3,7 +3,7 @@ title: System Overview
 description: High-level architecture of the Vritti SaaS platform
 ---
 
-Vritti is a multi-tenant SaaS platform built with a micro-frontend architecture on the frontend and a modular NestJS backend. The system prioritizes security, scalability, and developer experience.
+Vritti is a multi-tenant SaaS platform built with a micro-frontend architecture on the frontend and modular NestJS backends. The system prioritizes security, scalability, and developer experience.
 
 ## Architecture Principles
 
@@ -27,19 +27,21 @@ Vritti is a multi-tenant SaaS platform built with a micro-frontend architecture 
 ```mermaid
 flowchart TB
     subgraph Frontend["Frontend Layer"]
-        WebNexus["vritti-web-nexus<br/>(Host App)"]
-        Auth["vritti-auth<br/>(Remote)"]
+        WebNexus["web-nexus<br/>(Host App)"]
+        CloudWeb["cloud-web<br/>(Auth + Account Remote)"]
+        CloudMF["cloud-microfrontend<br/>(Cloud Dashboard Remote)"]
         QuantumUI["@vritti/quantum-ui<br/>(Shared Components)"]
 
-        WebNexus <--> Auth
+        WebNexus <--> CloudWeb
+        WebNexus <--> CloudMF
         WebNexus --> QuantumUI
-        Auth --> QuantumUI
+        CloudWeb --> QuantumUI
+        CloudMF --> QuantumUI
     end
 
-    subgraph API["API Gateway"]
-        APINexus["vritti-api-nexus<br/>(NestJS + Fastify + Drizzle ORM)"]
-        Modules["Modules: Auth, Tenants,<br/>Users, MFA, Onboarding"]
-        APINexus --> Modules
+    subgraph APIs["API Layer"]
+        APINexus["api-nexus<br/>(NestJS + Fastify + Drizzle ORM)"]
+        CloudServer["cloud-server<br/>(NestJS + Fastify + Drizzle ORM)"]
     end
 
     subgraph Data["Data Layer"]
@@ -50,9 +52,12 @@ flowchart TB
         TenantDBs --> Business["Business Data,<br/>Tenant Config"]
     end
 
-    Frontend --> API
+    CloudWeb --> APINexus
+    WebNexus --> APINexus
+    CloudMF --> CloudServer
     APINexus --> PrimaryDB
     APINexus --> TenantDBs
+    CloudServer --> PrimaryDB
 ```
 
 ## Key Components
@@ -61,23 +66,25 @@ flowchart TB
 
 | Project | Purpose | Technology |
 |---------|---------|------------|
-| **vritti-web-nexus** | Host application for Module Federation | React 19, RSBuild, TanStack Query |
-| **vritti-auth** | Authentication micro-frontend (remote) | React 19, RSBuild, react-hook-form |
-| **vritti-landing** | Public marketing site | Next.js 15 |
-| **slicingpie** | Admin dashboard | React 19, RSBuild |
+| **web-nexus** | Host application for Module Federation | React 19, Rsbuild, TanStack Query |
+| **cloud-web** | Standalone auth + account web app (remote) | React 19, Rsbuild, react-hook-form |
+| **cloud-microfrontend** | Cloud dashboard micro-frontend (remote) | React 19, Rsbuild, TanStack Query |
+| **landing** | Public marketing site | Next.js 15 |
+| **slicingpie** | Admin dashboard | React 19, Rsbuild |
 
 ### Shared Libraries
 
 | Package | Purpose | Version |
 |---------|---------|---------|
 | **@vritti/quantum-ui** | Component library with shadcn/ui | 0.2.x |
-| **@vritti/api-sdk** | NestJS modules for auth, database, logging | 0.1.x |
+| **@vritti/api-sdk** | NestJS modules for auth, database, logging | 0.2.x |
 
 ### Backend Services
 
 | Service | Purpose | Stack |
 |---------|---------|-------|
-| **vritti-api-nexus** | Main API gateway | NestJS 11, Fastify 5, Drizzle ORM |
+| **api-nexus** | Platform API gateway (auth, tenants, users, onboarding) | NestJS 11, Fastify 5, Drizzle ORM |
+| **cloud-server** | Cloud product API (companies, deployments, AI chat) | NestJS 11, Fastify 5, Drizzle ORM |
 
 ## Security Architecture
 

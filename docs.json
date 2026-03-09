@@ -117,7 +117,7 @@
 						]
 					},
 					{
-						"group": "vritti-api-nexus",
+						"group": "api-nexus",
 						"pages": [
 							"projects/api-nexus/overview",
 							"projects/api-nexus/setup",
@@ -127,7 +127,13 @@
 						]
 					},
 					{
-						"group": "vritti-web-nexus",
+						"group": "cloud-server",
+						"pages": [
+							"projects/cloud-server/overview"
+						]
+					},
+					{
+						"group": "web-nexus",
 						"pages": [
 							"projects/web-nexus/overview",
 							"projects/web-nexus/setup",
@@ -135,15 +141,21 @@
 						]
 					},
 					{
-						"group": "vritti-auth",
+						"group": "cloud-microfrontend",
 						"pages": [
-							"projects/auth/overview",
-							"projects/auth/setup",
-							"projects/auth/pages-flows"
+							"projects/cloud-microfrontend/overview"
 						]
 					},
 					{
-						"group": "vritti-landing",
+						"group": "cloud-web",
+						"pages": [
+							"projects/cloud-web/overview",
+							"projects/cloud-web/setup",
+							"projects/cloud-web/pages-flows"
+						]
+					},
+					{
+						"group": "landing",
 						"pages": [
 							"projects/landing/overview",
 							"projects/landing/setup"

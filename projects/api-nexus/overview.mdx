@@ -3,7 +3,7 @@ title: API Nexus Overview
 description: Main backend API for the Vritti SaaS platform
 ---
 
-**vritti-api-nexus** is the main backend API gateway for the Vritti SaaS platform. Built with NestJS 11 and Fastify 5, it provides a secure, scalable, multi-tenant API for all frontend applications.
+**api-nexus** is the main backend API gateway for the Vritti SaaS platform. Built with NestJS 11 and Fastify 5, it provides a secure, scalable, multi-tenant API for all frontend applications.
 
 ## Technology Stack
 
@@ -22,12 +22,12 @@ description: Main backend API for the Vritti SaaS platform
 ```mermaid
 flowchart TB
     subgraph Clients["Client Applications"]
-        Web["vritti-web-nexus"]
-        Auth["vritti-auth"]
+        Web["web-nexus"]
+        CloudWeb["cloud-web"]
         Admin["slicingpie"]
     end
 
-    subgraph API["vritti-api-nexus"]
+    subgraph API["api-nexus"]
         subgraph Middleware["Middleware Layer"]
             CORS["CORS"]
             CSRF["CSRF Protection"]
@@ -70,7 +70,7 @@ flowchart TB
 ## Project Structure
 
 ```
-vritti-api-nexus/
+api-nexus/
 ├── src/
 │   ├── config/                 # Environment validation, JWT config
 │   ├── db/

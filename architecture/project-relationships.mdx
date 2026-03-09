@@ -15,27 +15,33 @@ flowchart TB
     end
 
     subgraph Backend["Backend Layer"]
-        APINexus["vritti-api-nexus<br/>(Backend)"]
+        APINexus["api-nexus<br/>(Platform Backend)"]
+        CloudServer["cloud-server<br/>(Cloud Backend)"]
     end
 
     subgraph Frontend["Frontend Applications"]
-        WebNexus["vritti-web-nexus<br/>(Host App)"]
-        Auth["vritti-auth<br/>(Remote)"]
-        Landing["vritti-landing"]
+        WebNexus["web-nexus<br/>(Host App)"]
+        CloudWeb["cloud-web<br/>(Auth + Account Remote)"]
+        CloudMF["cloud-microfrontend<br/>(Cloud Dashboard Remote)"]
+        Landing["landing"]
         Slicing["slicingpie"]
         Future["(future apps)"]
 
-        WebNexus <-->|Module Federation| Auth
+        WebNexus <-->|Module Federation| CloudWeb
+        WebNexus <-->|Module Federation| CloudMF
     end
 
     APISDK --> APINexus
+    APISDK --> CloudServer
     APINexus -->|HTTP/REST| WebNexus
-    APINexus -->|HTTP/REST| Auth
+    APINexus -->|HTTP/REST| CloudWeb
     APINexus -->|HTTP/REST| Landing
     APINexus -->|HTTP/REST| Slicing
+    CloudServer -->|HTTP/REST| CloudMF
 
     QuantumUI --> WebNexus
-    QuantumUI --> Auth
+    QuantumUI --> CloudWeb
+    QuantumUI --> CloudMF
     QuantumUI --> Landing
     QuantumUI --> Slicing
     QuantumUI --> Future
@@ -48,10 +54,11 @@ flowchart TB
 <Accordion title="Consumers">
 | Consumer | Usage |
 |----------|-------|
-| vritti-web-nexus | UI components, axios instance, toasts |
-| vritti-auth | Form components, UI primitives, axios |
+| web-nexus | UI components, axios instance, toasts |
+| cloud-web | Form components, UI primitives, axios |
+| cloud-microfrontend | Dashboard components, UI primitives |
 | slicingpie | Admin UI components |
-| vritti-landing | Marketing page components |
+| landing | Marketing page components |
 </Accordion>
 
 **Key Exports:**
@@ -78,8 +85,8 @@ export * from './components/form';
 <Accordion title="Consumers">
 | Consumer | Usage |
 |----------|-------|
-| vritti-api-nexus | All NestJS modules, guards, decorators |
-| Future microservices | Auth, database, logging modules |
+| api-nexus | All NestJS modules, guards, decorators |
+| cloud-server | Auth guards, database module, decorators |
 </Accordion>
 
 **Key Exports:**
@@ -99,7 +106,7 @@ export { PrimaryBaseRepository, TenantBaseRepository } from './database/reposito
 export { LoggerModule } from './logger/logger.module';
 ```
 
-**Breaking Change Impact:** Critical - Backend will not start if this package breaks.
+**Breaking Change Impact:** Critical - Backend services will not start if this package breaks.
 
 ## Communication Patterns
 
@@ -147,29 +154,35 @@ All frontend applications communicate with the backend via HTTP REST:
   </Tab>
 </Tabs>
 
-### Module Federation (Host ↔ Remote)
+### Module Federation (Host ↔ Remotes)
 
-vritti-web-nexus loads vritti-auth at runtime:
+web-nexus loads cloud-web and cloud-microfrontend at runtime:
 
 ```typescript
 // Host registers remotes at bootstrap
-registerRemotes([{
-  name: 'VrittiAuth',
-  entry: 'http://local.vrittiai.com:3001/mf-manifest.json'
-}]);
+registerRemotes([
+  {
+    name: 'CloudWeb',
+    entry: 'http://local.vrittiai.com:3001/mf-manifest.json'
+  },
+  {
+    name: 'CloudMicrofrontend',
+    entry: 'http://local.vrittiai.com:3002/mf-manifest.json'
+  }
+]);
 
 // Host loads remote routes dynamically
 <RemoteRoutes
-  remoteName="VrittiAuth"
+  remoteName="CloudWeb"
   moduleName="routes"
   dataKey="authRoutes"
 />
 ```
 
 **Key Points:**
-- Remote exposes `./routes` module
+- Each remote exposes a `./routes` module
 - Shared dependencies are singletons (React, TanStack Query)
-- Remote can run standalone for development
+- Remotes can run standalone for development
 
 ### Backend ↔ Database
 
@@ -201,11 +214,11 @@ These dependencies MUST be kept in sync across projects:
 |------------|------------|----------|
 | react | `^19.2.0` | All frontend |
 | react-dom | `^19.2.0` | All frontend |
-| react-router-dom | `^7.x` | web-nexus, auth |
-| @tanstack/react-query | `^5.x` | web-nexus, auth, slicingpie |
-| drizzle-orm | `1.0.0-beta.x` | api-nexus, api-sdk |
-| @nestjs/* | `^11.x` | api-nexus, api-sdk |
-| fastify | `^5.x` | api-nexus |
+| react-router-dom | `^7.x` | web-nexus, cloud-web, cloud-microfrontend |
+| @tanstack/react-query | `^5.x` | web-nexus, cloud-web, cloud-microfrontend, slicingpie |
+| drizzle-orm | `1.0.0-beta.x` | api-nexus, cloud-server, api-sdk |
+| @nestjs/* | `^11.x` | api-nexus, cloud-server, api-sdk |
+| fastify | `^5.x` | api-nexus, cloud-server |
 
 <Warning>
   **Version Mismatch Issues:**
@@ -232,7 +245,7 @@ When updating shared packages, follow this order:
     Update the dependency in consuming projects
 
     ```bash
-    cd vritti-web-nexus
+    cd web-nexus
     pnpm update @vritti/quantum-ui
     ```
   </Step>
@@ -240,21 +253,27 @@ When updating shared packages, follow this order:
     Run the full stack locally to verify integration
 
     ```bash
-    # Terminal 1: Backend
-    cd vritti-api-nexus && pnpm start:dev
+    # Terminal 1: Platform backend
+    cd api-nexus && pnpm start:dev
 
-    # Terminal 2: Host
-    cd vritti-web-nexus && pnpm dev
+    # Terminal 2: Cloud backend
+    cd cloud-server && pnpm dev
 
-    # Terminal 3: Remote
-    cd vritti-auth && pnpm dev
+    # Terminal 3: Host
+    cd web-nexus && pnpm dev
+
+    # Terminal 4: Auth remote
+    cd cloud-web && pnpm dev
+
+    # Terminal 5: Cloud dashboard remote
+    cd cloud-microfrontend && pnpm dev
     ```
   </Step>
   <Step title="Deploy">
     Deploy in dependency order:
-    1. Backend (if api-sdk changed)
-    2. Remotes (vritti-auth)
-    3. Host (vritti-web-nexus)
+    1. Backend services (if api-sdk changed)
+    2. Remotes (cloud-web, cloud-microfrontend)
+    3. Host (web-nexus)
   </Step>
 </Steps>
 
@@ -265,7 +284,7 @@ When updating shared packages, follow this order:
 
   ```mermaid
   flowchart TB
-      L3["Level 3: Applications<br/>(web-nexus, auth, landing, slicingpie)"]
+      L3["Level 3: Applications<br/>(web-nexus, cloud-web, cloud-microfrontend, landing, slicingpie)"]
       L2["Level 2: Shared Libraries<br/>(quantum-ui, api-sdk)"]
       L1["Level 1: External Packages<br/>(react, nestjs, drizzle)"]
 
@@ -274,8 +293,8 @@ When updating shared packages, follow this order:
   ```
 
   **Never allow:**
-  - quantum-ui importing from vritti-auth
-  - api-sdk importing from vritti-api-nexus
+  - quantum-ui importing from cloud-web
+  - api-sdk importing from api-nexus
   - Any upward dependencies
 </Card>
 
@@ -287,7 +306,7 @@ The OpenAPI specification (`openapi.json`) serves as the contract between fronte
 
 ```bash
 # Generate from backend
-cd vritti-api-nexus
+cd api-nexus
 pnpm build
 # openapi.json is generated automatically
 
@@ -315,14 +334,20 @@ import type { TenantInfo } from '@vritti/api-sdk';
 Verify all services are connected:
 
 ```bash
-# Backend health
+# Platform backend health
+curl http://localhost:3000/health
+
+# Cloud backend health
 curl http://localhost:3000/health
 
 # Frontend host
 curl http://local.vrittiai.com:3012
 
-# Auth remote manifest
+# cloud-web remote manifest
 curl http://local.vrittiai.com:3001/mf-manifest.json
+
+# cloud-microfrontend remote manifest
+curl http://local.vrittiai.com:3002/mf-manifest.json
 
 # API docs
 curl http://localhost:3000/api/docs
