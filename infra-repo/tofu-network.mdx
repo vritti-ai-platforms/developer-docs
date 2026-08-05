@@ -1,0 +1,100 @@
+---
+title: "tofu/network"
+description: "The permanent shared-infrastructure root: reserved IPs, Cloudflare DNS, Zero-Trust tunnels, and the shared vritti-core security group — and why it lives in its own state."
+icon: "network-wired"
+---
+
+`tofu/network/` is the **permanent** layer. It owns everything that must outlive any individual VM: the reserved public IPs, the DNS that points at them, the Zero-Trust tunnels + Access policies, and the shared `vritti-core` security group. The compute roots ([`cloud/`, `apw1/`](/infra-repo/tofu)) only **read** its outputs.
+
+## Why it's its own state
+
+A `tofu destroy` in a compute root removes the VM but **cannot touch anything in `network/`** — it lives in a different state file (`network/terraform.tfstate` on R2). So:
+
+- VMs are cattle: rebuild `cloud/` or `apw1/` freely.
+- The reserved IPs, the DNS records pointing at them, and the security groups never move.
+
+The IPs additionally carry `prevent_destroy` inside this root, so even a `destroy` here won't release them without an explicit code change.
+
+```hcl
+# network/main.tf
+resource "excloud_public_ipv4" "cloud" {
+  zone_id = var.zone_id
+  name    = "vritti-cloud"
+  lifecycle { prevent_destroy = true }
+}
+resource "excloud_public_ipv4" "apw1" {
+  zone_id = var.zone_id
+  name    = "vritti-apw1"
+  lifecycle { prevent_destroy = true }
+}
+```
+
+## What it owns
+
+<AccordionGroup>
+<Accordion title="Reserved public IPs — main.tf">
+Two `excloud_public_ipv4` reservations, `vritti-cloud` and `vritti-apw1`, both guarded by `prevent_destroy`. Their reservation ids are exported so compute roots can attach them without ever managing them.
+</Accordion>
+<Accordion title="Cloudflare DNS — dns.tf">
+Two zones: `vrittiai.com` and `vrittiai.dev`. Records:
+
+- `cloud.` and `api.` → **proxied A** records to the cloud VM (origin hidden; Full-Strict; SG locked to Cloudflare ranges). `api.vrittiai.com` is the public machine API the agent enrolls against — proxied but **not** Access-gated.
+- `*.apw1` → **unproxied A** to the apw1 VM (direct-served; agent nginx + Let's Encrypt handle TLS).
+- `*.vrittiai.dev` → **proxied A** to the cloud VM (the dev core; first-level wildcard, free Universal SSL, proxiable on the Free plan).
+
+Zone SSL is pinned to **Full (Strict)** in code for both zones. There is no apex `*` catch-all and no `*.dev.vrittiai.com`. Full detail: [DNS & TLS](/cloud/dns-tls).
+</Accordion>
+<Accordion title="Zero-Trust tunnel + Access — zerotrust.tf">
+One `cloudflared` tunnel per VM (only the cloud VM has one today), a GitHub identity provider (`vritti-ai-platforms` org SSO), and per-service Access applications + policies. Proxied CNAMEs — `admin.`, `dblab.`, `git.dev`, `clouddb` — point at the tunnel; no inbound ports are opened on the VM. A headless **admin service token** lets scripts/CI/Postman reach `admin.` with `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers.
+</Accordion>
+<Accordion title="Shared vritti-core security group — security.tf">
+One `excloud_security_group` named `vritti-core`, shared by **every** agent-hosted core VM (apw1, apw2, …). Because they all run the same direct-served stack (agent nginx + Let's Encrypt), one SG serves them all — each core root references the same `core_sg_id` instead of minting its own. Rules:
+
+| Port | Source | Purpose |
+|---|---|---|
+| `22` | `var.ssh_allowed_cidr` | SSH from the admin IP only |
+| `80` | `0.0.0.0/0` | HTTP — LE HTTP-01 + http→https redirect |
+| `443` | `0.0.0.0/0` | HTTPS — core + per-tenant subdomains |
+| `2222` | `0.0.0.0/0` | Git-SSH (Gitea add-on) |
+| `53` udp+tcp | `0.0.0.0/0` | acme-dns DNS-01 (wildcard challenge) |
+
+The cloud VM does **not** use this SG — it has its own Cloudflare-locked `vritti-cloud` SG in the `cloud/` root. Posture comparison: [Cloud security](/cloud/security).
+</Accordion>
+</AccordionGroup>
+
+## The admin SSH CIDR
+
+SSH (`:22`) is allowed only from `var.ssh_allowed_cidr` (default `49.238.35.31/32`). This is overridden per-machine by a git-ignored `admin.auto.tfvars` that [`just ip-update`](/infra-repo/just) writes into `network/` and `cloud/` before applying both — point the allow-list at your current public IP after your ISP changes it.
+
+## Outputs
+
+The compute roots and Ansible consume these via `terraform_remote_state` and `tofu output`:
+
+| Output | Consumed by |
+|---|---|
+| `cloud_ip_id`, `apw1_ip_id` | Compute roots — attach the reserved IP |
+| `cloud_ip`, `apw1_ip` | Ansible inventory / operators |
+| `core_sg_id` | Every core root — the shared `vritti-core` SG |
+| `vm1_tunnel_token` (sensitive) | Ansible injects it on the cloud VM (`cloudflared` role) |
+| `admin_service_token_client_id` / `_secret` (sensitive) | Headless clients hitting `admin.vrittiai.com` |
+
+```bash
+just tf-output network
+# fetch a sensitive one directly:
+cd tofu/network && infisical run -- tofu output -raw admin_service_token_client_id
+```
+
+<CardGroup cols={2}>
+<Card title="OpenTofu overview" icon="diagram-project" href="/infra-repo/tofu">
+Roots, the module, and the R2 backend.
+</Card>
+<Card title="DNS & TLS" icon="lock" href="/cloud/dns-tls">
+The three record types and the wildcard cert.
+</Card>
+<Card title="Cloud security" icon="shield-halved" href="/cloud/security">
+vritti-cloud vs vritti-core SG posture.
+</Card>
+<Card title="just ip-update" icon="screwdriver-wrench" href="/infra-repo/just">
+Point the SSH allow-list at your IP.
+</Card>
+</CardGroup>

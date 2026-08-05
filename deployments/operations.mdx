@@ -1,0 +1,103 @@
+---
+title: "Operations"
+description: "Day-2 for a core deployment: generation-driven version upgrades, per-deployment pgBackRest backups, and troubleshooting."
+icon: "screwdriver-wrench"
+---
+
+Once a core VM is enrolled, day-2 work happens through the **cloud** (spec changes the agent rolls out)
+and on the **host** (backups, logs). This page covers upgrades, backups, and the common failure modes.
+
+## Version upgrades — generation-driven
+
+The agent reconciles to the **cloud-signed desired state**, tracked by **generation**. To upgrade a
+deployment you do **not** SSH in or re-run Ansible — you change the spec in the cloud:
+
+1. Bump the target version for a component (or otherwise change the spec) in the cloud for this
+   deployment.
+2. The change becomes a **new generation** of the desired state.
+3. On its next pull the agent detects the new generation and **reconciles** — pulling images and rolling
+   the affected components to the new versions.
+
+There is no per-VM redeploy command; the agent converges the host to whatever the current signed
+generation describes. This is the same mechanism that first materialized the stack, just applied to a
+changed spec.
+
+<Note>
+  Re-running `just ansi-core <env>` is for **host bootstrap** (base + docker + the agent unit), not for
+  application version rollouts. Routine version changes flow through the cloud spec, not Ansible.
+</Note>
+
+## Per-deployment backups
+
+Each core deployment carries its own **pgBackRest** backups (WAL archive + backups to R2), independent of
+the cloud VM's own `cloud-pgbackrest`. Backup credentials for cores come from the `vritti-core` env's
+`/backup` folder (and the `ANSI_CORE_BACKREST_*` family in the `infrastructure` project). Because a core
+VM's root disk is disposable — everything (Docker, Postgres, static sites) lives on the root volume — DB
+durability is pgBackRest → R2: on a rebuild the stack restores from R2.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Agent logs / re-enrolling with a fresh token">
+    The agent runs as the `vritti-agent` systemd unit (a container). Inspect it on the host:
+
+    ```bash
+    journalctl -u vritti-agent -f
+    docker logs vritti-agent
+    ```
+
+    The agent consumes its enroll token **only when there is no cached enrollment** — a plain converge
+    can never re-enroll. To force a fresh enrollment, first set a **new** one-time `ENROLL_TOKEN` in the
+    env's `/agent` folder (tokens are single-use), then wipe the cached state and reinstall:
+
+    ```bash
+    just ansi-core apw2   # after: infisical secrets set ENROLL_TOKEN=... in /agent
+    ```
+
+    The reset is opt-in via `-e agent_reset=true`, which removes the unit, container, and the cached
+    enrollment/keys/machine-secrets in `/var/lib/vritti-agent` before reinstalling so the agent boots
+    with no cached credential and re-enrolls with the fresh token.
+  </Accordion>
+
+  <Accordion title="Cert or DNS-delegation stalls (edge:managed cores)">
+    An edge:managed core issues a wildcard cert via DNS-01 through its bundled acme-dns. If the cert
+    never issues, it is almost always DNS delegation or the `:53` path:
+
+    - Confirm `ALLOW_ACME_DNS=true` is set in the env's `/agent` folder — this is what opens `:53`
+      (tcp+udp) on the host for acme-dns. Without it, Let's Encrypt cannot resolve the challenge.
+    - Confirm the shared world-open `vritti-core` SG is attached (it opens `:53` to `0.0.0.0/0`).
+    - Confirm the **DNS delegation** the cloud setup flow guides you through is fully in place — the
+      recurring stuck-cert cause is an incomplete delegation to acme-dns.
+
+    The dev core is edge:external and issues no wildcard itself, so none of this applies there.
+  </Accordion>
+
+  <Accordion title="BASE_DOMAIN must be scheme-less">
+    `BASE_DOMAIN` in the deployment's `/core-server` env must be a **bare host** (e.g.
+    `apw1.vrittiai.com`), with **no `https://` scheme** and no trailing slash. A scheme-prefixed value
+    breaks URL construction downstream. Fix it in Infisical and reconcile.
+  </Accordion>
+
+  <Accordion title="Web-bundle file permissions">
+    The static web bundle must be readable by the serving nginx. If pages 404 or return blank after a
+    deploy, check the bundle's file ownership/permissions on the host — a bundle written with
+    too-restrictive perms won't be served. Re-materialize with the correct permissions.
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Deployment Model" icon="diagram-project" href="/deployments/model">
+    Generations, desired state, and the agent lifecycle.
+  </Card>
+  <Card title="Create a Deployment" icon="rocket" href="/deployments/new-deployment">
+    Standing up a new core from scratch.
+  </Card>
+  <Card title="just recipes" icon="terminal" href="/infra-repo/just">
+    `ansi-core` and the rest of the recipe reference.
+  </Card>
+  <Card title="Infisical" icon="key" href="/infisical/overview">
+    The `/agent`, `/core-server`, and `/backup` folders per env.
+  </Card>
+</CardGroup>

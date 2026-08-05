@@ -1,0 +1,82 @@
+---
+title: "Prerequisites"
+description: "The CLI tools and access you need before running the Vritti infrastructure repo: OpenTofu, Ansible, the Infisical CLI, just, gh, and an SSH key."
+icon: "screwdriver-wrench"
+---
+
+Before you can run anything in the `infrastructure/` repo, install a handful of CLIs and get access to
+the platforms they talk to. Everything is wrapped in `infisical run`, so an authenticated Infisical CLI
+is the linchpin.
+
+## Tools to install
+
+| Tool | Install | Purpose |
+|---|---|---|
+| OpenTofu (`tofu`) | `brew install opentofu` | Provision Excloud VMs + Cloudflare (the `tofu` CLI, `>= 1.10` — **not** terraform) |
+| Ansible | `brew install ansible` | Provision hosts + deploy the cloud stack and the agent |
+| Infisical CLI | `brew install infisical/get-cli/infisical` | Inject secrets into tofu + ansible via `infisical run` |
+| `just` | `brew install just` | The task runner that fronts every tofu + ansible command |
+| GitHub CLI (`gh`) | `brew install gh` | GitHub-org auth (Access SSO, GHCR) |
+| SSH key | `ssh-keygen -t ed25519` | The VM login key; its public half is `TF_VAR_SSH_PUBLIC_KEY` |
+
+<Note>
+  Install the Ansible collections once with
+  `ansible-galaxy collection install -r infrastructure/ansible/requirements.yml`.
+</Note>
+
+## Access you need
+
+- **Excloud** — an API key + org ID for the compute provider (stored as `TF_VAR_EXCLOUD_API_KEY` /
+  `TF_VAR_EXCLOUD_ORG_ID` in the `infrastructure` project).
+- **Cloudflare** — an API token with DNS + R2 access (`TF_VAR_ANSI_CLOUDFLARE_API_TOKEN`).
+- **The R2 state bucket** — `vritti-tfstate` on Cloudflare R2 holds every tofu root's remote state. The
+  backend reads `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (exact names — backends can't read
+  variables).
+- **GitHub org** — membership in the org for Access SSO (admin surfaces via the cloudflared tunnel) and a
+  GHCR token (`GHCR_USERNAME` / `GHCR_TOKEN`) so hosts can pull container images.
+- **Infisical** — an account on the self-hosted instance at `https://infisical.vrittiai.com` with access
+  to the three projects.
+
+## First-time setup
+
+<Steps>
+  <Step title="Install the CLIs">
+    ```bash
+    brew install opentofu ansible just gh
+    brew install infisical/get-cli/infisical
+    ```
+  </Step>
+  <Step title="Create an SSH key">
+    ```bash
+    ssh-keygen -t ed25519
+    ```
+    The public half is provisioned onto every VM via `TF_VAR_SSH_PUBLIC_KEY`.
+  </Step>
+  <Step title="Log in to Infisical">
+    Point the CLI at the self-hosted instance:
+    ```bash
+    infisical login --domain=https://infisical.vrittiai.com
+    ```
+    Every `just` recipe wraps `infisical run`, so all tofu/ansible secrets flow from here — no `.tf`
+    or vault files. See [Secrets flow](/infisical/secrets-flow).
+  </Step>
+  <Step title="Authenticate gh">
+    ```bash
+    gh auth login
+    ```
+    Needed for GitHub-org SSO and any GHCR interactions.
+  </Step>
+  <Step title="Whitelist your IP for SSH">
+    Ansible needs SSH to the VMs, which is admin-IP-locked. Point the allow-list at your current IP:
+    ```bash
+    just ip-update
+    ```
+    This writes a git-ignored `admin.auto.tfvars` in `tofu/network` + `tofu/cloud` and applies both.
+    See [Cloud security](/cloud/security).
+  </Step>
+</Steps>
+
+<Tip>
+  Run bare `just` from the repo root to list every recipe. Continue with the
+  [Repo layout](/overview/repo-layout) to see where each tool operates.
+</Tip>

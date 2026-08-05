@@ -1,31 +1,58 @@
 ---
-title: "Developer Knowledge Base"
-description: "Internal documentation for understanding our codebase"
+title: "Vritti Infrastructure"
+description: "How Vritti's cloud control plane and agent-managed core VMs are provisioned as code with OpenTofu, Ansible, Infisical, and just."
+icon: "sitemap"
 ---
 
-# Welcome to the Developer Knowledge Base
+Vritti runs on a small, deliberately boring estate: **one cloud control-plane VM** and a set of
+**agent-managed core VMs**. Everything is infrastructure as code, everything is driven by `just`, and
+every secret flows through a self-hosted Infisical.
 
-This documentation helps you understand how features are implemented, where they're used, and their limitations.
+## The shape of the platform
 
-## Browse Features
+- **`vritti-cloud`** — the control-plane VM. It sits behind Cloudflare and runs the cloud compose stack:
+  nginx, the cloud API (`cloud-server`), the cloud-web SPA, Postgres, Redis, NATS, DbLab, and a
+  cloudflared tunnel. It also hosts the **dev core**.
+- **Core VMs** (e.g. `apw1`) — direct-served customer/core deployments. Each runs the
+  `vritti-application-agent`, which pulls a cloud-signed **desired state** from `api.vrittiai.com` and
+  reconciles the core stack (core-server, commerce-service, Postgres, Redis, NATS, nginx, gitea).
+- **Two DNS zones** — `vrittiai.com` (cloud + prod cores) and `vrittiai.dev` (the dev core).
+- **Three Infisical projects** — `infrastructure`, `vritti-cloud`, and `vritti-core` — the single source
+  of truth for every credential and per-VM value.
+
+## How it is operated
+
+All infrastructure lives in one repo, `infrastructure/`, and is driven by `just` recipes that wrap
+OpenTofu and Ansible in `infisical run` so secrets arrive as environment variables. Nothing sensitive is
+committed; there is no `ansible-vault`.
+
+```bash
+just tf-apply network    # reserved IPs, DNS, tunnels, shared security group
+just tf-apply cloud      # the control-plane VM
+just ansi-cloud all      # provision the cloud host + compose stack
+just ansi-core apw1      # bootstrap a core VM + deploy/enroll the agent
+```
+
+<Info>
+  New here? Start with the [Topology](/overview/topology) to see the whole estate, then install the
+  [Prerequisites](/overview/prerequisites) and tour the [Repo layout](/overview/repo-layout).
+</Info>
+
+## The four pillars
 
 <CardGroup cols={2}>
-  <Card title="CSRF Protection" icon="shield" href="/features/csrf">
-    Cross-Site Request Forgery protection using Fastify and NestJS Guards
+  <Card title="Cloud Deployment" icon="cloud" href="/cloud/overview">
+    The control-plane VM: its compose stack, DNS/TLS, security posture, and how it's provisioned and
+    updated.
   </Card>
-  <Card title="Passkeys (WebAuthn)" icon="fingerprint" href="/features/passkeys">
-    Passwordless authentication using WebAuthn/FIDO2 passkeys
+  <Card title="Infrastructure Repo" icon="diagram-project" href="/infra-repo/tofu">
+    OpenTofu roots and the reusable VM module, each with its own R2 remote state and pinned Infisical
+    project.
   </Card>
-  <Card title="Multi-Factor Authentication" icon="lock" href="/features/mfa">
-    TOTP, SMS, and Passkey-based multi-factor authentication
+  <Card title="Infisical (Secrets)" icon="key" href="/infisical/overview">
+    The three projects, what lives where, and how `infisical run` injects secrets into tofu and ansible.
+  </Card>
+  <Card title="Create a Deployment" icon="rocket" href="/deployments/new-deployment">
+    The end-to-end runbook for standing up a new agent-managed core VM, from cloud admin to enrollment.
   </Card>
 </CardGroup>
-
-## Documentation Standards
-
-Each feature doc includes:
-- **Overview** - What the feature does
-- **Where It's Used** - File locations and dependencies
-- **How It Works** - Implementation details with code
-- **Limitations** - Known constraints and edge cases
-- **Troubleshooting** - Common issues and solutions

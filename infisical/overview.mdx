@@ -1,0 +1,93 @@
+---
+title: "Infisical Projects"
+description: "The three self-hosted Infisical projects and what secrets live in each environment and folder."
+icon: "shield-halved"
+---
+
+Every tofu and ansible run in the infrastructure repo pulls its secrets from a self-hosted Infisical
+instance at `https://infisical.vrittiai.com`. Nothing is committed to git and there is no ansible-vault —
+secrets arrive at runtime as environment variables via `infisical run`. See
+[Secrets flow](/infisical/secrets-flow) for the mechanics and [Infisical stack](/infra-repo/infisical-stack)
+for how the instance itself is hosted.
+
+There are **three projects**, each scoped to a distinct concern.
+
+## The three projects
+
+<CardGroup cols={3}>
+  <Card title="infrastructure" icon="screwdriver-wrench">
+    Provisioning credentials — tofu, GHCR, Cloudflare, MaxMind, DbLab, pgBackRest, plus the machine
+    identity that exports the cloud app env. Env: `prod`.
+  </Card>
+  <Card title="vritti-cloud" icon="cloud">
+    The cloud-server application environment. Env: `production`, folder `/cloud-server`.
+  </Card>
+  <Card title="vritti-core" icon="boxes-stacked">
+    Per-VM agent + core-server config for every agent-managed core deployment. Envs: `apw1`, `dev`,
+    future `apw2`…
+  </Card>
+</CardGroup>
+
+## Project × environment × folder
+
+| Project | Environment | Folder | What lives inside |
+|---------|-------------|--------|-------------------|
+| `infrastructure` | `prod` | `/` | tofu creds (`TF_VAR_EXCLOUD_API_KEY`, `TF_VAR_EXCLOUD_ORG_ID`, `TF_VAR_ANSI_CLOUDFLARE_API_TOKEN`), `ANSI_GHCR_USERNAME`/`ANSI_GHCR_TOKEN`, `ANSI_MAXMIND_*`, `ANSI_DBLAB_TOKEN`, `ANSI_CLOUD_BACKREST_*`, `ANSI_CORE_BACKREST_*`, `CLOUD_TARGET_IP`, and the machine-identity trio `ANSI_VRITTI_CLOUD_PROJECT_ID` + `ANSI_INFISICAL_CLIENT_ID`/`ANSI_INFISICAL_CLIENT_SECRET` |
+| `vritti-cloud` | `production` | `/cloud-server` | The cloud-server application env (`PRIMARY_DB_*`, `JWT_SECRET`, `REDIS_URL`, and the rest — imports a `shared` set plus containerized overrides) |
+| `vritti-core` | `apw1`, `dev`, `apw2`… | `/agent` | Per-VM agent enroll + host config: `DEPLOYMENT_ID`, `ENROLL_TOKEN`, `TARGET_IP`, `GHCR_USERNAME`, `GHCR_TOKEN`, `ALLOW_ACME_DNS` |
+| `vritti-core` | `apw1`, `dev`, `apw2`… | `/core-server` | The core app env: `BASE_DOMAIN`, `DB_*`, `PRIMARY_DB_*`, `JWT_SECRET`, etc. |
+| `vritti-core` | `apw1`, `dev`, `apw2`… | `/backup` | pgBackRest backup config for the core deployment |
+| `vritti-core` | `apw1`, `dev`, `apw2`… | `/commerce-service` | Env for the commerce microservice on that core VM |
+
+<Note>
+  `vritti-core` also carries `*-local` / `*-shared` env variants alongside the primary per-VM envs.
+</Note>
+
+## Who pins what
+
+Each tofu root and the `ansible/cloud/` project carry a `.infisical.json` that pins the project and
+environment, so a bare `infisical run` resolves the right secrets with no extra flags.
+
+<Tabs>
+  <Tab title="infrastructure / prod">
+    Pinned by **every** `tofu/` root (`network`, `cloud`, `apw1`…) and by `ansible/cloud/`. This is the
+    provisioning project — it holds the credentials tofu needs to talk to Excloud, Cloudflare, and R2,
+    and the ANSI_* secrets the cloud stack needs at deploy time.
+  </Tab>
+  <Tab title="vritti-cloud / production">
+    **Not** pinned by any `.infisical.json`. The `cloud_stack` ansible role reaches it at deploy time
+    using the machine identity (`ANSI_INFISICAL_CLIENT_ID`/`_SECRET`) and `ANSI_VRITTI_CLOUD_PROJECT_ID`,
+    both injected from the `infrastructure/prod` project by the outer `infisical run`. The role runs
+    `infisical login --method=universal-auth` on the control node, then `infisical export` against the
+    `/cloud-server` folder to produce `/opt/vritti/cloud/.env`.
+  </Tab>
+  <Tab title="vritti-core / per-env">
+    Pinned by `ansible/core/`. The VM is selected purely by `--env` — the static inventory holds no
+    per-host data. Every per-VM value comes from that env's `/agent` folder, which is why
+    `just ansi-core <env>` bakes in `--path=/agent`.
+  </Tab>
+</Tabs>
+
+<Info>
+  The `vritti-cloud/production` env is the application config the running cloud-server reads. It is
+  exported once, at deploy time, into an env file on the VM — the container never talks to Infisical
+  directly. Contrast with `vritti-core`, where the agent receives its Infisical connection inside the
+  cloud-signed desired-state, not from ansible.
+</Info>
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Secrets flow" icon="diagram-project" href="/infisical/secrets-flow">
+    How `infisical run` injects secrets and how tofu and ansible consume them.
+  </Card>
+  <Card title="CLI cookbook" icon="terminal" href="/infisical/cli">
+    Practical `infisical` commands: login, run, secrets, folders.
+  </Card>
+  <Card title="Infisical stack" icon="server" href="/infra-repo/infisical-stack">
+    The self-hosted Infisical deployment and its backups.
+  </Card>
+  <Card title="New deployment" icon="rocket" href="/deployments/new-deployment">
+    Where you create a new `vritti-core` env and set its `/agent` secrets.
+  </Card>
+</CardGroup>

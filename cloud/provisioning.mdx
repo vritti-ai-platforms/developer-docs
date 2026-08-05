@@ -1,0 +1,127 @@
+---
+title: "Provisioning"
+description: "The runbook to stand up the cloud control-plane VM from scratch: reserved IP and secrets, then just tf-apply network, just tf-apply cloud, and just ansi-cloud all."
+icon: "rocket"
+---
+
+Bringing up the `vritti-cloud` VM is three stages: **network** (the reserved IP, DNS, tunnel, and SGs),
+**cloud** (the VM itself, attached to its own security group), then **Ansible** (the host baseline plus
+the compose stack). Every stage runs through `just`, which wraps each command in `infisical run` so
+secrets arrive as env vars. See [Just recipes](/infra-repo/just) and
+[Secrets flow](/infisical/secrets-flow) for how that plumbing works.
+
+<Note>
+  The cloud VM is a **fixed** host — there is normally exactly one. This runbook is for a from-scratch
+  rebuild or a disaster-recovery rebuild, not routine changes. For day-2 updates, see
+  [Updates](/cloud/updates).
+</Note>
+
+## Prerequisites
+
+<Steps>
+  <Step title="Tooling installed and logged in">
+    OpenTofu, Ansible, the Infisical CLI, and `just` on your machine, plus an SSH key whose public half
+    is provisioned to the VM. Log in to self-hosted Infisical:
+
+    ```bash
+    infisical login --domain=https://infisical.vrittiai.com
+    ```
+
+    See [Prerequisites](/overview/prerequisites) for the full list.
+  </Step>
+  <Step title="A reserved public IP exists">
+    The cloud VM uses the reserved `excloud_public_ipv4` named `vritti-cloud` in `tofu/network` (it has
+    `prevent_destroy`). It is created by the network stage below; `tofu/cloud` reads its id via remote
+    state (`network.outputs.cloud_ip_id`).
+  </Step>
+  <Step title="Secrets present in Infisical">
+    The `infrastructure` project (env `prod`) must hold the tofu + ansible credentials — `TF_VAR_*`
+    Excloud/Cloudflare creds, `ANSI_GHCR_*`, `ANSI_MAXMIND_*`, `ANSI_DBLAB_TOKEN`,
+    `ANSI_CLOUD_BACKREST_*`, `CLOUD_TARGET_IP`, and the machine-identity pair
+    `ANSI_INFISICAL_CLIENT_ID` / `ANSI_INFISICAL_CLIENT_SECRET` with `ANSI_VRITTI_CLOUD_PROJECT_ID`. The
+    `vritti-cloud` project (env `production`, path `/cloud-server`) must hold the cloud-server app env.
+    See [Infisical overview](/infisical/overview).
+  </Step>
+</Steps>
+
+## Stage 1 — network
+
+```bash
+just tf-apply network
+```
+
+Applies the `tofu/network` root (its own R2 state). This creates the shared infrastructure that outlives
+any single VM:
+
+- The reserved public IPs (`excloud_public_ipv4` `vritti-cloud` + `vritti-apw1`, both `prevent_destroy`).
+- Cloudflare DNS — the proxied `cloud.`/`api.` A records, the `*.vrittiai.dev` proxied wildcard, and the
+  unproxied `*.apw1` wildcard.
+- The Zero-Trust tunnel, its Access applications + GitHub-org policy, and the admin service token.
+- The **shared** `vritti-core` security group used by direct-served core VMs.
+
+<Info>
+  If you added a brand-new root (or changed a provider/module), run `just tf-init <folder>` first. For an
+  existing root, `just tf-apply` inits implicitly.
+</Info>
+
+## Stage 2 — cloud
+
+```bash
+just tf-apply cloud
+```
+
+Applies the `tofu/cloud` root. This creates:
+
+- `excloud_compute_instance.cloud` (name `vritti-cloud`) on the reserved IP it reads from
+  `network.outputs.cloud_ip_id`.
+- The Cloudflare-locked `vritti-cloud` security group (`tofu/cloud/security.tf`) — SSH from the admin IP
+  only, `:80`/`:443` from Cloudflare's IPv4 ranges only. See [Security](/cloud/security).
+
+<Warning>
+  `tofu apply` is interactive — tofu prints the plan and asks `yes`/`no`. Review it before confirming.
+  Set `CLOUD_TARGET_IP` in Infisical to this VM's reserved IP so Ansible can reach it in the next stage
+  (the `ansible/cloud` inventory reads `ansible_host` from that secret).
+</Warning>
+
+## Stage 3 — Ansible
+
+```bash
+just ansi-cloud all
+```
+
+Runs `ansible/cloud/site.yml` against the single `vritti-cloud` host. The roles converge in order:
+
+| Role | What it does |
+|---|---|
+| `base` | Swap, apt packages, and the host firewall (ufw) baseline. |
+| `docker` | Docker Engine + GHCR login for the private cloud-server / cloud-web images. |
+| `zfs` | The DbLab ZFS pool (a sparse file vdev on the root disk). |
+| `tls` | certbot Cloudflare DNS-01 wildcard cert → `/opt/vritti/ssl` + nginx reload. See [DNS & TLS](/cloud/dns-tls). |
+| `geoip` | The MaxMind GeoLite2 mmdb (runs **before** `cloud_stack` — cloud-server bind-mounts it). |
+| `cloud_stack` | The compose stack at `/opt/vritti` (nginx, cloud-server, Postgres, Redis, NATS, DbLab, backups). |
+| `cloudflared` | The Zero-Trust tunnel container (last — the app network it attaches to now exists). |
+
+### The cloud-server app env is exported at deploy time
+
+`cloud_stack` does **not** ship the cloud-server env in Ansible. Instead it uses the machine identity in
+the `infrastructure` project (`ANSI_INFISICAL_CLIENT_ID` / `ANSI_INFISICAL_CLIENT_SECRET`) to authenticate
+to Infisical from the control node and `infisical export` the `vritti-cloud` project's `production` env
+(path `/cloud-server`) into `/opt/vritti/cloud/.env` — the `env_file` the `cloud-server` and
+`cloud-migrate` containers read. This keeps the app env out of the infra repo and out of Ansible vars, and
+means a redeploy always picks up the latest secrets.
+
+## Verify
+
+<Steps>
+  <Step title="Containers up">
+    SSH in and check `docker compose -p vritti-cloud ps` — nginx, cloud-server, postgres, redis, nats,
+    and dblab should be running (cloud-migrate exits after running).
+  </Step>
+  <Step title="Cloud reachable">
+    `https://cloud.vrittiai.com` serves the SPA and `https://api.vrittiai.com` answers — both proxied
+    through Cloudflare (Full-Strict against the LE cert).
+  </Step>
+  <Step title="Admin reachable through the tunnel">
+    `https://admin.vrittiai.com` prompts for GitHub-org SSO (Cloudflare Access), then loads the admin SPA.
+  </Step>
+</Steps>

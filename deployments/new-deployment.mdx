@@ -1,0 +1,120 @@
+---
+title: "Create a Deployment"
+description: "End-to-end runbook to stand up a new agent-managed core VM: cloud admin, tofu, Infisical, ansi-core, verify."
+icon: "rocket"
+---
+
+This is the full runbook for adding a new core VM. The example throughout is **`apw2`** — a second prod
+core (edge:managed). Adding a VM is intentionally cheap: a thin tofu root, one Infisical env, and one
+`just ansi-core` run. Read the [Deployment Model](/deployments/model) first if the terms *edge:managed*,
+*enroll token*, or *desired state* are unfamiliar.
+
+<Steps>
+  <Step title="Cloud admin — create the deployment">
+    In the cloud admin app (`admin.vrittiai.com`), create the deployment. Copy the two values it hands
+    back:
+
+    - `deployment_id` — the stable ID for this deployment.
+    - `enroll_token` — a **one-time** token the agent trades for a persistent credential on first boot.
+
+    You will store both as Infisical secrets in step 3. The enroll token is single-use, so keep it safe
+    until then.
+  </Step>
+
+  <Step title="tofu — reserve an IP and add a thin root">
+    Reserve a public IP in the shared `network/` root, then add a thin per-VM root.
+
+    1. In `tofu/network/`, add an `excloud_public_ipv4` reservation for `apw2` (name `vritti-apw2`,
+       with `prevent_destroy`, like the existing `apw1` reservation) and export an `apw2_ip_id` output.
+    2. Add a new `tofu/apw2/` root by copying `apw1/`. The only VM wiring is the ~6-line module block —
+       set `name = "apw2"` and point it at the new IP reservation and the shared core SG:
+
+    ```hcl
+    module "vm" {
+      source            = "../modules/excloud-core-vm"
+      name              = "apw2"
+      ip_reservation_id = data.terraform_remote_state.network.outputs.apw2_ip_id
+      sg_id             = data.terraform_remote_state.network.outputs.core_sg_id
+      ssh_pubkey        = var.SSH_PUBLIC_KEY
+    }
+    ```
+
+    The module attaches the shared world-open `vritti-core` SG and the reserved IP — it creates no SG of
+    its own. Then init the new root and apply, network first:
+
+    ```bash
+    just tf-init apw2
+    just tf-apply network
+    just tf-apply apw2
+    ```
+
+    <Note>
+      `just ansi-core apw2` auto-discovers the `apw2` env from the tofu folders — creating the `apw2/`
+      root is what makes it appear in the core-env menu.
+    </Note>
+  </Step>
+
+  <Step title="Infisical — create the apw2 env and set its secrets">
+    The Infisical CLI **cannot create environments** — create the `apw2` env in the dashboard, under the
+    `vritti-core` project. Then populate two folders.
+
+    `/agent` (consumed by `just ansi-core` via `--path=/agent`):
+
+    | Secret | Value |
+    |--------|-------|
+    | `TARGET_IP` | the reserved public IP (tofu output `apw2_public_ipv4`) |
+    | `GHCR_USERNAME` | GHCR user for pulling the agent image |
+    | `GHCR_TOKEN` | GHCR token |
+    | `DEPLOYMENT_ID` | the `deployment_id` from step 1 |
+    | `ENROLL_TOKEN` | the one-time `enroll_token` from step 1 |
+    | `ALLOW_ACME_DNS` | `true` (this is an edge:managed prod core) |
+
+    `/core-server` — the core application env (`BASE_DOMAIN`, `DB_*`, `PRIMARY_DB_*`, `JWT_SECRET`, and
+    the rest of the core-server config for this deployment).
+
+    <Warning>
+      `--path=/agent` is baked into `just ansi-core`, so if any `/agent` secret is missing the Ansible
+      `env` lookups come back **empty** and the run fails or mis-enrolls. Set all six before running.
+    </Warning>
+  </Step>
+
+  <Step title="Run ansi-core">
+    One pass bootstraps the host (base + docker + GHCR login) and deploys/enrolls the agent:
+
+    ```bash
+    just ansi-core apw2
+    ```
+
+    Under the hood this is
+    `infisical run --env=apw2 --path=/agent -- ansible-playbook site.yml`. The `base` role opens `:53`
+    for acme-dns because `ALLOW_ACME_DNS=true`, `docker` logs into GHCR, and `agent` templates the env
+    file, installs the systemd unit, and starts the agent — which enrolls on first boot.
+  </Step>
+
+  <Step title="Verify">
+    Confirm the deployment came up:
+
+    - The agent **enrolls** — it trades the one-time token for its cached credential (check the agent
+      logs, see [Operations](/deployments/operations)).
+    - The **cloud setup flow** guides the rest: DNS delegation, wildcard cert issuance via DNS-01, and
+      entitlement/catalog sync.
+    - `api.<host>` is reachable — the core API answers on the deployment's domain.
+  </Step>
+</Steps>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="OpenTofu" icon="diagram-project" href="/infra-repo/tofu">
+    Roots, the reusable VM module, and R2 remote state.
+  </Card>
+  <Card title="just recipes" icon="terminal" href="/infra-repo/just">
+    The `tf-*` and `ansi-core` recipes used here.
+  </Card>
+  <Card title="Infisical" icon="key" href="/infisical/overview">
+    The `vritti-core` project and its per-env folders.
+  </Card>
+  <Card title="Operations" icon="screwdriver-wrench" href="/deployments/operations">
+    Day-2: upgrades, backups, and troubleshooting.
+  </Card>
+</CardGroup>

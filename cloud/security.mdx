@@ -1,0 +1,90 @@
+---
+title: "Security"
+description: "The two security-group postures — the Cloudflare-locked vritti-cloud SG vs the world-open shared vritti-core SG — and just ip-update for when the admin SSH IP changes."
+icon: "shield-halved"
+---
+
+Vritti runs two very different firewall postures, because the two kinds of VM are reached in opposite
+ways. The cloud VM is **proxied** (origin hidden behind Cloudflare); the core VMs are **direct-served**
+(the agent's own nginx + Let's Encrypt face the public internet). Each posture is a separate security
+group in the tofu network layer.
+
+## Two SG postures
+
+<CardGroup cols={2}>
+  <Card title="vritti-cloud" icon="lock">
+    The cloud VM's own SG (`tofu/cloud/security.tf`). Origin hidden — inbound is Cloudflare-only.
+  </Card>
+  <Card title="vritti-core" icon="globe">
+    Shared across every direct-served core VM (`tofu/network/security.tf`). World-open web + git-SSH + acme-dns.
+  </Card>
+</CardGroup>
+
+| Port | `vritti-cloud` (cloud VM) | `vritti-core` (shared, all core VMs) |
+|---|---|---|
+| `:22` SSH | Admin IP only (`var.ssh_allowed_cidr`) | Admin IP only (`var.ssh_allowed_cidr`) |
+| `:80` HTTP | Cloudflare IPv4 ranges only | `0.0.0.0/0` (world) |
+| `:443` HTTPS | Cloudflare IPv4 ranges only | `0.0.0.0/0` (world) |
+| `:2222` git-SSH | — (closed) | `0.0.0.0/0` (world) |
+| `:53` udp/tcp (acme-dns) | — (closed) | `0.0.0.0/0` (world) |
+| Admin surfaces | No inbound — cloudflared tunnel dials out | n/a |
+
+### Why they differ
+
+- **`vritti-cloud`** — `cloud.`/`api.` are proxied (orange cloud), so every legitimate web request
+  arrives **from** Cloudflare's edge. Locking `:80`/`:443` to Cloudflare's published IPv4 ranges blocks
+  direct-to-origin bypass: even if someone finds the VM IP, the firewall drops anything that isn't
+  Cloudflare. Admin surfaces (`admin.`, `dblab.`, `clouddb`, `git.dev`) need **no** inbound at all —
+  cloudflared dials out to the tunnel. Egress stays provider-default allow-all (cloudflared, apt, docker,
+  R2). See [DNS & TLS](/cloud/dns-tls).
+- **`vritti-core`** — core VMs are direct-served (grey/unproxied DNS). The agent runs its own nginx and
+  issues certs itself, so it needs `:80`/`:443` open to the world (Let's Encrypt HTTP-01 + per-tenant
+  serving), `:2222` for the Gitea git-SSH add-on, and `:53` udp/tcp for the bundled acme-dns to answer
+  the DNS-01 wildcard challenge. One shared SG serves all of them (`apw1`, future `apw2`, …). The
+  [dev core](/deployments/dev-core) is the exception: it rides the cloud VM and inherits the
+  `vritti-cloud` SG, not this one.
+
+<Note>
+  The Cloudflare IPv4 ranges are pinned in `var.cloudflare_ipv4_cidrs` (one SG rule per CIDR). They change
+  rarely; refresh from `https://www.cloudflare.com/ips-v4` if Cloudflare publishes an update.
+</Note>
+
+## `just ip-update` — when your admin IP changes
+
+Admin SSH on **both** SGs is pinned to `var.ssh_allowed_cidr` (default `49.238.35.31/32`). When your ISP
+hands you a new public IP, that rule no longer matches and you lose SSH. `just ip-update` re-points the
+allow-list at your current IP and re-applies both SG roots.
+
+<Warning>
+  If your public IP changes and you don't run `just ip-update`, you are **locked out of SSH** on every
+  VM. The Cloudflare-fronted surfaces (`cloud.`, `api.`, `admin.`) keep working — only SSH is gated by
+  the admin CIDR — but you can't run `ansi-*` playbooks until SSH is restored.
+</Warning>
+
+<Steps>
+  <Step title="Run the recipe">
+    ```bash
+    just ip-update
+    ```
+    It detects this machine's public IP via `api.ipify.org` and prints it.
+  </Step>
+  <Step title="Confirm">
+    It asks before changing anything: `Set admin SSH allow-list to <ip>/32 and apply (network + cloud)?`.
+    Answer `y` to proceed.
+  </Step>
+  <Step title="It writes tfvars and applies both roots">
+    It writes a **git-ignored** `admin.auto.tfvars` (`ssh_allowed_cidr = "<ip>/32"`) into both
+    `tofu/network` and `tofu/cloud`, then runs `tofu apply -auto-approve` in each. This updates the SSH
+    rule on the shared `vritti-core` SG (network) and the `vritti-cloud` SG (cloud) in one shot.
+  </Step>
+  <Step title="You're back in">
+    Once both applies succeed, SSH is allowed from your new IP and you can run `ansi-cloud` / `ansi-core`
+    again.
+  </Step>
+</Steps>
+
+<Info>
+  `admin.auto.tfvars` is git-ignored — it holds a per-machine value and is never committed. A tofu
+  `*.auto.tfvars` file is loaded automatically, so it overrides the `ssh_allowed_cidr` default without any
+  extra flags. See [Just recipes](/infra-repo/just).
+</Info>

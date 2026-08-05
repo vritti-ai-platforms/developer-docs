@@ -1,0 +1,85 @@
+---
+title: "Self-hosted Infisical"
+description: "The docker-compose stack that runs Infisical itself — the secrets manager behind infisical.vrittiai.com, with pgBackRest WAL archiving and R2 backups."
+icon: "boxes-stacked"
+---
+
+`infrastructure/infisical/` is the **self-hosted Infisical secrets manager** — the application that serves `https://infisical.vrittiai.com`.
+
+<Note>
+This page is about running the secrets **manager itself**. Using Infisical — projects, environments, `infisical run`, the CLI — is covered under the [Infisical tab](/infisical/overview). This stack is the thing everything else pulls secrets from.
+</Note>
+
+The stack is deployed via `.github/workflows/infisical-deploy.yml` and configured by an `.env` at `/opt/infisical/.env` on the server (R2 endpoint/bucket/keys and two distinct pgBackRest cipher passphrases, written by the deploy workflow).
+
+## Compose services
+
+| Service | Image | Role |
+|---|---|---|
+| `infisical` | `ghcr.io/vritti-ai-platforms/infisical-secret-manager` | The app. No host port; binds `0.0.0.0:8080`, reached internally as `infisical:8080` |
+| `infisical-proxy` | `nginx:1.27-alpine` | IPv6 ingress front — listens on `[::]:80` + `0.0.0.0:80` and proxies to the IPv4-only app |
+| `infisical-redis` | `redis:7-alpine` | Cache/queue, AOF + RDB persistence so backups always have a fresh dump |
+| `infisical-postgres` | `ghcr.io/vritti-ai-platforms/postgres-pgbackrest:18.4` | Primary DB with WAL archiving on (PITR) |
+| `infisical-pgbackrest` | `ghcr.io/vritti-ai-platforms/postgres-pgbackrest:18.4` | Idle restore sidecar (`sleep infinity`) with RW access to the data volume |
+
+<Info>
+**Why the nginx proxy exists:** the Infisical app binds IPv4-only. On an IPv6-only host, Cloudflare's IPv6 origin-pull can't reach it directly (→ 521). `infisical-proxy` listens on IPv6 and bridges to the app over the internal network. The `infisical-network` bridge also enables IPv6 so containers can egress on an IPv6-only host — the same reason pgBackRest→R2 works.
+</Info>
+
+## The shared postgres-pgbackrest image
+
+Both database containers use `ghcr.io/vritti-ai-platforms/postgres-pgbackrest:18.4` — the **shared Postgres 18.4 + pgBackRest image** built from `infrastructure/images/postgres-pgbackrest` by CI (never locally). The **same image** backs the cloud and core stacks, so WAL archiving and R2 backups behave identically everywhere.
+
+Postgres runs with WAL archiving so PITR works — `archive_command` pushes WAL to **repo1** (local) and **repo2** (Cloudflare R2):
+
+```yaml
+command:
+  - postgres
+  - -c
+  - archive_mode=on
+  - -c
+  - "archive_command=pgbackrest --stanza=infisical archive-push %p"
+```
+
+<Warning>
+PG18 refuses a volume mounted directly at `/var/lib/postgresql/data`, so `PGDATA` is a subdir (`/var/lib/postgresql/data/pgdata`) and `pgbackrest.conf`'s `pg1-path` must match.
+</Warning>
+
+## Backups — cron + scripts
+
+Backups are baked into this stack (no separate override file). The **backups run via `docker exec`** into `infisical-postgres` on the host cron schedule; the sidecar exists for restores. Install the schedule with `crontab /opt/infisical/cron/backup-crontab`.
+
+| Script | Schedule (UTC) | What it does |
+|---|---|---|
+| `backup-full.sh` | Sun 02:00 | Full backup → repo1 (local) then repo2 (R2) |
+| `backup-incremental.sh` | Mon–Sat 02:00 | Incremental backup |
+| `backup-redis.sh` | daily 03:00 | Copy the Redis AOF/RDB dump |
+| `verify-backup.sh` | daily 04:00 | Verify the backups |
+| `restore-postgres.sh` | on demand | Restore Postgres (via the pgbackrest sidecar) |
+| `restore-redis.sh` | on demand | Restore Redis |
+
+Logs go to `/var/log/infisical-backup.log` (truncated weekly, Sun 05:00). Each backup script writes to **repo1 (local, fast)** then **repo2 (R2, offsite)**:
+
+```bash
+docker exec -u postgres infisical-postgres \
+  pgbackrest --stanza=infisical --repo=1 --type=full backup   # local
+docker exec -u postgres infisical-postgres \
+  pgbackrest --stanza=infisical --repo=2 --type=full backup   # Cloudflare R2
+```
+
+Both repos are encrypted (`aes-256-cbc`) with distinct cipher passphrases from the `.env`.
+
+<CardGroup cols={2}>
+<Card title="Using Infisical" icon="key" href="/infisical/overview">
+The 3 projects and what lives where.
+</Card>
+<Card title="Infisical CLI" icon="terminal" href="/infisical/cli">
+login, run, secrets get/set, folders.
+</Card>
+<Card title="Secrets flow" icon="lock" href="/infisical/secrets-flow">
+infisical run → TF_VAR / lookup('env').
+</Card>
+<Card title="Repo layout" icon="sitemap" href="/overview/repo-layout">
+Where infisical/ and images/ sit.
+</Card>
+</CardGroup>

@@ -1,0 +1,93 @@
+---
+title: "just recipes"
+description: "The task runner for the infrastructure repo — every tofu and ansible command wrapped in infisical run with the right flags baked in."
+icon: "screwdriver-wrench"
+---
+
+`infrastructure/justfile` is the task runner for the whole repo. **Prefer these recipes over raw `tofu`/`ansible` commands** — each one `cd`s into the right directory and wraps `infisical run` so secrets are always injected with the correct flags.
+
+```bash
+brew install just     # once
+just                  # bare `just` lists every recipe
+```
+
+## Recipe reference
+
+| Recipe | What it runs | Notes |
+|---|---|---|
+| `just tf-plan <folder>` | `tofu plan` in `tofu/<folder>` | Menu if folder omitted |
+| `just tf-apply <folder>` | `tofu apply` in `tofu/<folder>` | tofu then asks y/n |
+| `just tf-init <folder>` | `tofu init` in `tofu/<folder>` | New folder / module / provider change |
+| `just tf-output <folder>` | `tofu output` in `tofu/<folder>` | Read a root's outputs |
+| `just tf-plan-all` | `tofu plan` across every root | Drift check (prints `No changes` / `Plan:`) |
+| `just tf-fmt` | `tofu fmt -recursive` | Format all `.tf` files |
+| `just ansi-cloud <cmd>` | a cloud playbook in `ansible/cloud` | `cmd` = `all` \| `images` \| `nginx` |
+| `just ansi-core <env>` | `ansible/core/site.yml` for that env | `--path=/agent` baked in |
+| `just ip-update` | write `admin.auto.tfvars` + apply `network` + `cloud` | Point SSH allow-list at this machine |
+
+`<folder>` for the `tf-*` recipes is one of `network` \| `cloud` \| `apw1` — **auto-discovered** from the directories under `tofu/` (with `modules` and `infisical` excluded). Add an `apw2/` root and it appears automatically.
+
+## Menu when the argument is omitted
+
+Every parameterized recipe pops an interactive numbered picker if you leave the argument off, so you don't have to remember the valid values:
+
+```text
+$ just tf-apply
+Select a tofu folder to apply:
+1) apw1  2) cloud  3) network
+> 2
+```
+
+The same applies to `just ansi-cloud` (choose `all` / `images` / `nginx`) and `just ansi-core` (choose `apw1` / `dev` / …). The core envs are auto-discovered from the `apwN` tofu folders plus the cloud `dev` core.
+
+## Flags are baked in
+
+The whole point of the recipes is that the correct `infisical run` flags are already wired in — you never pass them by hand:
+
+- The `tf-*` recipes `cd tofu/<folder>` and run `infisical run -- tofu <cmd>`. Each root's `.infisical.json` pins **infrastructure/prod**, so no `--projectId` or `--env` is needed.
+- `just ansi-cloud` runs `infisical run -- ansible-playbook <pb>` in `ansible/cloud` (pinned to infrastructure/prod).
+- **`just ansi-core <env>` bakes in `--path=/agent`** — it runs `infisical run --env=<env> --path=/agent -- ansible-playbook site.yml`. This is exactly the flag that is easy to forget by hand; without it the agent-secret lookups come back empty (see the [secrets flow](/infisical/secrets-flow#the-empty-secrets-gotcha)).
+
+## Examples
+
+```bash
+# tofu — provision, in order, on a fresh build
+just tf-apply network
+just tf-apply cloud
+just tf-init apw1 && just tf-apply apw1
+
+# tofu — quick drift check + read an output
+just tf-plan-all
+just tf-output network
+
+# ansible — cloud VM
+just ansi-cloud all       # full provision (site.yml)
+just ansi-cloud nginx     # re-render + reload nginx only
+just ansi-cloud images    # bump cloud-server image + cloud-web bundle
+
+# ansible — a core VM (—path=/agent is baked in)
+just ansi-core apw1       # prod core (edge:managed)
+just ansi-core dev        # cloud dev core (edge:external)
+
+# after your ISP changes your public IP
+just ip-update            # confirms, then applies network + cloud SG rules
+```
+
+<Note>
+`just ip-update` detects this machine's public IP, writes `ssh_allowed_cidr = "<ip>/32"` to a git-ignored `admin.auto.tfvars` in both `tofu/network` and `tofu/cloud`, then applies both roots — updating the SSH allow-rule on the `vritti-core` and `vritti-cloud` security groups. It confirms before applying. See [Cloud security](/cloud/security).
+</Note>
+
+<CardGroup cols={2}>
+<Card title="OpenTofu" icon="diagram-project" href="/infra-repo/tofu">
+What the tf-* recipes drive.
+</Card>
+<Card title="Ansible" icon="server" href="/infra-repo/ansible">
+What the ansi-* recipes drive.
+</Card>
+<Card title="Secrets flow" icon="key" href="/infisical/secrets-flow">
+Why --path=/agent matters.
+</Card>
+<Card title="Provision the cloud VM" icon="cloud" href="/cloud/provisioning">
+The recipes in order, end to end.
+</Card>
+</CardGroup>

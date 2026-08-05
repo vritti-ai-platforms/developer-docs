@@ -1,0 +1,150 @@
+---
+title: "OpenTofu"
+description: "How the tofu/ directory is structured: independent state roots, the reusable core-VM module, the R2 remote backend, and the Infisical-wrapped workflow."
+icon: "diagram-project"
+---
+
+Everything under `infrastructure/tofu/` provisions Excloud VMs and Cloudflare (DNS, Zero-Trust, R2) as code. The CLI is **`tofu`**, not `terraform`, and every invocation is wrapped in `infisical run` so provider credentials arrive as env vars — nothing sensitive is committed or kept on disk.
+
+<Info>
+Prefer the [`just tf-*` recipes](/infra-repo/just) over raw `tofu` commands — they `cd` into the right root and wrap `infisical run` for you.
+</Info>
+
+## Roots as separate states
+
+`tofu/` is not one big state. It is a set of **independent roots**, each with its own R2 state file, its own `.infisical.json`, and its own lifecycle. A `tofu destroy` in one root can never touch resources owned by another.
+
+| Root | Owns | State key | Lifecycle |
+|---|---|---|---|
+| `network/` | Reserved public IPs, Cloudflare DNS, Zero-Trust tunnels + Access, the shared `vritti-core` security group | `network/terraform.tfstate` | Permanent — IPs carry `prevent_destroy` |
+| `cloud/` | The cloud control-plane VM (`vritti-cloud`) + its Cloudflare-locked `vritti-cloud` SG | `cloud/terraform.tfstate` | Disposable — rebuild without moving the IP |
+| `apw1/` | One agent-managed core VM (`vritti-apw1`), a ~10-line thin root | `apw1/terraform.tfstate` | Disposable — copy for `apw2`, … |
+
+<Note>
+The reserved IPs live in `network/` and are only **read** by the compute roots (via `terraform_remote_state`). So the VMs are cattle — destroy and recreate them freely — while the IPs, and the DNS pointing at them, never move. See [tofu/network deep-dive](/infra-repo/tofu-network) for why the split exists.
+</Note>
+
+## The reusable core-VM module
+
+Every agent-managed core VM is identical apart from its name and reserved IP, so the instance/volume logic lives once in `modules/excloud-core-vm/`. A per-deployment root becomes ~6 lines:
+
+```hcl
+# tofu/apw1/main.tf
+module "vm" {
+  source            = "../modules/excloud-core-vm"
+  name              = "apw1"
+  ip_reservation_id = data.terraform_remote_state.network.outputs.apw1_ip_id
+  sg_id             = data.terraform_remote_state.network.outputs.core_sg_id
+  ssh_pubkey        = var.SSH_PUBLIC_KEY
+}
+```
+
+The module creates one `excloud_compute_instance.this` (named `vritti-<name>`) plus its root volume, attaches the **shared** SG passed in as `sg_id`, and binds the reserved IP passed as `ip_reservation_id`. It does **not** create its own security group. Key variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `name` | — | Drives `vritti-<name>` instance + volume names |
+| `ip_reservation_id` | — | Reserved public IP (from `network/` outputs) |
+| `sg_id` | — | Shared `vritti-core` SG id (from `network/` outputs) |
+| `ssh_pubkey` | — | SSH public key text |
+| `instance_type` | `t1a.small` | Excloud instance size |
+| `root_gib` | `25` | Root disk size (GiB) |
+
+Adding a new core VM = copy `apw1/` to `apw2/`, set `name = "apw2"`, and point `ip_reservation_id` at a new reservation. Full runbook: [New Deployment](/deployments/new-deployment).
+
+## R2 remote-state backend
+
+State is stored in an S3-compatible backend on **Cloudflare R2**, bucket `vritti-tfstate`, with a per-root key and native locking:
+
+```hcl
+backend "s3" {
+  bucket = "vritti-tfstate"
+  key    = "network/terraform.tfstate"   # per-root key
+  region = "auto"
+  endpoints = { s3 = "https://<account>.r2.cloudflarestorage.com" }
+
+  skip_credentials_validation = true
+  skip_requesting_account_id  = true
+  skip_metadata_api_check     = true
+  skip_region_validation      = true
+  skip_s3_checksum            = true
+  use_path_style              = true
+  use_lockfile                = true      # lock object in the bucket — no DynamoDB
+}
+```
+
+<Warning>
+Backends **cannot read tofu variables**, so the R2 credentials must be present under their exact env-var names `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (no `TF_VAR_` prefix). `infisical run` supplies them.
+</Warning>
+
+## Per-root `.infisical.json` + providers
+
+Each root ships a `.infisical.json` pinning the **infrastructure** project's **`prod`** environment, so `infisical run` needs no `--projectId` inside that root. Credentials flow in as `TF_VAR_*` env vars and auto-populate the matching `variable "<name>"`:
+
+| Env var | Wires to |
+|---|---|
+| `TF_VAR_EXCLOUD_API_KEY`, `TF_VAR_EXCLOUD_ORG_ID` | Excloud provider |
+| `TF_VAR_ANSI_CLOUDFLARE_API_TOKEN` | Cloudflare provider (`ANSI_` prefix = also read by Ansible) |
+| `TF_VAR_GITHUB_IDP_CLIENT_ID` / `_SECRET` | GitHub Access IdP (`network/`) |
+| `TF_VAR_SSH_PUBLIC_KEY` | VM SSH public key |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | R2 state backend (exact names) |
+
+The three providers, pinned in each root's `versions.tf`:
+
+- `excloud-dev/excloud ~> 0.2` — Excloud VMs, IPs, security groups
+- `cloudflare/cloudflare ~> 4` — DNS, Zero-Trust, zone settings
+- `hashicorp/random ~> 3` — tunnel secrets
+
+Full details on where each secret lives: [Infisical overview](/infisical/overview) and the [secrets flow](/infisical/secrets-flow).
+
+## When to run `tofu init`
+
+Run `just tf-init <folder>` (which wraps `tofu init` under `infisical run`) when:
+
+- **First use of a root** on a machine — downloads providers and configures the R2 backend.
+- **You add a new root** (e.g. copying `apw1/` to `apw2/`).
+- **A provider or module reference changes** — new version constraint, or a new `module` block pointing at `modules/excloud-core-vm`.
+
+Day-to-day `plan`/`apply` do not need a re-init.
+
+## Running a root
+
+<Steps>
+<Step title="Init (first time / after changes)">
+```bash
+just tf-init network
+```
+</Step>
+<Step title="Plan">
+```bash
+just tf-plan cloud        # or omit the folder for an interactive menu
+```
+Run `just tf-plan-all` for a quick drift check across every root.
+</Step>
+<Step title="Apply">
+```bash
+just tf-apply cloud       # tofu then asks y/n
+```
+On a first build, apply **network before compute** — the compute roots read `network`'s outputs.
+</Step>
+<Step title="Read outputs">
+```bash
+just tf-output network    # e.g. cloud_ip, apw1_ip, core_sg_id
+```
+</Step>
+</Steps>
+
+<CardGroup cols={2}>
+<Card title="network/ deep-dive" icon="network-wired" href="/infra-repo/tofu-network">
+IPs, DNS, tunnels, and the shared security group.
+</Card>
+<Card title="just recipes" icon="screwdriver-wrench" href="/infra-repo/just">
+The full `tf-*` / `ansi-*` command reference.
+</Card>
+<Card title="Provision the cloud VM" icon="cloud" href="/cloud/provisioning">
+network → cloud → ansible, stage by stage.
+</Card>
+<Card title="Add a deployment" icon="rocket" href="/deployments/new-deployment">
+The 5-step runbook for a new core VM.
+</Card>
+</CardGroup>

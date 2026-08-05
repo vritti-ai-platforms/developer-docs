@@ -1,0 +1,81 @@
+---
+title: "The Dev Core"
+description: "The edge:external dev core that rides the cloud VM, served at *.vrittiai.dev with no acme-dns."
+icon: "code-branch"
+---
+
+The **dev core** is the one deployment that does *not* get its own VM. It runs on the **cloud VM**,
+alongside the cloud stack, and is **edge:external** — it brings no nginx and no acme-dns of its own. It is
+otherwise a normal agent-managed core: the same `vritti-application-agent`, the same enroll → desired-state
+→ reconcile lifecycle described in the [Deployment Model](/deployments/model).
+
+## Why it rides the cloud VM
+
+The cloud stack already runs an nginx edge behind Cloudflare. Rather than stand up a second machine, the
+dev core reuses that edge:
+
+- **The cloud nginx is its edge.** It serves the dev core at **`*.vrittiai.dev`** — a proxied wildcard A
+  record pointing at the cloud VM. The dev core does not terminate TLS itself; it is covered by the cloud
+  origin cert, whose SAN list includes `*.vrittiai.dev`.
+- **It shares the cloud VM's security group.** Because its traffic enters through the cloud nginx, the
+  dev core inherits the cloud VM's **Cloudflare-locked `vritti-cloud` SG** — `:80`/`:443` open only to
+  Cloudflare's ranges, origin hidden. It is *not* behind the world-open `vritti-core` SG.
+- **The two cores share `vritti-core-net`.** The cloud VM hosts the dev core on the same
+  `vritti-core-net` docker network the agent uses for the stack.
+
+<Info>
+  `vrittiai.dev` is used precisely because Cloudflare's free Universal SSL covers the apex plus a
+  **one-level** wildcard, and proxied wildcards are allowed on all plans. `*.vrittiai.dev` is
+  first-level, so it gets a free cert and free proxy — no paid ACM. A second-level wildcard like
+  `*.dev.vrittiai.com` would need paid Advanced Certificate Manager, which is why it was retired.
+</Info>
+
+## How it differs from an apw core
+
+| Aspect | Dev core (edge:external) | `apw1` prod core (edge:managed) |
+|--------|--------------------------|----------------------------------|
+| Host | the cloud VM | its own VM |
+| Edge / TLS | the cloud nginx + cloud origin cert | the agent's own nginx + wildcard via DNS-01 |
+| Domain | `*.vrittiai.dev` (proxied) | `*.apw1.vrittiai.com` (unproxied) |
+| Security group | Cloudflare-locked `vritti-cloud` | world-open `vritti-core` |
+| `ALLOW_ACME_DNS` | **unset** — no acme-dns, opens no `:53` | `true` — bundled acme-dns on `:53` |
+| tofu root | none (rides `cloud/`) | its own thin `apw2/`-style root |
+
+Because the dev core has no acme-dns of its own, its env deliberately **omits `ALLOW_ACME_DNS`**. The
+Ansible `base` role therefore leaves `:53` closed — nothing on the dev core issues DNS-01 challenges, so
+there is no acme-dns port to open.
+
+## Deploying it
+
+The dev core is deployed exactly like any core, selecting the `dev` env:
+
+```bash
+just ansi-core dev
+```
+
+This runs `infisical run --env=dev --path=/agent -- ansible-playbook site.yml`. The `dev` env is
+auto-discovered by `just ansi-core` (it is included alongside the `apwN` tofu folders).
+
+<Note>
+  Even though it has no tofu root of its own, the `dev` Infisical env still needs its `/agent` and
+  `/core-server` folders populated **like any other core** — `TARGET_IP` (the cloud VM's IP),
+  `GHCR_USERNAME`, `GHCR_TOKEN`, `DEPLOYMENT_ID`, `ENROLL_TOKEN`, and the `/core-server` app env. The one
+  omission is `ALLOW_ACME_DNS`.
+</Note>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Deployment Model" icon="diagram-project" href="/deployments/model">
+    Managed vs external edge, and the agent lifecycle.
+  </Card>
+  <Card title="The Cloud VM" icon="cloud" href="/cloud/overview">
+    The host and edge the dev core rides on.
+  </Card>
+  <Card title="Create a Deployment" icon="rocket" href="/deployments/new-deployment">
+    The full runbook for a normal (edge:managed) core.
+  </Card>
+  <Card title="Infisical" icon="key" href="/infisical/overview">
+    The `dev` env's `/agent` and `/core-server` folders.
+  </Card>
+</CardGroup>

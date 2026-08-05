@@ -1,0 +1,149 @@
+---
+title: "Infisical CLI Cookbook"
+description: "Practical infisical commands: login, run, secrets get/set/delete, folders, and the rename pattern."
+icon: "terminal"
+---
+
+The `infisical` CLI is how you authenticate, run commands with injected secrets, and inspect or edit
+secret values directly. This page is a task-oriented reference; for how secrets reach code see
+[Secrets flow](/infisical/secrets-flow), and for what lives where see [Projects](/infisical/overview).
+
+## Log in
+
+The instance is self-hosted, so you must point the CLI at it with `--domain`:
+
+```bash
+infisical login --domain=https://infisical.vrittiai.com
+```
+
+<Note>
+  All commands below accept `--env`, `--path`, and `--projectId` to target a specific
+  environment/folder/project. When you run inside a directory with a `.infisical.json` (a tofu root or
+  `ansible/cloud/`), the project and env are pinned and the flags are optional.
+</Note>
+
+## Run a command with secrets injected
+
+```bash
+# secrets from the pinned project/env, path defaults to /
+infisical run -- <cmd>
+
+# explicit env + folder (required for core agent secrets)
+infisical run --env=apw1 --path=/agent -- ansible-playbook site.yml
+```
+
+Remember `--path` defaults to `/`, so core runs must pass `--path=/agent` or the lookups come back empty.
+See the warning in [Secrets flow](/infisical/secrets-flow).
+
+## Inspect and edit secrets
+
+<AccordionGroup>
+  <Accordion title="List secrets — infisical secrets">
+    ```bash
+    infisical secrets --env=apw1 --path=/agent
+    ```
+    Lists every secret in the selected env/folder. Add `--projectId` to target an unpinned project.
+  </Accordion>
+  <Accordion title="Read one value — infisical secrets get NAME --plain">
+    ```bash
+    infisical secrets get TARGET_IP --env=apw1 --path=/agent --plain
+    ```
+    `--plain` prints just the value (no table), which is what you want for scripting or copy-paste.
+    `get` has **no** `--type` flag.
+  </Accordion>
+  <Accordion title="Create / update — infisical secrets set NAME=value">
+    ```bash
+    infisical secrets set ALLOW_ACME_DNS=true --env=apw1 --path=/agent --type shared
+    ```
+    Creates the secret if absent, updates it if present.
+  </Accordion>
+  <Accordion title="Remove — infisical secrets delete NAME">
+    ```bash
+    infisical secrets delete OLD_KEY --env=apw1 --path=/agent --type shared
+    ```
+  </Accordion>
+  <Accordion title="Manage folders — infisical folders">
+    ```bash
+    infisical folders --env=apw1
+    ```
+    Lists and manages folders within an environment.
+  </Accordion>
+</AccordionGroup>
+
+## Command reference
+
+| Command | What it does | Notes |
+|---------|--------------|-------|
+| `infisical login --domain=…` | Authenticate against the self-hosted instance | `--domain=https://infisical.vrittiai.com` |
+| `infisical run -- <cmd>` | Run `<cmd>` with secrets as env vars | `--path` defaults to `/` |
+| `infisical secrets` | List secrets in the env/folder | |
+| `infisical secrets get NAME --plain` | Print one value | no `--type` flag |
+| `infisical secrets set NAME=value` | Create or update | defaults to `--type personal` |
+| `infisical secrets delete NAME` | Remove a secret | defaults to `--type personal` |
+| `infisical folders` | Manage folders | |
+| `infisical export` | Dump the resolved env (e.g. dotenv) | used by the cloud app-env export |
+
+## The `--type shared` gotcha
+
+<Note>
+  `set` and `delete` default to `--type personal`, which touches only **your** personal secret overlay —
+  not the shared value the whole team (and every `infisical run`) sees. To change a real shared secret you
+  **must** pass `--type shared`. `get` has no `--type` flag at all, so a plain `get` can show you the
+  shared value while your `set`/`delete` silently operated on a personal copy — a confusing mismatch if you
+  forget the flag.
+
+  ```bash
+  # WRONG — edits your personal overlay, not the team secret
+  infisical secrets set GHCR_TOKEN=ghp_xxx --env=apw1 --path=/agent
+
+  # RIGHT
+  infisical secrets set GHCR_TOKEN=ghp_xxx --env=apw1 --path=/agent --type shared
+  ```
+</Note>
+
+## Environments can't be created from the CLI
+
+The CLI **cannot** create environments — that is a dashboard-only operation. When adding a new core VM
+(e.g. `apw2`), create its environment in the Infisical dashboard first, then use the CLI to populate its
+`/agent` and `/core-server` folders. `infisical folders` manages folders, but not environments. See
+[New deployment](/deployments/new-deployment) for the full runbook.
+
+## Renaming a secret
+
+There is no rename command. Read the value, write it under the new key, then delete the old key — all with
+`--type shared`:
+
+<Steps>
+  <Step title="Read the current value">
+    ```bash
+    val=$(infisical secrets get OLD_NAME --env=apw1 --path=/agent --plain)
+    ```
+  </Step>
+  <Step title="Write it under the new key">
+    ```bash
+    infisical secrets set NEW_NAME="$val" --env=apw1 --path=/agent --type shared
+    ```
+  </Step>
+  <Step title="Delete the old key">
+    ```bash
+    infisical secrets delete OLD_NAME --env=apw1 --path=/agent --type shared
+    ```
+  </Step>
+</Steps>
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Projects" icon="shield-halved" href="/infisical/overview">
+    The three projects and their env/folder layout.
+  </Card>
+  <Card title="Secrets flow" icon="diagram-project" href="/infisical/secrets-flow">
+    How injected secrets reach tofu and ansible.
+  </Card>
+  <Card title="New deployment" icon="rocket" href="/deployments/new-deployment">
+    Create a new core env and populate its secrets.
+  </Card>
+  <Card title="Cloud provisioning" icon="cloud" href="/cloud/provisioning">
+    The app-env export that uses `infisical export`.
+  </Card>
+</CardGroup>

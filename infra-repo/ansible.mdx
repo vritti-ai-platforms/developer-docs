@@ -1,0 +1,101 @@
+---
+title: "Ansible"
+description: "Two self-contained sub-projects — the fixed cloud VM and the reusable agent-deploy play — plus the shared roles library. Both use static inventories driven by Infisical."
+icon: "server"
+---
+
+`infrastructure/ansible/` is **two independent sub-projects** sharing one `roles/` library. Each sub-project is self-contained (its own `ansible.cfg`, `.infisical.json`, and static inventory) and pinned to its own Infisical project.
+
+| Sub-project | Dir | Infisical project | Target |
+|---|---|---|---|
+| **cloud** | `cloud/` | **infrastructure** / `prod` | the ONE fixed cloud control-plane VM |
+| **core** | `core/` | **vritti-core** / `<env>` (`/agent`) | ANY agent-hosted core VM (apw1, apw2, dev core…) |
+
+<Note>
+The **core stack itself** (postgres, redis, nats, core-server, commerce, nginx) is materialized by the **agent** from cloud's signed desired-state — not by Ansible. `core/site.yml` only preps the host and starts the agent. See the [deployment model](/deployments/model).
+</Note>
+
+## cloud/ — the fixed control-plane VM
+
+Pins **infrastructure / prod**. The static `inventory.yml` is a single host `vritti-cloud` whose `ansible_host` comes from the `CLOUD_TARGET_IP` secret (the cloud VM's reserved IP) — nothing is hardcoded. Playbooks:
+
+| Playbook | Roles / effect |
+|---|---|
+| `site.yml` | Full converge: `base`, `docker`, `zfs`, `tls`, `geoip`, `cloud_stack`, `cloudflared` |
+| `nginx.yml` | Re-render the cloud nginx config + hot reload (no full redeploy) |
+| `update-cloud-images.yml` | Refresh the `cloud-server` image + `cloud-web` bundle in place |
+
+```bash
+cd ansible/cloud
+infisical run -- ansible-playbook site.yml     # or: just ansi-cloud all
+```
+
+<Info>
+`cloud_stack` does **not** read cloud-server's application secrets from `infrastructure`. It exports them from the **vritti-cloud** project's `production` env via a machine identity at deploy time. This sub-project is deploy machinery only.
+</Info>
+
+## core/ — any agent host, selected by --env
+
+Pins **vritti-core**. The static `inventory.yml` is a **single placeholder host** (`core-target`) that holds **no per-VM data**. Everything per-VM lives in the selected env's `/agent` folder, so you pick the VM purely with `--env` — the inventory and files never change:
+
+```bash
+cd ansible/core
+infisical run --env=apw1 --path=/agent -- ansible-playbook site.yml   # prod core
+infisical run --env=dev  --path=/agent -- ansible-playbook site.yml   # cloud dev core
+#   ...or simply:  just ansi-core apw1
+```
+
+`site.yml` runs `base` → `docker` (with GHCR login) → `agent`, bootstrapping the host and deploying/enrolling the agent in one pass. Per-env `/agent` secrets:
+
+| Secret | → |
+|---|---|
+| `TARGET_IP` | `ansible_host` (the VM's reserved public IP) |
+| `GHCR_USERNAME`, `GHCR_TOKEN` | GHCR login so the agent image can be pulled |
+| `DEPLOYMENT_ID`, `ENROLL_TOKEN` | agent enrollment (enroll token is single-use) |
+| `ALLOW_ACME_DNS` | `true` only for edge-managed VMs (opens `:53` for acme-dns); omit for `edge:external` VMs like the [dev core](/deployments/dev-core) |
+
+<Warning>
+`--path=/agent` is **required** — the agent secrets live there, not at `/`. Without it the `lookup('env', ...)` calls come back empty. `just ansi-core` bakes this flag in for you.
+</Warning>
+
+## No tofu dynamic inventory
+
+Both sub-projects use **static** inventories and pull every per-host value from Infisical, so Ansible needs **no tofu/R2 credentials** and there is no `group_vars/all.yml`. Adding a core VM (e.g. `apw2`) is purely an Infisical operation — create its env with the `/agent` secrets and run `just ansi-core apw2`. No file edits. See [New Deployment](/deployments/new-deployment).
+
+## Shared roles
+
+`roles/` is used by both sub-projects:
+
+| Role | Purpose |
+|---|---|
+| `base` | Swap, apt packages, ufw firewall (opens `:53` for acme-dns only when `allow_acme_dns = true`) |
+| `docker` | Docker engine + GHCR login |
+| `zfs` | ZFS pool backing DbLab thin clones (cloud VM) |
+| `tls` | certbot Cloudflare DNS-01 wildcard cert → `/opt/vritti/ssl` + nginx reload (cloud VM) |
+| `geoip` | MaxMind `.mmdb` (must exist before `cloud_stack` bind-mounts it) |
+| `cloud_stack` | The cloud compose stack at `/opt/vritti` |
+| `cloudflared` | Zero-Trust tunnel client (cloud VM) |
+| `agent` | Deploy the `vritti-application-agent` container under systemd + enroll |
+
+## The cloud VM also runs a core agent
+
+The cloud VM is provisioned by `cloud/` **and** hosts one `core` deployment — the **dev core** on `*.vrittiai.dev`. That deployment is `edge: external`: the agent runs only `core-server` on the shared `vritti-core-net`, and the cloud stack's nginx is its edge. So `env=dev` has **no `ALLOW_ACME_DNS`** — the cloud VM opens no `:53`. Details: [Dev core](/deployments/dev-core).
+
+## Secrets — Infisical only
+
+No ansible-vault. Every secret is injected as an env var by `infisical run`; plays read them with `lookup('env', 'NAME')`. `cloud/` reads `ANSI_*` / `TF_VAR_ANSI_*` from **infrastructure/prod**; `core/` reads the unprefixed `/agent` secrets from **vritti-core**. See the [secrets flow](/infisical/secrets-flow).
+
+<CardGroup cols={2}>
+<Card title="just ansi-* recipes" icon="screwdriver-wrench" href="/infra-repo/just">
+Wrapped playbook runs with flags baked in.
+</Card>
+<Card title="Provision the cloud VM" icon="cloud" href="/cloud/provisioning">
+network → cloud → ansible, stage by stage.
+</Card>
+<Card title="Deployment model" icon="rocket" href="/deployments/model">
+Why the agent, not Ansible, builds the core stack.
+</Card>
+<Card title="Add a deployment" icon="boxes-stacked" href="/deployments/new-deployment">
+apw2 from Infisical env to enrolled agent.
+</Card>
+</CardGroup>

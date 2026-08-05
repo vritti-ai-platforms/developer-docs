@@ -1,0 +1,86 @@
+---
+title: "Updates & Ops"
+description: "Day-2 operations for the cloud VM: refresh the cloud-server image and cloud-web bundle in place, re-render and hot-reload nginx, plus DbLab thin clones and pgBackRest backups to R2."
+icon: "screwdriver-wrench"
+---
+
+Once the cloud VM is [provisioned](/cloud/provisioning), most changes are targeted, in-place operations —
+you rarely re-run the full `site.yml`. Two `just ansi-cloud` sub-commands cover the common day-2 work, and
+the stack ships DbLab thin clones and pgBackRest backups on top.
+
+## Refresh images — `just ansi-cloud images`
+
+```bash
+just ansi-cloud images
+```
+
+Runs `update-cloud-images.yml` — the surgical update that refreshes the app tier **without** a full
+converge. It:
+
+1. Logs in to GHCR (cloud-server + cloud-web are private images).
+2. Re-exports the latest cloud-server env from the `vritti-cloud` Infisical project (`production`, path
+   `/cloud-server`) using the `infrastructure` machine identity, and rewrites `/opt/vritti/cloud/.env`
+   **before** recreating — so the new container picks up any changed or added vars.
+3. Pulls the latest `cloud-server` image and recreates **only** that service.
+4. Re-pulls the `cloud-web` SPA OCI bundle with `oras` and re-extracts it to `www/cloud`. Because nginx
+   serves the SPA off disk, the new bundle is live on the next request — no restart.
+
+<Note>
+  Nothing else is touched: no compose or nginx re-templating, no DB migrations, and the infra services
+  (postgres / redis / nats / dblab) keep running untouched. When a new cloud-server image ships **schema
+  changes**, run the full `site.yml` (or apply migrations separately) — `images` does not run
+  `cloud-migrate`.
+</Note>
+
+## Re-render nginx — `just ansi-cloud nginx`
+
+```bash
+just ansi-cloud nginx
+```
+
+Runs `nginx.yml` — re-renders the nginx config from the `cloud_stack` templates
+(`nginx.conf.j2` → `/opt/vritti/nginx/nginx.conf`, `cloud.conf.j2` →
+`/opt/vritti/nginx/conf.d/cloud.conf`) and **hot-reloads** nginx.
+
+The reload is what actually applies a `cloud.conf` change — `docker compose up -d` won't restart nginx
+just because a bind-mounted file changed. A handler runs `nginx -t` first, so a broken template fails
+loudly instead of dropping a bad config onto the running edge. Preview without applying:
+
+```bash
+infisical run -- ansible-playbook nginx.yml --check --diff
+```
+
+## The `ansi-cloud` sub-commands
+
+| Command | Playbook | Use it when |
+|---|---|---|
+| `just ansi-cloud all` | `site.yml` | Full provision / converge, or after schema-changing releases. |
+| `just ansi-cloud images` | `update-cloud-images.yml` | Ship a new cloud-server image + cloud-web bundle. |
+| `just ansi-cloud nginx` | `nginx.yml` | Change edge routing / TLS server blocks. |
+
+Run `just ansi-cloud` with no argument for an interactive menu. See [Just recipes](/infra-repo/just).
+
+## DbLab thin clones
+
+The `dblab` service (`:2345`, backed by the ZFS file-vdev pool) provides Postgres **thin clones** — fast,
+copy-on-write snapshots of a database for dev/testing without duplicating storage. It's dev-only and
+reached through the Access-gated `dblab.vrittiai.com` tunnel (no inbound port). See
+[DNS & TLS](/cloud/dns-tls) for how the tunnel is gated.
+
+## Cloud DB backups (pgBackRest → R2)
+
+The cloud Postgres archives WAL to **pgBackRest** with two repos — **repo1** local and **repo2**
+Cloudflare **R2** — both AES-256 encrypted. Postgres runs with `archive_mode=on` and an
+`archive_command` that pushes each WAL segment to the stanza; `archive_timeout=60` bounds how long an
+idle DB waits before forcing a segment.
+
+- Scheduled backups run via `docker exec` into the postgres container from a host cron (installed by
+  `cloud_stack`).
+- The `cloud-pgbackrest` sidecar is an idle container with RW access to `./pgdata`, used for **restores**.
+- Repo2 targets an R2 bucket via the `CLOUD_BACKREST_R2_*` secrets (bucket / endpoint / access + secret
+  keys), with the cipher passphrase from `CLOUD_BACKREST_REPO1_CIPHER_PASS` / `_REPO2_CIPHER_PASS`.
+
+<Info>
+  Per-deployment core databases have their own pgBackRest config on their own VMs — see
+  [Deployment operations](/deployments/operations). This page covers the **cloud** DB only.
+</Info>

@@ -1,0 +1,59 @@
+---
+title: "Repo layout"
+description: "A tour of the infrastructure/ folder: tofu, ansible, infisical, images, the justfile, and .github, with links to each deep-dive."
+icon: "boxes-stacked"
+---
+
+Everything that provisions Vritti lives in a single repo, `infrastructure/`. Each top-level folder owns
+one concern, and the `justfile` at the root ties them together. Nothing sensitive is committed — every
+command runs under `infisical run` (see [Secrets flow](/infisical/secrets-flow)).
+
+## The `infrastructure/` folder
+
+```
+infrastructure/
+├── tofu/          OpenTofu roots + reusable VM module (Excloud + Cloudflare)
+├── ansible/       Host provisioning: the cloud stack + the core agent
+├── infisical/     The self-hosted Infisical compose stack
+├── images/        Shared container images (postgres-pgbackrest)
+├── justfile       Task runner fronting every tofu + ansible command
+└── .github/       CI workflows
+```
+
+| Folder | Purpose |
+|---|---|
+| `tofu/` | OpenTofu roots (`network`, `cloud`, `apw1`) — each with its own R2 remote state — plus `modules/excloud-core-vm`. Provisions Excloud VMs, reserved IPs, Cloudflare DNS, and the Zero-Trust tunnel. |
+| `ansible/` | Two self-contained sub-projects: `cloud/` (the fixed control-plane VM + compose stack) and `core/` (any agent-hosted core VM), plus shared `roles/`. |
+| `infisical/` | The `docker-compose.yml` for the self-hosted Infisical instance (app, proxy, redis, postgres, pgBackRest backups). |
+| `images/` | `postgres-pgbackrest` — the shared Postgres 18.4 + pgBackRest image used by the cloud, core, and Infisical stacks. |
+| `justfile` | Every recipe wraps `infisical run` so tofu + ansible get their secrets. Bare `just` lists them all. |
+| `.github/` | CI workflows for the repo. |
+
+<Note>
+  Ignore the stale top-level `infrastructure/README.md` — it still references `vm1`/`vm2`. The
+  `tofu/README.md` and `ansible/README.md` are accurate.
+</Note>
+
+## Deep dives
+
+<CardGroup cols={2}>
+  <Card title="OpenTofu" icon="diagram-project" href="/infra-repo/tofu">
+    Roots as separate states, the reusable VM module, the R2 backend, per-root `.infisical.json`,
+    providers, and when to `tofu init`.
+  </Card>
+  <Card title="Ansible" icon="server" href="/infra-repo/ansible">
+    `cloud/` vs `core/`, their static inventories, the shared roles table, and the `just ansi-*`
+    recipes.
+  </Card>
+  <Card title="just recipes" icon="terminal" href="/infra-repo/just">
+    The full recipe reference, the menu-on-no-arg behaviour, and why the Infisical flags are baked in.
+  </Card>
+  <Card title="Infisical stack" icon="lock" href="/infra-repo/infisical-stack">
+    The self-hosted Infisical compose stack, its backups, and the shared Postgres image.
+  </Card>
+</CardGroup>
+
+<Tip>
+  For where secrets come from, see [Infisical overview](/infisical/overview). For the estate this repo
+  builds, see the [Topology](/overview/topology).
+</Tip>

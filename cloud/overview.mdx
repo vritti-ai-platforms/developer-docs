@@ -1,0 +1,103 @@
+---
+title: "Cloud Overview"
+description: "The vritti-cloud VM is the control plane: one Docker Compose stack at /opt/vritti fronting the cloud API, the cloud-web SPA, Postgres, Redis, NATS, DbLab, and cloudflared — and it also hosts the dev core."
+icon: "cloud"
+---
+
+The `vritti-cloud` VM is Vritti's **control plane**. It runs a single Docker Compose stack
+(`name: vritti-cloud`) rooted at `/opt/vritti`, provisioned by the Ansible `cloud_stack` role. Behind
+Cloudflare it serves the cloud dashboard, the cloud API, and the public machine API the agent enrolls
+against — and, on the same host, it hosts the **dev core** (see [Dev core](/deployments/dev-core)).
+
+For where this sits in the wider estate, see [Topology](/overview/topology). To stand a fresh VM up from
+scratch, see [Provisioning](/cloud/provisioning).
+
+## The compose stack
+
+Everything lives under `/opt/vritti` and is rendered from the `cloud_stack` role's
+`docker-compose.yml.j2`. The services attach to the `vritti-network` docker bridge (`cloud`), and nginx
+additionally joins the agent's external core network so it can route `*.vrittiai.dev` to the dev core.
+
+<CardGroup cols={2}>
+  <Card title="nginx" icon="server">
+    The edge. Publishes `:80`/`:443` and terminates TLS. Serves the cloud-web SPA off disk, proxies
+    `/api` to `cloud-server`, and routes `*.vrittiai.dev` to the dev core. Also hosts an internal-only
+    admin server on `:8080` (never published — reachable solely via the tunnel).
+  </Card>
+  <Card title="cloud-server" icon="gears">
+    The cloud API (`:3000`, exposed on the docker network only). NestJS + Fastify. Env comes from
+    `./cloud/.env`, exported from the `vritti-cloud` Infisical project at deploy time.
+  </Card>
+  <Card title="cloud-web SPA" icon="window-maximize">
+    A static bundle — **not** a container. Pulled as an OCI artifact with `oras` and extracted to
+    `www/cloud`; nginx serves it off disk for both `cloud.` and the Access-gated `admin.` surface.
+  </Card>
+  <Card title="cloud-migrate" icon="database">
+    A one-shot DB migration runner (`node dist/db/migrate.js`) under the `migrate` compose profile.
+    Runs against Postgres, then exits.
+  </Card>
+  <Card title="postgres" icon="database">
+    The cloud database (`postgres-pgbackrest` image, exposes `:5432` on the docker net). WAL archiving is
+    enabled when backups are on.
+  </Card>
+  <Card title="cloud-pgbackrest" icon="box-archive">
+    Idle restore sidecar with RW access to `./pgdata`. Scheduled backups run via `docker exec` into
+    Postgres on a host cron; both push to pgBackRest (repo1 local + repo2 R2). See [Updates](/cloud/updates).
+  </Card>
+  <Card title="redis" icon="bolt">
+    Cache / ephemeral store (`:6379` on the docker net), `maxmemory` 128mb, `allkeys-lru`, password-protected.
+  </Card>
+  <Card title="nats" icon="network-wired">
+    Messaging (`:4222` on the docker net).
+  </Card>
+  <Card title="dblab" icon="clone">
+    Database Lab Engine (`:2345`) for Postgres **thin clones**, backed by the ZFS file-vdev pool. Dev-only,
+    reached through the Access-gated `dblab.` tunnel.
+  </Card>
+  <Card title="cloudflared" icon="shield-halved">
+    The Zero-Trust tunnel (from the `cloudflared` role, not the compose file). Dials out to Cloudflare and
+    fronts the admin surfaces — no inbound ports. See [DNS & TLS](/cloud/dns-tls).
+  </Card>
+</CardGroup>
+
+## Port map
+
+| Service | Port | Reachable by |
+|---|---|---|
+| nginx (public) | `:80` / `:443` | Cloudflare edge only (SG-locked) |
+| nginx (admin) | `:8080` | cloudflared on the docker network only — never published to the host |
+| cloud-server | `:3000` | `expose` on the docker network (via nginx `/api`) |
+| postgres | `:5432` | `expose` on the docker network (+ the Access-gated `clouddb` tunnel) |
+| redis | `:6379` | `expose` on the docker network |
+| nats | `:4222` | `expose` on the docker network |
+| dblab | `:2345` | `expose` on the docker network (+ the Access-gated `dblab.` tunnel) |
+
+<Note>
+  Only `:80`/`:443` are published to the host, and the security group locks even those to Cloudflare's
+  IP ranges. Every admin surface (`admin.`, `dblab.`, `clouddb`, `git.dev`) is reached through the
+  cloudflared tunnel with no inbound port at all. See [Security](/cloud/security).
+</Note>
+
+## It also hosts the dev core
+
+The cloud VM does double duty. Alongside the control-plane stack it runs the **dev core** — an
+agent-managed `vritti-core` deployment with `edge: external`. The dev core has no nginx or acme-dns of
+its own; instead the cloud stack's nginx **is** its edge. nginx joins the shared `vritti-core-net` docker
+network (the `core` network in the compose file, marked `external: true`) and routes every
+`*.vrittiai.dev` host to the dev `core-server`.
+
+Because the dev core rides the cloud VM, it inherits the Cloudflare-locked `vritti-cloud` security group
+rather than the world-open `vritti-core` posture used by direct-served prod cores. Details in
+[Dev core](/deployments/dev-core) and the [Deployment model](/deployments/model).
+
+## Where things run
+
+| Concern | Owner |
+|---|---|
+| The host + the control-plane compose stack | Ansible (`ansible/cloud`, `cloud_stack` role) |
+| The cloud VM, its reserved IP, its SG | OpenTofu (`tofu/cloud` + `tofu/network`) |
+| The dev core stack on this host | The Go agent (**not** provisioned by Ansible) |
+
+<Card title="Provision it" icon="rocket" href="/cloud/provisioning">
+  The `just tf-apply network` → `just tf-apply cloud` → `just ansi-cloud all` runbook.
+</Card>

@@ -1,0 +1,107 @@
+---
+title: "Deployment Model"
+description: "How agent-managed core deployments work: the vritti-application-agent, signed desired-state, and the managed vs external edge."
+icon: "diagram-project"
+---
+
+A **deployment** is one agent-managed "core" stack running on a core VM. Each core VM runs the
+`vritti-application-agent`, which enrolls with the cloud, pulls a **cloud-signed desired state**, and
+reconciles the local stack to match. The cloud is the control plane; the agent is the only thing that
+touches the core host after Ansible has bootstrapped it.
+
+Two shapes of deployment exist today:
+
+- **`apw1`** — a **prod core** on its own VM. It is **edge:managed**: the agent runs its *own* nginx and
+  a bundled acme-dns, and issues a wildcard TLS certificate via DNS-01. The VM sits behind the shared
+  **world-open** `vritti-core` security group and is direct-served (grey DNS).
+- **The dev core** — runs on the **cloud VM**, not its own machine. It is **edge:external**: it has no
+  nginx or acme-dns of its own; the cloud stack's nginx is its edge, serving `*.vrittiai.dev`. See
+  [The Dev Core](/deployments/dev-core).
+
+## The vritti-application-agent
+
+The agent is a Go binary shipped as a container image
+(`ghcr.io/vritti-ai-platforms/application-agent`, tag `latest-main`). The Ansible `agent` role deploys it
+as a container run under a systemd unit (`vritti-agent`) and starts it — Ansible does **not** deploy the
+core compose stack itself. The agent materializes those containers from the desired state.
+
+### Enrollment
+
+On first boot the agent enrolls with the cloud. Enrollment consumes three inputs, supplied through its
+templated env file (`/etc/vritti-agent/agent.env`):
+
+| Input | Env var | Source |
+|-------|---------|--------|
+| Cloud API URL | `VRITTI_CLOUD_API_URL` | `agent` role default → `https://api.vrittiai.com` |
+| Deployment ID | `VRITTI_DEPLOYMENT_ID` | the env's `/agent/DEPLOYMENT_ID` secret |
+| One-time enroll token | `VRITTI_ENROLL_TOKEN` | the env's `/agent/ENROLL_TOKEN` secret |
+
+The agent also generates **its own Ed25519 keypair**. Enrollment exchanges the one-time token for a
+persistent credential, which the agent caches in its data dir (`/var/lib/vritti-agent`) alongside its
+keys and machine secrets.
+
+<Info>
+  **Trust model.** The enroll token is **single-use** — the agent consumes it *only* when there is no
+  cached enrollment. After that, it authenticates every request with its cached credential plus its
+  local Ed25519 keys, so `api.vrittiai.com` can be a public, proxied host and does **not** need to be
+  Cloudflare-Access-gated. The agent's key-based auth is the boundary; no Cloudflare service token lives
+  on the VM. To force a fresh enrollment you must wipe the cached state (`-e agent_reset=true`) and
+  supply a fresh token — a plain converge can never re-enroll.
+</Info>
+
+### Desired state and reconciliation
+
+Once enrolled, the agent pulls a **cloud-signed desired state** from `https://api.vrittiai.com` and
+reconciles the local stack to match it. The desired state — not Ansible — describes:
+
+- **Which components run**, and whether each is *managed* (the agent runs it) or *external* (something
+  else provides it) per the deployment's spec: `postgres`, `core-server`, `commerce-service`, `nats`,
+  `redis`, `nginx`, and `gitea`.
+- **The secret-store connection.** The agent's Infisical connection and auth arrive **in the signed
+  desired state**, not from Ansible. The env file deliberately carries nothing store-specific — the
+  agent is generic and receives everything it needs to reach its secret store from the cloud.
+
+The only deployment config Ansible provides is the cloud URL, the deployment ID, and the one-time enroll
+token. Everything else flows down from the cloud, signed.
+
+## Managed vs external components
+
+Each deployment's spec marks its edge and datastore as managed or external. This is the core difference
+between a prod core (`apw1`) and the dev core:
+
+| Aspect | `apw1` — prod core (edge:managed) | Dev core (edge:external) |
+|--------|-----------------------------------|--------------------------|
+| Host | its own VM | the cloud VM |
+| Edge (nginx) | **managed** — the agent runs its own nginx | **external** — the cloud stack's nginx |
+| TLS | **managed** — bundled acme-dns + wildcard cert via DNS-01 | provided by the cloud origin cert |
+| Domain | `*.apw1.vrittiai.com` (unproxied, direct-served) | `*.vrittiai.dev` (proxied) |
+| Security group | shared **world-open** `vritti-core` | the cloud VM's Cloudflare-locked `vritti-cloud` |
+| `:53` (acme-dns) | open — `ALLOW_ACME_DNS=true` | closed — no `ALLOW_ACME_DNS` |
+
+For a managed edge, the Ansible `base` role opens `:53` (tcp+udp) for the bundled acme-dns **only** when
+`allow_acme_dns=true`, and the agent's container joins the `vritti-core-net` docker network so it can
+reach the acme-dns HTTP API when issuing the wildcard cert. An external edge sets none of this.
+
+## Version upgrades are generation-driven
+
+The agent tracks the desired state by **generation**. A spec change in the cloud (for example bumping a
+component's target version) produces a **new generation**, which the agent detects on its next pull and
+rolls out by reconciling to the new state. There is no per-VM redeploy step — you change the spec in the
+cloud and the agent converges. See [Operations](/deployments/operations) for the day-2 workflow.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Create a Deployment" icon="rocket" href="/deployments/new-deployment">
+    The 5-step runbook to stand up a new core VM (e.g. `apw2`).
+  </Card>
+  <Card title="The Dev Core" icon="code-branch" href="/deployments/dev-core">
+    The edge:external dev core on the cloud VM, served at `*.vrittiai.dev`.
+  </Card>
+  <Card title="The Cloud VM" icon="cloud" href="/cloud/overview">
+    The control plane the agent enrolls and pulls signed desired-state from.
+  </Card>
+  <Card title="Infisical" icon="key" href="/infisical/overview">
+    The `vritti-core` project and the per-env `/agent` secrets the agent needs.
+  </Card>
+</CardGroup>

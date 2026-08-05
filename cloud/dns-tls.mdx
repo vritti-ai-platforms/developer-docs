@@ -1,0 +1,121 @@
+---
+title: "DNS & TLS"
+description: "The Cloudflare DNS model for the cloud VM: proxied A records, Access-gated tunnel CNAMEs, and two wildcards across two zones — plus the certbot DNS-01 wildcard SAN cert and the Zero-Trust tunnel."
+icon: "network-wired"
+---
+
+The cloud VM sits behind Cloudflare across two zones — `vrittiai.com` (the cloud VM + prod cores) and
+`vrittiai.dev` (the dev core). DNS is managed entirely in `tofu/network` (`dns.tf`, `zerotrust.tf`); the
+origin cert is issued by the Ansible `tls` role. This page is the record-by-record model plus the
+reasoning behind the second zone.
+
+## The records
+
+| Record | Type | Target | Proxied | Purpose |
+|---|---|---|---|---|
+| `cloud.vrittiai.com` | A | cloud VM IP | ✅ | The cloud dashboard (SPA + `/api`). |
+| `api.vrittiai.com` | A | cloud VM IP | ✅ | Public machine API — the agent enrolls / pulls desired-state / reports status. **Not** Access-gated. |
+| `admin.vrittiai.com` | CNAME | tunnel (`nginx:8080`) | ✅ | Access-gated admin SPA. No inbound port. |
+| `dblab.vrittiai.com` | CNAME | tunnel (`dblab:2345`) | ✅ | Access-gated DbLab UI. |
+| `git.dev.vrittiai.com` | CNAME | tunnel (`gitea:3000`) | ✅ | Access-gated dev Gitea web UI. |
+| `clouddb.vrittiai.com` | CNAME | tunnel (`postgres:5432`, raw TCP) | ✅ | Access-gated Postgres, via `cloudflared access tcp`. |
+| `*.apw1.vrittiai.com` | A | apw1 VM IP | ❌ | Per-tenant hosts on the direct-served apw1 core. |
+| `*.vrittiai.dev` | A | cloud VM IP | ✅ | The dev core's per-tenant hosts (`edge: external`). |
+
+<Note>
+  There is **no** apex `*` catch-all on `vrittiai.com` and **no** `*.dev.vrittiai.com` — both were
+  retired. A specific record (like `cloud.` or a tunnel CNAME) always beats a wildcard, so the explicit
+  hosts win.
+</Note>
+
+## Three record types, three postures
+
+### Proxied A records — `cloud.` / `api.`
+
+These are **orange-cloud** A records: DNS returns Cloudflare IPs, the origin stays hidden, and Cloudflare
+terminates TLS and runs DDoS/WAF before reaching nginx over the internet. The zone SSL mode is
+**Full (Strict)**, so Cloudflare validates nginx's Let's Encrypt cert on the way in (with Flexible the
+origin's http→https redirect would loop). The `vritti-cloud` security group then locks `:80`/`:443` to
+Cloudflare's ranges, so the origin can't be reached directly. `api.` is proxied like `cloud.` but
+**not** Access-gated — the agent authenticates itself with an Ed25519 signature plus a one-time enroll
+token, so no service token lives on any VM. See [Security](/cloud/security).
+
+### Tunnel CNAMEs — `admin.` / `dblab.` / `git.dev` / `clouddb`
+
+These are proxied CNAMEs pointing at the cloudflared **tunnel** (`<tunnel-id>.cfargotunnel.com`).
+cloudflared runs as a container on the app docker network and dials **out** to Cloudflare, so **no
+inbound port** is opened for any of them. Each is fronted by a Cloudflare **Access** application with a
+GitHub-org policy (`vritti-ai-platforms`), so every request is authenticated by GitHub SSO. Because the
+tunnel targets internal service names and nginx's admin block on `:8080` is never published to the host,
+there is no public door at which to spoof a `Host` header — Access is unbypassable.
+
+<Info>
+  cloudflared forwards to **internal service names**, not localhost: `admin → nginx:8080`,
+  `dblab → dblab:2345`, `git.dev → gitea:3000`, `clouddb → postgres:5432` (raw TCP).
+</Info>
+
+### Wildcards — `*.apw1` (unproxied) / `*.vrittiai.dev` (proxied)
+
+`*.apw1.vrittiai.com` is an **unproxied** A record straight to the apw1 VM — that core is direct-served,
+runs its own nginx, and issues its own Let's Encrypt certs, so Cloudflare stays out of the path.
+`*.vrittiai.dev` is a **proxied** A record to the cloud VM, fronting the dev core.
+
+## Why the `vrittiai.dev` zone exists
+
+The dev core needs a wildcard so every dev tenant gets `<tenant>.<zone>`. The zone choice is driven by
+Cloudflare's certificate rules:
+
+- Free **Universal SSL** covers a zone's apex plus a **one-level** wildcard. `*.vrittiai.dev` is a
+  first-level wildcard on its own registrable domain → covered by the free cert.
+- `*.dev.vrittiai.com` would be a **second-level** wildcard → not covered by Universal SSL; it would
+  require paid **Advanced Certificate Manager**.
+- **Proxied wildcards** are permitted on all plans (since May 2022), so `*.vrittiai.dev` can be
+  orange-clouded on the Free plan.
+
+So the dev core lives on its own `vrittiai.dev` zone: free edge cert, free proxy, no ACM. Both zones run
+**Full (Strict)** SSL (managed in `dns.tf` so it can't drift).
+
+## The origin cert (certbot DNS-01)
+
+The Ansible `tls` role issues **one** combined SAN cert with certbot's Cloudflare DNS-01 plugin:
+
+```bash
+certbot certonly --non-interactive --agree-tos \
+  --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
+  --dns-cloudflare-propagation-seconds 30 \
+  -m shashank@vrittiai.com \
+  -d 'cloud.vrittiai.com' -d '*.vrittiai.dev' -d 'api.vrittiai.com' \
+  --cert-name vrittiai --expand --keep-until-expiring
+```
+
+- The cert covers `cloud.vrittiai.com`, `api.vrittiai.com`, and `*.vrittiai.dev` — every hostname
+  Cloudflare reaches nginx over HTTPS for. The Cloudflare API token holds `DNS:Edit` on **both**
+  `vrittiai.com` and `vrittiai.dev`, so a single `vrittiai` cert spans both zones.
+- The tunnel surfaces (`admin.`/`dblab.`/`git.dev`/`clouddb`) hit nginx over plain HTTP inside the
+  tunnel, so they need no origin cert and are **not** on the SAN list.
+- `--expand --keep-until-expiring` (with no `creates:` guard) keeps the run idempotent while still letting
+  the SAN list grow — that's how `api.` was added later without freezing the domain set.
+- A deploy hook copies `fullchain.pem` / `privkey.pem` into `/opt/vritti/ssl` and reloads nginx; it also
+  fires on certbot auto-renewal.
+
+<Warning>
+  Because `cloud.`/`api.`/`*.vrittiai.dev` are proxied at **Full (Strict)**, the origin nginx **must**
+  present this cert. If nginx has no cert covering a proxied host, Cloudflare returns **526** — and the
+  agent can't enroll against `api.`.
+</Warning>
+
+## Zero-Trust tunnel + Access
+
+The tunnel, its Access applications, and the GitHub-org policy are all in `tofu/network/zerotrust.tf`:
+
+- One cloudflared tunnel per VM (the cloud VM's is `vritti-vm1`); its ingress rules map each admin
+  hostname to an internal service.
+- A GitHub identity provider — org members log in with GitHub SSO; membership lives in GitHub.
+- One Access application + `allow-github-org` policy per service, `auto_redirect_to_identity` on (straight
+  to GitHub, no picker), 24h sessions.
+- An **admin service token** (`vritti-admin-api`, 1-year) for headless clients (scripts, Postman, CI).
+  They present `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers instead of SSO — the only way to
+  reach `admin.` programmatically.
+
+See [Topology](/overview/topology) for how this fits the whole estate, and [Security](/cloud/security)
+for the firewall side.
